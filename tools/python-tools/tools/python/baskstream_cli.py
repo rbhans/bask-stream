@@ -316,6 +316,16 @@ def chunks(items: list[str], size: int) -> Iterable[list[str]]:
         yield items[i : i + size]
 
 
+def positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
 def read_points(client: BaskStreamClient, ords: list[str], *, chunk_size: int = 100) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for batch in chunks(ords, chunk_size):
@@ -565,7 +575,7 @@ def build_parser() -> argparse.ArgumentParser:
     values = sub.add_parser("values", help="Pretty point names and current values")
     values.add_argument("--base", required=True)
     values.add_argument("--limit", type=int, default=1000)
-    values.add_argument("--chunk-size", type=int, default=100)
+    values.add_argument("--chunk-size", type=positive_int, default=100)
     values.add_argument("--list-only", action="store_true")
     add_discovery_args(values)
     add_output_args(values)
@@ -573,7 +583,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     read = sub.add_parser("read", help="Read explicit point ORD(s)")
     read.add_argument("ord", nargs="+")
-    read.add_argument("--chunk-size", type=int, default=100)
+    read.add_argument("--chunk-size", type=positive_int, default=100)
     add_output_args(read)
     read.set_defaults(func=cmd_read, needs_ws=True)
 

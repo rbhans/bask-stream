@@ -1,6 +1,6 @@
 # Python baskStream test tools
 
-This was tested on a bench setup with a BACnet MS/TP device integrated into the Niagara station through a BACnet router. 
+This was tested on a bench setup with a BACnet MS/TP device integrated into the Niagara station through a BACnet router.
 ![Screenshot1](./bacnet_5007.png)
 
 
@@ -16,12 +16,12 @@ Install these Python packages:
 requests
 websocket-client
 msgpack
-````
+```
 
 Example:
 
 ```bash
-pip install requests websocket-client msgpack
+python3 -m pip install -r tools/python/requirements.txt
 ```
 
 
@@ -410,4 +410,3 @@ python3 baskstream_cli.py \
   --depth 5 \
   --read
 ```
-

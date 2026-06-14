@@ -19,6 +19,7 @@ import hmac
 import json
 import os
 import ssl
+import time
 import unicodedata
 import uuid
 from http.cookies import SimpleCookie
@@ -289,6 +290,7 @@ class BaskStreamClient:
         if self.ws is not None:
             self.ws.close()
             self.ws = None
+        self.session.close()
 
     def __enter__(self) -> "BaskStreamClient":
         return self
@@ -306,8 +308,16 @@ class BaskStreamClient:
 
         self.ws.send(msgpack.packb(frame, use_bin_type=True), opcode=websocket.ABNF.OPCODE_BINARY)
 
+        deadline = time.monotonic() + self.timeout
         while True:
-            raw = self.ws.recv()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise BaskStreamError(f"{op} timed out waiting for response id={req_id}")
+            self.ws.settimeout(remaining)
+            try:
+                raw = self.ws.recv()
+            except websocket.WebSocketTimeoutException as exc:
+                raise BaskStreamError(f"{op} timed out waiting for response id={req_id}") from exc
             if isinstance(raw, str):
                 continue
 
