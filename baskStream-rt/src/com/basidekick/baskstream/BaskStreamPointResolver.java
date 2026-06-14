@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import javax.baja.control.BControlPoint;
 import javax.baja.naming.BOrd;
 import javax.baja.naming.OrdTarget;
 import javax.baja.status.BIStatusValue;
@@ -15,6 +16,7 @@ import javax.baja.sys.BBoolean;
 import javax.baja.sys.BComplex;
 import javax.baja.sys.BEnum;
 import javax.baja.sys.BEnumRange;
+import javax.baja.sys.BFacets;
 import javax.baja.sys.BNumber;
 import javax.baja.sys.BObject;
 import javax.baja.sys.BSimple;
@@ -109,7 +111,8 @@ final class BaskStreamPointResolver
       Object wireValue = null;
       String displayValue = null;
       String valueType = source.getType().toString();
-      Map<String, Object> extra = null;
+      Map<String, Object> extra = new LinkedHashMap<String, Object>();
+      extra.put("facets", pointFacets(point.getComponent(), context));
 
       if (source instanceof BIStatusValue)
       {
@@ -125,7 +128,7 @@ final class BaskStreamPointResolver
         BEnum enumValue = (BEnum) source;
         wireValue = enumValue.getTag();
         displayValue = enumValue.getDisplayTag(context);
-        extra = enumDetails(enumValue, context);
+        extra.putAll(enumDetails(enumValue, context));
       }
       else if (source instanceof BBoolean)
       {
@@ -163,6 +166,49 @@ final class BaskStreamPointResolver
     {
       throw new BaskStreamProtocolException("read_failed", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
     }
+  }
+
+  private Map<String, Object> pointFacets(BComponent component, Context context)
+  {
+    if (component instanceof BControlPoint)
+    {
+      return facetsToWire(((BControlPoint) component).getFacets(), context);
+    }
+    return new LinkedHashMap<String, Object>();
+  }
+
+  private Map<String, Object> facetsToWire(BFacets facets, Context context)
+  {
+    Map<String, Object> out = new LinkedHashMap<String, Object>();
+    if (facets == null || facets.isNull() || facets.isEmpty())
+    {
+      return out;
+    }
+
+    String[] keys = facets.list();
+    for (int i = 0; i < keys.length; i++)
+    {
+      BObject value = facets.get(keys[i]);
+      out.put(keys[i], valueToWire(value, context));
+    }
+    return out;
+  }
+
+  private Object valueToWire(BObject value, Context context)
+  {
+    if (value == null)
+    {
+      return null;
+    }
+    if (value instanceof BEnumRange)
+    {
+      return enumOptions((BEnumRange) value, context);
+    }
+    if (value instanceof BValue)
+    {
+      return ((BValue) value).toString(context);
+    }
+    return value.toString();
   }
 
   private Map<String, Object> enumDetails(BEnum value, Context context)

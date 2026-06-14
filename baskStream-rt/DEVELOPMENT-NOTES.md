@@ -41,6 +41,7 @@ This module was cross-checked against the local Obsidian Niagara developer-guide
 - `browse` and `describe` can include an additive `metadata` block for app-side discovery logic.
 - `browse` defaults to `metadata: "none"` so broad tree navigation stays light; clients should request `metadata: "full"` for initial discovery or structural refreshes.
 - `describe` defaults to `metadata: "full"` because it returns a single node; clients can request `metadata: "none"` when they only need base node properties.
+- `read` is the batch point snapshot operation. It can return point facets and supports optional `fields` trimming for lean Dial-style point tables.
 - The metadata intentionally exposes evidence rather than making universal equipment claims: parent/ancestor summaries, deterministic Niagara type flags, driver/device/proxy ancestry, point facets/extensions, tags, and relations.
 - Device and point detection can be deterministic through Niagara types such as `BDevice` and `BControlPoint`; equipment detection should be treated as confirmed only when tags/relations/user mappings say so, otherwise inferred and reviewed by the app.
 - See `docs/THIRD_PARTY_API.md` for the external API guide and client-side discovery recommendations.

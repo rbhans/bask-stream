@@ -34,6 +34,12 @@ import javax.baja.web.WebOp;
   flags = Flags.SUMMARY
 )
 @NiagaraProperty(
+  name = "maxPointSnapshotPoints",
+  type = "int",
+  defaultValue = "1000",
+  flags = Flags.SUMMARY
+)
+@NiagaraProperty(
   name = "heartbeatIntervalSec",
   type = "int",
   defaultValue = "30",
@@ -88,8 +94,8 @@ public final class BBaskStreamService extends BWebServlet
 
 //region /*+ ------------ BEGIN BAJA AUTO GENERATED CODE ------------ +*/
 //@formatter:off
-/*@ $com.basidekick.baskstream.BBaskStreamService(3179159577)1.0$ @*/
-/* Generated Thu May 28 05:57:15 MST 2026 by Slot-o-Matic (c) Tridium, Inc. 2012-2026 */
+/*@ $com.basidekick.baskstream.BBaskStreamService(3779186472)1.0$ @*/
+/* Generated Tue Jun 09 08:09:28 MST 2026 by Slot-o-Matic (c) Tridium, Inc. 2012-2026 */
 
   //region Property "wsPath"
 
@@ -159,6 +165,29 @@ public final class BBaskStreamService extends BWebServlet
   public void setMaxSubscriptionsPerClient(int v) { setInt(maxSubscriptionsPerClient, v, null); }
 
   //endregion Property "maxSubscriptionsPerClient"
+
+  //region Property "maxPointSnapshotPoints"
+
+  /**
+   * Slot for the {@code maxPointSnapshotPoints} property.
+   * @see #getMaxPointSnapshotPoints
+   * @see #setMaxPointSnapshotPoints
+   */
+  public static final Property maxPointSnapshotPoints = newProperty(Flags.SUMMARY, 1000, null);
+
+  /**
+   * Get the {@code maxPointSnapshotPoints} property.
+   * @see #maxPointSnapshotPoints
+   */
+  public int getMaxPointSnapshotPoints() { return getInt(maxPointSnapshotPoints); }
+
+  /**
+   * Set the {@code maxPointSnapshotPoints} property.
+   * @see #maxPointSnapshotPoints
+   */
+  public void setMaxPointSnapshotPoints(int v) { setInt(maxPointSnapshotPoints, v, null); }
+
+  //endregion Property "maxPointSnapshotPoints"
 
   //region Property "heartbeatIntervalSec"
 
@@ -422,6 +451,11 @@ public final class BBaskStreamService extends BWebServlet
     return getMaxSubscriptionsPerClient();
   }
 
+  int getMaxPointSnapshotPointsValue()
+  {
+    return Math.max(1, getMaxPointSnapshotPoints());
+  }
+
   int getHeartbeatIntervalSecValue()
   {
     return Math.max(1, getHeartbeatIntervalSec());
@@ -505,11 +539,12 @@ public final class BBaskStreamService extends BWebServlet
       + "\"service\":\"BASkStreamService\","
       + "\"enabled\":" + getEnabled() + ","
       + "\"wsPath\":\"" + escapeJson(getWsPath()) + "\","
-      + "\"apiVersion\":\"1.2\","
+      + "\"apiVersion\":\"1.3\","
       + "\"servletName\":\"" + escapeJson(getServletName()) + "\","
       + "\"pathInfo\":\"" + escapeJson(op.getPathInfo()) + "\","
       + "\"maxConnections\":" + getMaxConnectionsValue() + ","
       + "\"maxSubscriptionsPerClient\":" + getMaxSubscriptionsPerClientValue() + ","
+      + "\"maxPointSnapshotPoints\":" + getMaxPointSnapshotPointsValue() + ","
       + "\"heartbeatIntervalSec\":" + getHeartbeatIntervalSecValue() + ","
       + "\"subscriptionLeaseSec\":" + getSubscriptionLeaseSecValue() + ","
       + "\"covBatchWindowMillis\":" + getCovBatchWindowMillisValue() + ","

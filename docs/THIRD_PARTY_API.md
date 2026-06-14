@@ -54,10 +54,12 @@ Response:
   "op": "capabilities_result",
   "id": "caps-1",
   "capabilities": {
-    "apiVersion": "1.2",
+    "apiVersion": "1.3",
     "operations": ["browse", "read", "subscribe", "replace_subscriptions", "write", "read_alarms", "ack_alarm", "clear_alarm"],
     "limits": {
       "maxSubscriptionsPerClient": 500,
+      "maxLivePointsPerStream": 500,
+      "maxPointSnapshotPoints": 1000,
       "heartbeatIntervalSec": 30,
       "subscriptionLeaseSec": 300,
       "covBatchWindowMillis": 100,
@@ -77,10 +79,23 @@ Response:
       "pointCovBatching": true,
       "viewGroups": true,
       "leasedGroups": true,
+      "sharedStationSubscriptions": false,
       "alarmEvents": true,
       "modelEvents": true,
       "historyLive": false,
       "scheduleLive": false
+    },
+    "pointSnapshot": {
+      "operation": "read",
+      "batch": true,
+      "facets": true,
+      "fieldSelection": true,
+      "maxPoints": 1000,
+      "fields": ["point", "ok", "display", "type", "valueType", "value", "displayValue", "status", "timestamp", "facets", "enumOrdinal", "enumTag", "enumDisplay", "enumOptions"]
+    },
+    "graphics": {
+      "plainPx": false,
+      "plainGraphic": false
     }
   }
 }
@@ -209,7 +224,7 @@ When traversal stops early, `truncated` is `true` and `truncatedReasons` may inc
 
 ### `read`
 
-Reads one or more point/value ORDs.
+Reads one or more point/value ORDs. This is the batch point snapshot operation; it does not perform a full component `describe` or `browse` for each point.
 
 ```json
 {
@@ -231,17 +246,36 @@ Response:
   "points": [
     {
       "point": "slot:/Drivers/LonNetwork/Floor1/AHU_01/points/SpaceTemp",
-      "displayName": "Space Temp",
+      "display": "Space Temp",
       "valueType": "baja:Double",
       "value": 72.4,
       "displayValue": "72.4 °F",
       "status": "{ok}",
       "ok": true,
-      "timestamp": 1779648232328
+      "timestamp": 1779648232328,
+      "facets": {
+        "units": "°F",
+        "precision": "1"
+      }
     }
   ]
 }
 ```
+
+Use optional `fields` to trim successful point snapshots. The server always returns `point` and `ok`; partial error entries still include `point`, `ok`, `code`, and `message`.
+
+```json
+{
+  "op": "read",
+  "id": "4b",
+  "points": [
+    "slot:/Drivers/LonNetwork/Floor1/AHU_01/points/SpaceTemp"
+  ],
+  "fields": ["value", "displayValue", "status", "facets", "timestamp", "type"]
+}
+```
+
+Supported fields are advertised by `capabilities.pointSnapshot.fields`. `type` is a field-selection alias for the existing `valueType` string. The maximum `read.points` count is configurable and advertised as `capabilities.limits.maxPointSnapshotPoints`.
 
 Enum and Boolean values include enum metadata when available:
 

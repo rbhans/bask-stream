@@ -281,7 +281,7 @@ final class BaskStreamClientSession
   private void handleCapabilities(String id)
   {
     Map<String, Object> capabilities = new LinkedHashMap<String, Object>();
-    capabilities.put("apiVersion", "1.2");
+    capabilities.put("apiVersion", "1.3");
     capabilities.put("module", "baskStream");
     capabilities.put("transport", "websocket-msgpack");
     capabilities.put("serverTime", Long.valueOf(Clock.millis()));
@@ -318,6 +318,8 @@ final class BaskStreamClientSession
     limits.put("maxConnections", Long.valueOf(runtime.getService().getMaxConnectionsValue()));
     limits.put("activeConnections", Long.valueOf(runtime.getService().getActiveConnectionsValue()));
     limits.put("maxSubscriptionsPerClient", Long.valueOf(runtime.getService().getMaxSubscriptionsPerClientValue()));
+    limits.put("maxLivePointsPerStream", Long.valueOf(runtime.getService().getMaxSubscriptionsPerClientValue()));
+    limits.put("maxPointSnapshotPoints", Long.valueOf(runtime.getService().getMaxPointSnapshotPointsValue()));
     limits.put("totalSubscriptions", Long.valueOf(runtime.getService().getTotalSubscriptionsValue()));
     limits.put("heartbeatIntervalSec", Long.valueOf(runtime.getService().getHeartbeatIntervalSecValue()));
     limits.put("subscriptionLeaseSec", Long.valueOf(runtime.getService().getSubscriptionLeaseSecValue()));
@@ -346,7 +348,7 @@ final class BaskStreamClientSession
 
     Map<String, Object> schemas = new LinkedHashMap<String, Object>();
     schemas.put("nodeMetadata", "2");
-    schemas.put("pointSnapshot", "1");
+    schemas.put("pointSnapshot", "2");
     schemas.put("history", "2");
     schemas.put("alarm", "1");
     schemas.put("modelEvents", "1");
@@ -361,9 +363,39 @@ final class BaskStreamClientSession
     subscriptionsMeta.put("leasedGroups", Boolean.valueOf(runtime.getService().getSubscriptionLeaseSecValue() > 0));
     subscriptionsMeta.put("alarmEvents", Boolean.TRUE);
     subscriptionsMeta.put("modelEvents", Boolean.TRUE);
+    subscriptionsMeta.put("sharedStationSubscriptions", Boolean.FALSE);
     subscriptionsMeta.put("historyLive", Boolean.FALSE);
     subscriptionsMeta.put("scheduleLive", Boolean.FALSE);
     capabilities.put("subscriptions", subscriptionsMeta);
+
+    Map<String, Object> pointSnapshot = new LinkedHashMap<String, Object>();
+    pointSnapshot.put("operation", "read");
+    pointSnapshot.put("batch", Boolean.TRUE);
+    pointSnapshot.put("facets", Boolean.TRUE);
+    pointSnapshot.put("fieldSelection", Boolean.TRUE);
+    pointSnapshot.put("maxPoints", Long.valueOf(runtime.getService().getMaxPointSnapshotPointsValue()));
+    pointSnapshot.put("fields", listOf(
+        "point",
+        "ok",
+        "display",
+        "type",
+        "valueType",
+        "value",
+        "displayValue",
+        "status",
+        "timestamp",
+        "facets",
+        "enumOrdinal",
+        "enumTag",
+        "enumDisplay",
+        "enumOptions"));
+    capabilities.put("pointSnapshot", pointSnapshot);
+
+    Map<String, Object> graphics = new LinkedHashMap<String, Object>();
+    graphics.put("plainPx", Boolean.FALSE);
+    graphics.put("plainGraphic", Boolean.FALSE);
+    graphics.put("note", "Plain Px/WebOp embedding is not implemented in this API version.");
+    capabilities.put("graphics", graphics);
 
     Map<String, Object> policy = new LinkedHashMap<String, Object>();
     policy.put("allowedPathPatterns", runtime.getService().getAllowedPathPatterns());
@@ -380,11 +412,12 @@ final class BaskStreamClientSession
   private void handleRead(String id, Map<String, Object> request) throws BaskStreamProtocolException
   {
     List<String> points = runtime.getCodec().requireStringList(request, "points");
-    requireMaxSize(points, "points", MAX_POINTS_PER_REQUEST);
+    requireMaxSize(points, "points", runtime.getService().getMaxPointSnapshotPointsValue());
+    List<String> fields = normalizeSnapshotFields(request);
     List<Object> results = new ArrayList<Object>(points.size());
     for (String pointOrd : points)
     {
-      results.add(resolveReadResult(pointOrd));
+      results.add(resolveReadResult(pointOrd, fields));
     }
 
     Map<String, Object> response = baseMessage("read_result", id);
@@ -1117,17 +1150,63 @@ final class BaskStreamClientSession
     }
   }
 
-  private Object resolveReadResult(String pointOrd)
+  private Object resolveReadResult(String pointOrd, List<String> fields)
   {
     try
     {
       BaskStreamPointResolver.ResolvedPoint point = runtime.getResolver().resolve(pointOrd, context);
-      return runtime.getResolver().snapshot(point, context).toWire();
+      return runtime.getResolver().snapshot(point, context).toWire(fields);
     }
     catch (BaskStreamProtocolException e)
     {
       return errorEntry(pointOrd, e.getCode(), e.getMessage());
     }
+  }
+
+  private List<String> normalizeSnapshotFields(Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    List<String> fields = optionalStringList(request, "fields");
+    if (fields == null)
+    {
+      return null;
+    }
+
+    List<String> normalized = new ArrayList<String>(fields.size());
+    for (String raw : fields)
+    {
+      String field = raw == null ? "" : raw.trim();
+      if (field.length() == 0)
+      {
+        throw new BaskStreamProtocolException("bad_request", "Field 'fields' cannot contain blank entries.");
+      }
+      if (!isSupportedSnapshotField(field))
+      {
+        throw new BaskStreamProtocolException("bad_request", "Unsupported point snapshot field: " + field);
+      }
+      if (!normalized.contains(field))
+      {
+        normalized.add(field);
+      }
+    }
+    return normalized;
+  }
+
+  private boolean isSupportedSnapshotField(String field)
+  {
+    return "point".equals(field)
+        || "ok".equals(field)
+        || "display".equals(field)
+        || "type".equals(field)
+        || "valueType".equals(field)
+        || "value".equals(field)
+        || "displayValue".equals(field)
+        || "status".equals(field)
+        || "timestamp".equals(field)
+        || "facets".equals(field)
+        || "enumOrdinal".equals(field)
+        || "enumTag".equals(field)
+        || "enumDisplay".equals(field)
+        || "enumOptions".equals(field);
   }
 
   private void onComponentEvent(BComponentEvent event)

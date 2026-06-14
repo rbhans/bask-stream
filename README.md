@@ -77,7 +77,7 @@ Recommended external app flow:
 4. Use shallow `browse`, `describe`, or `search` calls for discovery.
 5. Request `metadata: "full"` for initial discovery or refresh passes.
 6. Omit metadata for routine navigation when the app already has cached structure.
-7. Use `read` for current value snapshots.
+7. Use `read` for current value snapshots, including optional field selection for lean point tables.
 8. Use `replace_subscriptions` for points on the active graphic or UI view.
 9. Use `release_subscriptions` when a view closes.
 10. Use alarm, schedule, and history calls only where the app needs those views.
@@ -88,7 +88,7 @@ Recommended external app flow:
 | --- | --- | --- |
 | Verify API | `ping`, `capabilities` | Confirm connection and discover supported features, limits, and schema versions. |
 | Discover station tree | `browse`, `describe`, `search` | Build equipment, point, schedule, history, and metadata views. |
-| Read live values | `read` | Fetch current point snapshots with value, display value, status, and timestamp. |
+| Read live values | `read` | Fetch current point snapshots with value, display value, status, timestamp, and facets. |
 | Subscribe to graphic values | `replace_subscriptions`, `renew_subscriptions`, `release_subscriptions` | Keep live COV data scoped to the active view and let the server manage diffing and leases. |
 | Simple point watches | `subscribe`, `unsubscribe` | Use for simple clients or long-lived manual watches. |
 | Write points | `describe_write`, `write` | Render safe controls, then set, override, auto, or emergency override writable points. |

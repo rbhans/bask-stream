@@ -393,6 +393,11 @@ function connectWebSocket() {
   });
 }
 
+async function openClient() {
+  const ws = await connectWebSocket();
+  return new BaskStreamClient(ws.socket, ws.initial);
+}
+
 class BaskStreamClient {
   constructor(socket, initial) {
     this.socket = socket;
@@ -486,6 +491,7 @@ function summarizePoint(point) {
     value: point.value,
     displayValue: point.displayValue,
     status: point.status,
+    facets: point.facets,
     enumOrdinal: point.enumOrdinal,
     enumTag: point.enumTag,
     enumOptions: point.enumOptions,
@@ -785,8 +791,7 @@ async function main() {
   const health = await login();
   line("health", health);
 
-  const ws = await connectWebSocket();
-  const client = new BaskStreamClient(ws.socket, ws.initial);
+  const client = await openClient();
   const results = [];
   const pass = (name, details = {}) => results.push({ name, ok: true, ...details });
   const fail = (name, error) => results.push({ name, ok: false, error: error.message || String(error) });
@@ -819,16 +824,30 @@ async function main() {
       }
     }
     const limits = capabilities.capabilities?.limits || {};
-    for (const key of ["maxBrowseDepth", "defaultSearchDepth", "maxSearchDepth", "maxSearchLimit", "defaultSearchMaxVisited", "defaultSearchTimeoutMillis"]) {
+    for (const key of ["maxPointSnapshotPoints", "maxBrowseDepth", "defaultSearchDepth", "maxSearchDepth", "maxSearchLimit", "defaultSearchMaxVisited", "defaultSearchTimeoutMillis"]) {
       if (typeof limits[key] !== "number") {
         throw new Error(`Capabilities missing numeric limit ${key}.`);
       }
     }
+    const pointSnapshot = capabilities.capabilities?.pointSnapshot || {};
+    if (pointSnapshot.operation !== "read" || pointSnapshot.fieldSelection !== true || pointSnapshot.facets !== true) {
+      throw new Error("Capabilities missing point snapshot field/facet support.");
+    }
+    if (!Array.isArray(pointSnapshot.fields) || !pointSnapshot.fields.includes("facets") || !pointSnapshot.fields.includes("type")) {
+      throw new Error("Capabilities missing supported point snapshot fields.");
+    }
+    const graphics = capabilities.capabilities?.graphics || {};
+    if (graphics.plainPx !== false) {
+      throw new Error("Capabilities should report plainPx=false until plain graphics are implemented.");
+    }
     pass("capabilities", {
       apiVersion: capabilities.capabilities?.apiVersion,
+      maxPointSnapshotPoints: limits.maxPointSnapshotPoints,
       maxSubscriptions: limits.maxSubscriptionsPerClient,
       defaultSearchDepth: limits.defaultSearchDepth,
-      maxSearchLimit: limits.maxSearchLimit
+      maxSearchLimit: limits.maxSearchLimit,
+      pointSnapshotFields: pointSnapshot.fields.length,
+      plainPx: graphics.plainPx
     });
   }
   catch (error) {
@@ -1011,6 +1030,9 @@ async function main() {
         expectStatus: true
       });
       const read = await readOne(client, point);
+      if (!isObject(read?.facets)) {
+        throw new Error(`Read snapshot for ${name} missing facets object.`);
+      }
       const details = {
         slotPath: describe.node?.slotPath,
         type: describe.node?.typeSpec,
@@ -1034,6 +1056,31 @@ async function main() {
     catch (error) {
       fail(`describe/read ${name}`, error);
     }
+  }
+
+  try {
+    const selected = await client.send("read", {
+      points: [points.numeric],
+      fields: ["value", "displayValue", "status", "facets", "timestamp", "type"]
+    });
+    const snapshot = selected.points?.[0];
+    if (!snapshot || snapshot.code) {
+      throw new Error("Field-selected read did not return a valid point snapshot.");
+    }
+    for (const key of ["point", "ok", "value", "displayValue", "status", "facets", "timestamp", "type"]) {
+      if (!hasOwn(snapshot, key)) {
+        throw new Error(`Field-selected read missing ${key}.`);
+      }
+    }
+    for (const key of ["display", "valueType", "enumOptions"]) {
+      if (hasOwn(snapshot, key)) {
+        throw new Error(`Field-selected read unexpectedly included ${key}.`);
+      }
+    }
+    pass("read field selection", { snapshot: summarizePoint(snapshot) });
+  }
+  catch (error) {
+    fail("read field selection", error);
   }
 
   try {
@@ -1090,6 +1137,61 @@ async function main() {
   }
   catch (error) {
     fail("subscription groups", error);
+  }
+
+  let secondClient = null;
+  let dualGroup = null;
+  try {
+    secondClient = await openClient();
+    dualGroup = `dual-${Date.now()}`;
+    const sharedPoints = [points.bool, points.string];
+    const first = await client.send("replace_subscriptions", {
+      group: dualGroup,
+      points: sharedPoints,
+      leaseSec: 60
+    });
+    const second = await secondClient.send("replace_subscriptions", {
+      group: dualGroup,
+      points: sharedPoints,
+      leaseSec: 60
+    });
+    if ((first.points || []).length !== sharedPoints.length || (second.points || []).length !== sharedPoints.length) {
+      throw new Error("Dual clients did not both receive initial grouped snapshots.");
+    }
+
+    secondClient.close();
+    secondClient = null;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const status = await client.send("subscription_status", { includePoints: true });
+    const group = (status.groups || []).find((entry) => entry.group === dualGroup);
+    if (!group || group.pointCount !== sharedPoints.length) {
+      throw new Error("Closing second client removed or changed first client's group.");
+    }
+    const renewed = await client.send("renew_subscriptions", { group: dualGroup, leaseSec: 60 });
+    if (renewed.pointCount !== sharedPoints.length) {
+      throw new Error("First client's group could not be renewed after second client closed.");
+    }
+    await client.send("release_subscriptions", { group: dualGroup });
+    dualGroup = null;
+    pass("dual client subscription isolation", {
+      points: sharedPoints.length,
+      renewed: renewed.pointCount
+    });
+  }
+  catch (error) {
+    fail("dual client subscription isolation", error);
+  }
+  finally {
+    if (dualGroup) {
+      try {
+        await client.send("release_subscriptions", { group: dualGroup });
+      }
+      catch {}
+    }
+    if (secondClient) {
+      secondClient.close();
+    }
   }
 
   try {

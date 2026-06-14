@@ -1,6 +1,7 @@
 package com.basidekick.baskstream;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 final class PointSnapshot
@@ -51,5 +52,35 @@ final class PointSnapshot
       wire.putAll(extra);
     }
     return wire;
+  }
+
+  Map<String, Object> toWire(List<String> fields)
+  {
+    Map<String, Object> full = toWire();
+    if (fields == null || fields.isEmpty())
+    {
+      return full;
+    }
+
+    Map<String, Object> filtered = new LinkedHashMap<String, Object>();
+    filtered.put("point", pointOrd);
+    filtered.put("ok", Boolean.valueOf(ok));
+    for (String field : fields)
+    {
+      if ("point".equals(field) || "ok".equals(field))
+      {
+        continue;
+      }
+      if ("type".equals(field))
+      {
+        filtered.put("type", valueType);
+        continue;
+      }
+      if (full.containsKey(field))
+      {
+        filtered.put(field, full.get(field));
+      }
+    }
+    return filtered;
   }
 }
