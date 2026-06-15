@@ -18,6 +18,7 @@
         "BASKSTREAM_TIMEOUT_MS",
         "BASKSTREAM_ALLOW_WRITES",
         "BASKSTREAM_ALLOW_ALARM_ACTIONS",
+        "BASKSTREAM_ALLOW_RAW",
         "BASKSTREAM_CONFIG"
       ],
       "startup_timeout_sec": 15,

@@ -2,6 +2,8 @@
 
 Local stdio MCP server for AI access to a baskStream-enabled Niagara station.
 
+This project is not affiliated with, endorsed by, or sponsored by Tridium, Honeywell, Anthropic, OpenAI, Claude, Codex, or any MCP client vendor.
+
 The MCP uses the same contract as every other baskStream client:
 
 1. Niagara web login.
@@ -9,6 +11,17 @@ The MCP uses the same contract as every other baskStream client:
 3. Authenticated MessagePack WebSocket calls to `/stream`.
 
 It is intentionally separate from `baskStream-rt/` so Node dependencies never enter the Niagara module build.
+
+## Legal And EULA Boundary
+
+This is engineering guidance, not legal advice. Before distributing or using the MCP on a third-party station, review the current [Tridium Niagara EULA](https://www.tridium.com/us/en/eula), the target station's license/order terms, and customer agreements.
+
+- Use the MCP only with Niagara stations you are authorized to access.
+- Keep AI prompts and MCP outputs focused on station data exposed by the installed baskStream API.
+- Do not provide Tridium source code, decompiled code, binary internals, license keys, proprietary documentation, vulnerability findings, or benchmark/evaluation results to AI tools.
+- Do not use this MCP to reverse engineer, reproduce, modify, or bypass Niagara Framework behavior, APIs, licensing, security devices, or access controls.
+- Use a least-privilege Niagara account for AI workflows.
+- Keep write and alarm-action flags disabled unless the operator explicitly intends mutation.
 
 ## Install
 
@@ -39,7 +52,8 @@ Prefer MCP client environment settings so station credentials stay in the local 
         "BASKSTREAM_PASSWORD": "<niagara-password>",
         "BASKSTREAM_VERIFY_TLS": "false",
         "BASKSTREAM_ALLOW_WRITES": "false",
-        "BASKSTREAM_ALLOW_ALARM_ACTIONS": "false"
+        "BASKSTREAM_ALLOW_ALARM_ACTIONS": "false",
+        "BASKSTREAM_ALLOW_RAW": "false"
       }
     }
   }
@@ -60,6 +74,12 @@ Optional mutation flags:
 ```bash
 export BASKSTREAM_ALLOW_WRITES="true"
 export BASKSTREAM_ALLOW_ALARM_ACTIONS="true"
+```
+
+Advanced raw-operation access is hidden by default and should stay off for normal installs:
+
+```bash
+export BASKSTREAM_ALLOW_RAW="true"
 ```
 
 You can also copy `config.example.json` to `config.json` in this folder. `config.json` is ignored by git. Environment variables override the config file.
@@ -138,7 +158,7 @@ Mutation-capable:
 
 - `baskstream_write_point` requires `BASKSTREAM_ALLOW_WRITES=true`.
 - `baskstream_ack_alarms` and `baskstream_clear_alarms` require `BASKSTREAM_ALLOW_ALARM_ACTIONS=true`.
-- `baskstream_call_raw` can call arbitrary request/response operations. Mutating raw operations are blocked unless the matching mutation flag is enabled.
+- `baskstream_call_raw` is hidden unless `BASKSTREAM_ALLOW_RAW=true`. It can call arbitrary request/response operations and should be reserved for local development/debugging. Mutating raw operations also require the matching mutation flag.
 
 ## Notes
 

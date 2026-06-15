@@ -15,7 +15,8 @@ const commonEnv = {
   BASKSTREAM_PASSWORD: "<niagara-password>",
   BASKSTREAM_VERIFY_TLS: "false",
   BASKSTREAM_ALLOW_WRITES: "false",
-  BASKSTREAM_ALLOW_ALARM_ACTIONS: "false"
+  BASKSTREAM_ALLOW_ALARM_ACTIONS: "false",
+  BASKSTREAM_ALLOW_RAW: "false"
 };
 
 function json(value) {
@@ -72,7 +73,8 @@ console.log(json({
         BASKSTREAM_PASSWORD: "${input:baskstream-password}",
         BASKSTREAM_VERIFY_TLS: "false",
         BASKSTREAM_ALLOW_WRITES: "false",
-        BASKSTREAM_ALLOW_ALARM_ACTIONS: "false"
+        BASKSTREAM_ALLOW_ALARM_ACTIONS: "false",
+        BASKSTREAM_ALLOW_RAW: "false"
       }
     }
   }
@@ -91,7 +93,8 @@ console.log(json({
         BASKSTREAM_PASSWORD: "${env:BASKSTREAM_PASSWORD}",
         BASKSTREAM_VERIFY_TLS: "${env:BASKSTREAM_VERIFY_TLS}",
         BASKSTREAM_ALLOW_WRITES: "${env:BASKSTREAM_ALLOW_WRITES}",
-        BASKSTREAM_ALLOW_ALARM_ACTIONS: "${env:BASKSTREAM_ALLOW_ALARM_ACTIONS}"
+        BASKSTREAM_ALLOW_ALARM_ACTIONS: "${env:BASKSTREAM_ALLOW_ALARM_ACTIONS}",
+        BASKSTREAM_ALLOW_RAW: "${env:BASKSTREAM_ALLOW_RAW}"
       }
     }
   }
@@ -109,7 +112,8 @@ console.log(json({
         BASKSTREAM_PASSWORD: "${env:BASKSTREAM_PASSWORD}",
         BASKSTREAM_VERIFY_TLS: "${env:BASKSTREAM_VERIFY_TLS}",
         BASKSTREAM_ALLOW_WRITES: "${env:BASKSTREAM_ALLOW_WRITES}",
-        BASKSTREAM_ALLOW_ALARM_ACTIONS: "${env:BASKSTREAM_ALLOW_ALARM_ACTIONS}"
+        BASKSTREAM_ALLOW_ALARM_ACTIONS: "${env:BASKSTREAM_ALLOW_ALARM_ACTIONS}",
+        BASKSTREAM_ALLOW_RAW: "${env:BASKSTREAM_ALLOW_RAW}"
       }
     }
   }
@@ -136,6 +140,7 @@ console.log(`claude mcp add \`
   --env BASKSTREAM_VERIFY_TLS="false" \`
   --env BASKSTREAM_ALLOW_WRITES="false" \`
   --env BASKSTREAM_ALLOW_ALARM_ACTIONS="false" \`
+  --env BASKSTREAM_ALLOW_RAW="false" \`
   --transport stdio \`
   baskstream -- node "${psPath(serverPath)}"`);
 
@@ -152,6 +157,7 @@ console.log(`mcp_servers:
       BASKSTREAM_VERIFY_TLS: "false"
       BASKSTREAM_ALLOW_WRITES: "false"
       BASKSTREAM_ALLOW_ALARM_ACTIONS: "false"
+      BASKSTREAM_ALLOW_RAW: "false"
     enabled: true
     timeout: 120
     connect_timeout: 60`);

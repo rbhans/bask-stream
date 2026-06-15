@@ -60,6 +60,20 @@ async function inspectMcpServer() {
       }
     }
 
+    const rawEnabled = ["1", "true", "yes", "on"].includes(String(process.env.BASKSTREAM_ALLOW_RAW || "").toLowerCase());
+    if (rawEnabled && !names.includes("baskstream_call_raw")) {
+      fail("BASKSTREAM_ALLOW_RAW=true but raw operation tool is missing");
+    }
+    else if (!rawEnabled && names.includes("baskstream_call_raw")) {
+      fail("raw operation tool is exposed without BASKSTREAM_ALLOW_RAW=true");
+    }
+    else if (rawEnabled) {
+      ok("raw operation tool available by explicit opt-in");
+    }
+    else {
+      ok("raw operation tool hidden by default");
+    }
+
     if (noStation) {
       warn("station probe skipped by --no-station");
       return;
@@ -98,4 +112,3 @@ try {
 catch (error) {
   fail(error instanceof Error ? error.message : String(error));
 }
-

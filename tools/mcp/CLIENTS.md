@@ -2,6 +2,8 @@
 
 Build once, then choose the client-specific install path.
 
+This project is not affiliated with, endorsed by, or sponsored by Tridium, Honeywell, Anthropic, OpenAI, Claude, Codex, or any MCP client vendor.
+
 ```powershell
 cd C:\path\to\NiagaraFalls\tools\mcp
 npm run setup
@@ -51,11 +53,15 @@ For a read-only install, leave `-AllowWrites` and `-AllowAlarmActions` off.
 
 ## Security Defaults
 
+- Use this MCP only with Niagara stations you are authorized to access.
 - Keep `BASKSTREAM_ALLOW_WRITES=false` unless point writes are intended.
 - Keep `BASKSTREAM_ALLOW_ALARM_ACTIONS=false` unless alarm acknowledgement or clear is intended.
+- Keep `BASKSTREAM_ALLOW_RAW=false`; the raw operation tool is hidden unless explicitly enabled for controlled local debugging.
 - Use a least-privilege Niagara user.
 - Prefer client settings, environment variables, MCPB user config, or local ignored files for credentials.
 - Do not commit real passwords in any example file.
+- Do not provide Tridium source code, decompiled code, binary internals, license keys, proprietary documentation, vulnerability findings, or benchmark/evaluation results to AI tools.
+- Do not imply Tridium, Honeywell, Anthropic, OpenAI, Claude, Codex, or Official MCP Registry endorsement in distribution copy.
 
 ## Client Notes
 
@@ -73,6 +79,8 @@ This matrix is based on these client docs and should be rechecked if a client ch
 - Claude Code plugins: https://code.claude.com/docs/en/plugins
 - Claude Desktop extensions: https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop
 - MCPB manifest and CLI: https://github.com/modelcontextprotocol/mcpb
+- MCP security best practices: https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices
+- Tridium Niagara EULA: https://www.tridium.com/us/en/eula
 - VS Code MCP configuration: https://code.visualstudio.com/docs/agents/reference/mcp-configuration
 - Cursor MCP: https://cursor.com/docs/mcp.md
 - Windsurf/Cascade MCP: https://docs.devin.ai/desktop/cascade/mcp

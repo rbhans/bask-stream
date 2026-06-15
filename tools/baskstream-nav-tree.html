@@ -948,7 +948,8 @@
               <li>Create or choose a Niagara user with only the station permissions your external app needs.</li>
               <li>For this companion app, run <code>node tools/baskstream-nav-tree-server.mjs --port=8787</code>, open <code>http://127.0.0.1:8787/</code>, and connect from the Test Console.</li>
               <li>For Python bench tests, install <code>tools/python-tools/tools/python/requirements.txt</code> and start with the smoke script.</li>
-              <li>For AI use, run <code>cd tools/mcp &amp;&amp; npm run setup</code>, follow <code>tools/mcp/INSTALL.md</code>, and keep write flags off until mutation is intended.</li>
+              <li>Confirm the target station, license, and customer agreement allow this integration before using AI tooling.</li>
+              <li>For AI use, run <code>cd tools/mcp &amp;&amp; npm run setup</code>, follow <code>tools/mcp/INSTALL.md</code>, and keep write, alarm, and raw-operation flags off unless mutation/debugging is intended.</li>
               <li>Start every client with <code>capabilities</code>, then use <code>browse</code>, <code>search</code>, <code>read</code>, and subscriptions based on the screen or workflow.</li>
             </ol>
           </div>
@@ -959,7 +960,7 @@
             <h2>AI Client Setup</h2>
           </div>
           <div class="guide-panel-body">
-            <p>The MCP server is optional local tooling for AI clients. This standalone companion app cannot write client config files or run installers from the browser, but it can generate the commands and config snippets to paste into the target tool.</p>
+            <p>The MCP server is optional local tooling for AI clients. Use it only with authorized Niagara stations, keep Tridium proprietary materials out of AI prompts, and leave raw operations disabled. This standalone companion app cannot write client config files or run installers from the browser, but it can generate the commands and config snippets to paste into the target tool.</p>
             <div class="setup-grid">
               <label class="setup-wide">
                 Target
@@ -1000,6 +1001,21 @@
               <span id="mcpCopyStatus" class="copy-status">Credentials stay as placeholders in generated snippets.</span>
             </div>
             <pre id="mcpInstallOutput" class="raw setup-output" aria-label="Generated MCP setup snippet"></pre>
+          </div>
+        </section>
+
+        <section class="guide-panel">
+          <div class="guide-panel-head">
+            <h2>Legal And AI Boundary</h2>
+          </div>
+          <div class="guide-panel-body">
+            <ol class="guide-list">
+              <li>Use baskStream only with stations and Niagara licenses you are authorized to access.</li>
+              <li>Do not put Tridium source, decompiled code, binary internals, license files, keys, proprietary docs, vulnerability findings, or benchmark results into AI prompts.</li>
+              <li>Do not reverse engineer, reproduce, modify, or bypass Niagara Framework behavior, APIs, licensing, security devices, or access controls.</li>
+              <li>Do not imply endorsement by Tridium, Honeywell, Anthropic, OpenAI, Claude, Codex, or an MCP client vendor.</li>
+              <li>Review <code>docs/LEGAL_AND_SAFETY.md</code>, <code>docs/PRIVACY.md</code>, and <code>docs/TERMS.md</code> before distribution.</li>
+            </ol>
           </div>
         </section>
 
@@ -1456,7 +1472,8 @@
           BASKSTREAM_PASSWORD: "<niagara-password>",
           BASKSTREAM_VERIFY_TLS: els.mcpVerifyTls.value,
           BASKSTREAM_ALLOW_WRITES: boolText(els.mcpAllowWrites.checked),
-          BASKSTREAM_ALLOW_ALARM_ACTIONS: boolText(els.mcpAllowAlarms.checked)
+          BASKSTREAM_ALLOW_ALARM_ACTIONS: boolText(els.mcpAllowAlarms.checked),
+          BASKSTREAM_ALLOW_RAW: "false"
         };
       }
 
@@ -1508,7 +1525,8 @@
                 BASKSTREAM_PASSWORD: "${input:baskstream-password}",
                 BASKSTREAM_VERIFY_TLS: env.BASKSTREAM_VERIFY_TLS,
                 BASKSTREAM_ALLOW_WRITES: env.BASKSTREAM_ALLOW_WRITES,
-                BASKSTREAM_ALLOW_ALARM_ACTIONS: env.BASKSTREAM_ALLOW_ALARM_ACTIONS
+                BASKSTREAM_ALLOW_ALARM_ACTIONS: env.BASKSTREAM_ALLOW_ALARM_ACTIONS,
+                BASKSTREAM_ALLOW_RAW: env.BASKSTREAM_ALLOW_RAW
               }
             }
           }
@@ -1530,6 +1548,7 @@
           "      BASKSTREAM_VERIFY_TLS: " + quoteYaml(env.BASKSTREAM_VERIFY_TLS),
           "      BASKSTREAM_ALLOW_WRITES: " + quoteYaml(env.BASKSTREAM_ALLOW_WRITES),
           "      BASKSTREAM_ALLOW_ALARM_ACTIONS: " + quoteYaml(env.BASKSTREAM_ALLOW_ALARM_ACTIONS),
+          "      BASKSTREAM_ALLOW_RAW: " + quoteYaml(env.BASKSTREAM_ALLOW_RAW),
           "    enabled: true",
           "    timeout: 120",
           "    connect_timeout: 60"
@@ -1550,6 +1569,7 @@
           "$env:BASKSTREAM_VERIFY_TLS = " + quotePs(env.BASKSTREAM_VERIFY_TLS),
           "$env:BASKSTREAM_ALLOW_WRITES = " + quotePs(env.BASKSTREAM_ALLOW_WRITES),
           "$env:BASKSTREAM_ALLOW_ALARM_ACTIONS = " + quotePs(env.BASKSTREAM_ALLOW_ALARM_ACTIONS),
+          "$env:BASKSTREAM_ALLOW_RAW = " + quotePs(env.BASKSTREAM_ALLOW_RAW),
           "",
           "npm run doctor",
           "npm run print-config",
@@ -1572,6 +1592,7 @@
           "  --env BASKSTREAM_VERIFY_TLS=" + quotePs(env.BASKSTREAM_VERIFY_TLS) + " `",
           "  --env BASKSTREAM_ALLOW_WRITES=" + quotePs(env.BASKSTREAM_ALLOW_WRITES) + " `",
           "  --env BASKSTREAM_ALLOW_ALARM_ACTIONS=" + quotePs(env.BASKSTREAM_ALLOW_ALARM_ACTIONS) + " `",
+          "  --env BASKSTREAM_ALLOW_RAW=" + quotePs(env.BASKSTREAM_ALLOW_RAW) + " `",
           "  --transport stdio `",
           "  baskstream -- node " + quotePs(mcpServerPath()),
           "",

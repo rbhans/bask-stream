@@ -10,7 +10,7 @@ mcp_servers:
       BASKSTREAM_VERIFY_TLS: "false"
       BASKSTREAM_ALLOW_WRITES: "false"
       BASKSTREAM_ALLOW_ALARM_ACTIONS: "false"
+      BASKSTREAM_ALLOW_RAW: "false"
     enabled: true
     timeout: 120
     connect_timeout: 60
-

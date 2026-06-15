@@ -2,6 +2,8 @@
 
 baskStream exposes station data over an authenticated WebSocket endpoint using MessagePack frames. It is intended to give external applications a faster live-data path than polling Niagara REST, while still preserving Niagara's native object model, permissions, point status, alarms, schedules, and histories.
 
+This project is not affiliated with, endorsed by, or sponsored by Tridium or Honeywell. Use the API only with Niagara stations and licenses you are authorized to access. Do not use this API work to reverse engineer, decompile, modify, or reproduce Niagara Framework internals, license files, proprietary documentation, or confidential security/performance information.
+
 ## Connection Model
 
 - Health check: `GET /stream/health`

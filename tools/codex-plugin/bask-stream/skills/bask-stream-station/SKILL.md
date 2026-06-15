@@ -16,6 +16,9 @@ Start with:
 
 Rules:
 
+- Use this skill only with Niagara stations the user is authorized to access.
+- Do not request, summarize, reproduce, or transform Tridium source code, decompiled code, binary internals, license keys, proprietary documentation, vulnerability findings, or benchmark/evaluation results.
+- Do not imply Tridium, Honeywell, Anthropic, OpenAI, Claude, Codex, or MCP Registry endorsement.
 - Do not guess equipment meaning, room relationships, or point roles.
 - Use read-only tools by default.
 - For values, use `baskstream_read_points`.
@@ -26,6 +29,6 @@ Rules:
 - Do not treat metadata such as `writable` as enough to render or execute write controls.
 - Point writes require `BASKSTREAM_ALLOW_WRITES=true`.
 - Alarm acknowledge and clear require `BASKSTREAM_ALLOW_ALARM_ACTIONS=true`.
+- Raw operation access is hidden unless `BASKSTREAM_ALLOW_RAW=true`; do not use it outside controlled local debugging.
 
 When reporting results, separate verified station facts from unresolved questions.
-

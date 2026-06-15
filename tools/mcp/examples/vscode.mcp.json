@@ -28,7 +28,8 @@
         "BASKSTREAM_PASSWORD": "${input:baskstream-password}",
         "BASKSTREAM_VERIFY_TLS": "false",
         "BASKSTREAM_ALLOW_WRITES": "false",
-        "BASKSTREAM_ALLOW_ALARM_ACTIONS": "false"
+        "BASKSTREAM_ALLOW_ALARM_ACTIONS": "false",
+        "BASKSTREAM_ALLOW_RAW": "false"
       }
     }
   }

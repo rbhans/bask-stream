@@ -50,6 +50,7 @@ Set-McpEnv "BASKSTREAM_USER" $User
 Set-McpEnv "BASKSTREAM_VERIFY_TLS" "false"
 Set-McpEnv "BASKSTREAM_ALLOW_WRITES" ($(if ($AllowWrites) { "true" } else { "false" }))
 Set-McpEnv "BASKSTREAM_ALLOW_ALARM_ACTIONS" ($(if ($AllowAlarmActions) { "true" } else { "false" }))
+Set-McpEnv "BASKSTREAM_ALLOW_RAW" "false"
 
 if ($StationUrl -ne "" -and $User -ne "" -and -not $env:BASKSTREAM_PASSWORD) {
   $securePassword = Read-Host "Niagara password for this test session" -AsSecureString
@@ -71,4 +72,3 @@ if (-not $SkipDoctor) {
 Write-Host ""
 Write-Host "Client config snippets for this machine"
 npm run print-config
-

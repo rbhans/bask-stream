@@ -5,6 +5,8 @@
   "author": {
     "name": "Ben Hansen"
   },
+  "repository": "https://github.com/rbhans/bask-stream",
+  "license": "Apache-2.0",
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
@@ -18,6 +20,9 @@
       "Read",
       "Write"
     ],
+    "websiteURL": "https://github.com/rbhans/bask-stream",
+    "privacyPolicyURL": "https://github.com/rbhans/bask-stream/blob/main/docs/PRIVACY.md",
+    "termsOfServiceURL": "https://github.com/rbhans/bask-stream/blob/main/docs/TERMS.md",
     "defaultPrompt": [
       "Check my Niagara station",
       "Browse station points",
@@ -25,4 +30,3 @@
     ]
   }
 }
-

@@ -4,6 +4,19 @@ This guide is Windows-first because most Niagara workstations will be Windows. T
 
 The MCP server is a local stdio process. It does not replace the Niagara module or the companion app. It gives AI clients a controlled bridge into the station through the existing baskStream WebSocket API.
 
+This project is not affiliated with, endorsed by, or sponsored by Tridium, Honeywell, Anthropic, OpenAI, Claude, Codex, or any MCP client vendor.
+
+## Legal And EULA Boundary
+
+This is engineering guidance, not legal advice. Review the current [Tridium Niagara EULA](https://www.tridium.com/us/en/eula), the target station's license/order terms, and customer agreements before distributing or using the MCP on a third-party station.
+
+- Use the MCP only with Niagara stations you are authorized to access.
+- Keep AI prompts and MCP outputs focused on station data exposed by the installed baskStream API.
+- Do not provide Tridium source code, decompiled code, binary internals, license keys, proprietary documentation, vulnerability findings, or benchmark/evaluation results to AI tools.
+- Do not use this MCP to reverse engineer, reproduce, modify, or bypass Niagara Framework behavior, APIs, licensing, security devices, or access controls.
+- Keep point writes, alarm actions, and raw operations disabled unless the operator explicitly intends that access.
+- Use a least-privilege Niagara account for AI workflows.
+
 ## Prerequisites
 
 - BASkStreamService is installed and running in the Niagara station.
@@ -28,6 +41,7 @@ $env:BASKSTREAM_PASSWORD = "<niagara-password>"
 $env:BASKSTREAM_VERIFY_TLS = "false"
 $env:BASKSTREAM_ALLOW_WRITES = "false"
 $env:BASKSTREAM_ALLOW_ALARM_ACTIONS = "false"
+$env:BASKSTREAM_ALLOW_RAW = "false"
 
 npm run doctor
 npm run print-config
@@ -64,7 +78,8 @@ Use this shape for clients that accept an `mcpServers` JSON block:
         "BASKSTREAM_PASSWORD": "<niagara-password>",
         "BASKSTREAM_VERIFY_TLS": "false",
         "BASKSTREAM_ALLOW_WRITES": "false",
-        "BASKSTREAM_ALLOW_ALARM_ACTIONS": "false"
+        "BASKSTREAM_ALLOW_ALARM_ACTIONS": "false",
+        "BASKSTREAM_ALLOW_RAW": "false"
       }
     }
   }
@@ -142,6 +157,7 @@ claude mcp add `
   --env BASKSTREAM_VERIFY_TLS="false" `
   --env BASKSTREAM_ALLOW_WRITES="false" `
   --env BASKSTREAM_ALLOW_ALARM_ACTIONS="false" `
+  --env BASKSTREAM_ALLOW_RAW="false" `
   --transport stdio `
   baskstream -- node "C:\path\to\NiagaraFalls\tools\mcp\dist\index.js"
 ```
@@ -172,6 +188,7 @@ mcp_servers:
       BASKSTREAM_VERIFY_TLS: "false"
       BASKSTREAM_ALLOW_WRITES: "false"
       BASKSTREAM_ALLOW_ALARM_ACTIONS: "false"
+      BASKSTREAM_ALLOW_RAW: "false"
     enabled: true
     timeout: 120
     connect_timeout: 60
@@ -252,7 +269,7 @@ The plugin uses `${CLAUDE_PLUGIN_ROOT}` to launch the same MCP server from `tool
 
 ## Write Access
 
-The MCP exposes write-capable tools, but they are disabled by default.
+The MCP exposes write-capable tools, but they are disabled by default. Raw operation access is also disabled and hidden by default.
 
 Enable point writes:
 
@@ -266,12 +283,19 @@ Enable alarm acknowledge and clear:
 $env:BASKSTREAM_ALLOW_ALARM_ACTIONS = "true"
 ```
 
+Advanced local debugging only: expose `baskstream_call_raw`.
+
+```powershell
+$env:BASKSTREAM_ALLOW_RAW = "true"
+```
+
 Still follow this workflow:
 
 1. Call `baskstream_diagnose_connection`.
 2. Call `baskstream_capabilities`.
 3. Call `baskstream_describe_write` for the target point.
 4. Only call `baskstream_write_point` if the described action is supported.
+5. Leave `baskstream_call_raw` hidden outside controlled local development.
 
 This matches the companion app pattern: write controls are based on `describe_write`, not on broad metadata alone.
 
@@ -281,6 +305,7 @@ Keep the MCP guidance generic for any baskStream/Niagara client:
 
 - Apps and dashboards should use the baskStream WebSocket API directly for live views and long-lived subscriptions.
 - AI clients should use the MCP for diagnostics, discovery, summaries, bounded reads, and explicit operator-driven writes.
+- Keep AI prompts and outputs clear of Tridium source, decompiled code, proprietary docs, license files, keys, vulnerability reports, and confidential benchmark/evaluation results.
 - Check `/stream/health` before opening a WebSocket.
 - Call `capabilities` early and adapt to the deployed API version.
 - Use `describe_history` before `read_history` and `read_schedule` only when the operation is supported.
@@ -293,12 +318,15 @@ Keep the MCP guidance generic for any baskStream/Niagara client:
 - `npm run setup -- --force-install` forces dependency reinstall if `node_modules` is stale.
 - `npm run prepare:mcpb -- --force-install` forces MCPB bundle dependency reinstall if the ignored bundle folder is stale.
 - For self-signed Niagara certificates, set `BASKSTREAM_VERIFY_TLS=false` in development.
+- `baskstream_call_raw` is not listed unless the server starts with `BASKSTREAM_ALLOW_RAW=true`.
 - If the station health check returns a redirect or unauthorized status, verify credentials and WebService.
 - If tools are missing in a client, restart the AI client and confirm the path points at `tools/mcp/dist/index.js`.
 
 ## References
 
 - MCP: https://modelcontextprotocol.io/docs/getting-started/intro
+- MCP security best practices: https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices
+- Tridium Niagara EULA: https://www.tridium.com/us/en/eula
 - Claude Code MCP: https://code.claude.com/docs/en/mcp
 - Claude Code plugins: https://code.claude.com/docs/en/plugins
 - Claude Desktop local MCP servers and desktop extensions: https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop

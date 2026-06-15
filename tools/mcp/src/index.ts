@@ -24,6 +24,7 @@ interface BaskStreamConfig {
   timeoutMs: number;
   allowWrites: boolean;
   allowAlarmActions: boolean;
+  allowRawOperations: boolean;
 }
 
 interface HttpResponse {
@@ -136,7 +137,8 @@ async function loadConfig(): Promise<BaskStreamConfig> {
     allowAlarmActions: boolFrom(
       process.env.BASKSTREAM_ALLOW_ALARM_ACTIONS ?? fileConfig.allowAlarmActions,
       false
-    )
+    ),
+    allowRawOperations: boolFrom(process.env.BASKSTREAM_ALLOW_RAW ?? fileConfig.allowRawOperations, false)
   };
 }
 
@@ -1151,37 +1153,39 @@ registerTool(
   })
 );
 
-registerTool(
-  "baskstream_call_raw",
-  {
-    title: "Call Raw baskStream Operation",
-    description: "Calls an arbitrary request/response baskStream operation. Mutating ops require the matching mutation flag.",
-    inputSchema: {
-      ...connectionFields,
-      op: z.string().min(1),
-      fields: z.record(z.unknown()).default({})
+if (config.allowRawOperations) {
+  registerTool(
+    "baskstream_call_raw",
+    {
+      title: "Call Raw baskStream Operation",
+      description: "Calls an arbitrary request/response baskStream operation. Requires BASKSTREAM_ALLOW_RAW=true; mutating ops also require the matching mutation flag.",
+      inputSchema: {
+        ...connectionFields,
+        op: z.string().min(1),
+        fields: z.record(z.unknown()).default({})
+      },
+      readOnly: false,
+      destructive: true,
+      idempotent: false
     },
-    readOnly: false,
-    destructive: true,
-    idempotent: false
-  },
-  async (params) => withClient(params, async (client, cfg) => {
-    const op = String(params.op);
-    if (rawMutationOps.has(op)) {
-      if (rawWriteOps.has(op)) {
-        assertWritesAllowed(cfg);
+    async (params) => withClient(params, async (client, cfg) => {
+      const op = String(params.op);
+      if (rawMutationOps.has(op)) {
+        if (rawWriteOps.has(op)) {
+          assertWritesAllowed(cfg);
+        }
+        if (rawAlarmActionOps.has(op)) {
+          assertAlarmActionsAllowed(cfg);
+        }
       }
-      if (rawAlarmActionOps.has(op)) {
-        assertAlarmActionsAllowed(cfg);
-      }
-    }
-    const fields = isRecord(params.fields) ? params.fields : {};
-    return {
-      ok: true,
-      response: await client.call(op, fields)
-    };
-  })
-);
+      const fields = isRecord(params.fields) ? params.fields : {};
+      return {
+        ok: true,
+        response: await client.call(op, fields)
+      };
+    })
+  );
+}
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();

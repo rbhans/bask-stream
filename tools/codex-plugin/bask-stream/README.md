@@ -2,6 +2,8 @@
 
 This is a repo-local Codex plugin template for the baskStream MCP server.
 
+This project is not affiliated with, endorsed by, or sponsored by Tridium, Honeywell, Anthropic, OpenAI, Claude, Codex, or any MCP client vendor. Use it only with Niagara stations you are authorized to access.
+
 Build the MCP first:
 
 ```powershell
@@ -18,7 +20,9 @@ $env:BASKSTREAM_PASSWORD = "<niagara-password>"
 $env:BASKSTREAM_VERIFY_TLS = "false"
 $env:BASKSTREAM_ALLOW_WRITES = "false"
 $env:BASKSTREAM_ALLOW_ALARM_ACTIONS = "false"
+$env:BASKSTREAM_ALLOW_RAW = "false"
 ```
 
 The launcher delegates to `tools/mcp/dist/index.js`, so there is only one MCP implementation to maintain.
 
+Keep AI prompts and outputs clear of Tridium source, decompiled code, binary internals, license keys, proprietary documentation, vulnerability findings, and benchmark/evaluation results. Leave `BASKSTREAM_ALLOW_RAW=false` outside controlled local debugging.

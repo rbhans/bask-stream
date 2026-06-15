@@ -6,6 +6,10 @@ The API is designed around Niagara's object model and permissions. It can browse
 
 For the full protocol reference, see [docs/THIRD_PARTY_API.md](docs/THIRD_PARTY_API.md).
 
+This project is not affiliated with, endorsed by, or sponsored by Tridium, Honeywell, Anthropic, OpenAI, or any AI-client vendor. Use it only with Niagara stations and software licenses you are authorized to access and administer.
+
+The repository's own code and documentation are open source under the [Apache License 2.0](LICENSE). That license does not grant rights to Niagara Framework, Tridium/Honeywell software, product documentation, license keys, services, marks, or customer systems.
+
 ## Current API Highlights
 
 - Current protocol examples target API version `1.3`.
@@ -29,7 +33,11 @@ For the full protocol reference, see [docs/THIRD_PARTY_API.md](docs/THIRD_PARTY_
 
 ```text
 baskStream-rt/                   Niagara runtime module source
+LICENSE                          Apache License 2.0 for this repository's code
 docs/THIRD_PARTY_API.md          Detailed WebSocket protocol guide
+docs/LEGAL_AND_SAFETY.md         EULA, AI-tool, and distribution checklist
+docs/PRIVACY.md                  Local data-handling notes
+docs/TERMS.md                    Open-source terms and third-party boundaries
 tools/baskstream-nav-tree.html   Companion guide and demo/test app
 tools/baskstream-nav-tree-server.mjs
                                  Local helper for the companion app
@@ -51,6 +59,23 @@ tools/baskstream-test-snippet.js
 ```
 
 Build artifacts, generated jars, screenshots, local editor settings, and macOS AppleDouble sidecar files are intentionally ignored.
+
+## Legal And AI Tool Boundary
+
+This is engineering guidance, not legal advice. Review the current [Tridium Niagara EULA](https://www.tridium.com/us/en/eula), the order terms for the target license, and customer agreements before distributing or using this project on a third-party station.
+
+- Project notices: [NOTICE.md](NOTICE.md)
+- Privacy notes: [docs/PRIVACY.md](docs/PRIVACY.md)
+- Terms starting point: [docs/TERMS.md](docs/TERMS.md)
+- Distribution checklist: [docs/LEGAL_AND_SAFETY.md](docs/LEGAL_AND_SAFETY.md)
+
+- Keep baskStream additive: a Niagara module and external clients using the module's authenticated WebSocket API.
+- Do not use AI tools to inspect, summarize, reproduce, or transform Tridium source code, decompiled classes, binary internals, license keys, proprietary documentation, confidential benchmarks, or vulnerability findings.
+- Do not copy Tridium code or documentation into this project or into AI prompts.
+- Do not reverse engineer, decompile, disassemble, extract, modify binary behavior, or change Niagara APIs.
+- Use only licensed Niagara development tooling and authorized stations.
+- Use least-privilege Niagara users, and get explicit customer authorization before connecting AI tooling to customer systems.
+- Avoid Tridium, Honeywell, Anthropic, OpenAI, Claude, Codex, or MCP Registry branding in a way that implies partnership, certification, or endorsement.
 
 ## Station Setup
 
@@ -203,6 +228,8 @@ Windows-first install guides and client-specific examples are in [tools/mcp/INST
 
 Keep Niagara credentials in local MCP client settings, environment variables, or ignored `tools/mcp/config.json`; do not commit them. The MCP defaults to read-oriented discovery, diagnostics, values, histories, schedules, alarms, inventory, and summary tools. Point writes require `BASKSTREAM_ALLOW_WRITES=true`; alarm acknowledge/clear requires `BASKSTREAM_ALLOW_ALARM_ACTIONS=true`. Niagara permissions still apply, so use a least-privilege station user.
 
+The raw operation tool is hidden unless the MCP server starts with `BASKSTREAM_ALLOW_RAW=true`. Leave it off for normal installs and public distribution.
+
 Recommended AI-client workflow:
 
 1. Run diagnostics and `capabilities`.
@@ -210,6 +237,7 @@ Recommended AI-client workflow:
 3. Read current values with `read`.
 4. For writes, call `describe_write` first and only expose actions that response reports as supported.
 5. Enable point writes or alarm actions only through explicit local MCP settings.
+6. Do not paste Niagara internals, Tridium docs, license files, keys, security reports, or benchmark results into AI prompts.
 
 See [tools/mcp/README.md](tools/mcp/README.md) for the full tool list and inspector workflow.
 

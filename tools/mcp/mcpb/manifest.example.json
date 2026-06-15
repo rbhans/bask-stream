@@ -22,7 +22,8 @@
         "BASKSTREAM_PASSWORD": "${user_config.password}",
         "BASKSTREAM_VERIFY_TLS": "${user_config.verify_tls}",
         "BASKSTREAM_ALLOW_WRITES": "${user_config.allow_writes}",
-        "BASKSTREAM_ALLOW_ALARM_ACTIONS": "${user_config.allow_alarm_actions}"
+        "BASKSTREAM_ALLOW_ALARM_ACTIONS": "${user_config.allow_alarm_actions}",
+        "BASKSTREAM_ALLOW_RAW": "false"
       }
     }
   },
@@ -84,4 +85,3 @@
     }
   }
 }
-
