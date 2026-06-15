@@ -1,0 +1,28 @@
+{
+  "name": "bask-stream",
+  "version": "0.1.0",
+  "description": "Connect Codex to a baskStream-enabled Niagara station through the repo MCP server.",
+  "author": {
+    "name": "Ben Hansen"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "baskStream",
+    "shortDescription": "Use Niagara station data through baskStream.",
+    "longDescription": "Adds a local MCP server and a focused station workflow skill for Niagara discovery, point reads, histories, schedules, alarms, and gated point writes through baskStream.",
+    "developerName": "Ben Hansen",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Check my Niagara station",
+      "Browse station points",
+      "Summarize active alarms"
+    ]
+  }
+}
+

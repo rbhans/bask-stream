@@ -1,0 +1,87 @@
+{
+  "manifest_version": "0.3",
+  "name": "bask-stream",
+  "display_name": "baskStream",
+  "version": "0.1.0",
+  "description": "Connect AI clients to a baskStream-enabled Niagara station.",
+  "long_description": "Local MCP server for Niagara station diagnostics, discovery, point values, histories, schedules, alarms, inventory, summaries, and explicitly gated write operations through the baskStream WebSocket API.",
+  "author": {
+    "name": "Ben Hansen"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/server/index.js"
+      ],
+      "env": {
+        "BASKSTREAM_STATION_URL": "${user_config.station_url}",
+        "BASKSTREAM_USER": "${user_config.username}",
+        "BASKSTREAM_PASSWORD": "${user_config.password}",
+        "BASKSTREAM_VERIFY_TLS": "${user_config.verify_tls}",
+        "BASKSTREAM_ALLOW_WRITES": "${user_config.allow_writes}",
+        "BASKSTREAM_ALLOW_ALARM_ACTIONS": "${user_config.allow_alarm_actions}"
+      }
+    }
+  },
+  "tools_generated": true,
+  "keywords": [
+    "niagara",
+    "bms",
+    "bas",
+    "mcp",
+    "baskstream"
+  ],
+  "compatibility": {
+    "platforms": [
+      "win32",
+      "darwin",
+      "linux"
+    ],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  },
+  "user_config": {
+    "station_url": {
+      "type": "string",
+      "title": "Niagara Station URL",
+      "description": "Base station URL, for example https://192.168.0.125.",
+      "required": true
+    },
+    "username": {
+      "type": "string",
+      "title": "Niagara Username",
+      "description": "Niagara user for this MCP session.",
+      "required": true
+    },
+    "password": {
+      "type": "string",
+      "title": "Niagara Password",
+      "description": "Niagara password for this MCP session.",
+      "sensitive": true,
+      "required": true
+    },
+    "verify_tls": {
+      "type": "boolean",
+      "title": "Verify TLS",
+      "description": "Require a trusted station HTTPS certificate.",
+      "default": false
+    },
+    "allow_writes": {
+      "type": "boolean",
+      "title": "Allow Point Writes",
+      "description": "Enable baskstream_write_point. Leave off for read-only AI sessions.",
+      "default": false
+    },
+    "allow_alarm_actions": {
+      "type": "boolean",
+      "title": "Allow Alarm Actions",
+      "description": "Enable alarm acknowledge and clear tools. Leave off unless intended.",
+      "default": false
+    }
+  }
+}
+

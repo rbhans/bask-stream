@@ -6,17 +6,46 @@ The API is designed around Niagara's object model and permissions. It can browse
 
 For the full protocol reference, see [docs/THIRD_PARTY_API.md](docs/THIRD_PARTY_API.md).
 
+## Current API Highlights
+
+- Current protocol examples target API version `1.3`.
+- `read` is the batch point snapshot operation for point/value ORDs.
+- Point snapshots can include facets, enum metadata, status, timestamps, display values, and raw values.
+- Clients can pass `fields` to `read` for lean point tables; `point` and `ok` are always returned.
+- `capabilities` advertises point snapshot limits and supported snapshot fields through `pointSnapshot`.
+- Plain Px/graphic embedding is not implemented yet; `capabilities.graphics.plainPx` and `plainGraphic` report `false`.
+
+## What To Use When
+
+| Surface | Use it for | Start here |
+| --- | --- | --- |
+| Niagara module | The actual station runtime API. Install this when another app needs authenticated WebSocket access to live station data. | [Station Setup](#station-setup) |
+| Companion app | Human-guided startup, live station testing, API inspection, and generated setup snippets for external tools. | [Companion Guide And Demo App](#companion-guide-and-demo-app) |
+| WebSocket protocol | Production apps, graphics, dashboards, and integrations that should talk directly to the station. | [docs/THIRD_PARTY_API.md](docs/THIRD_PARTY_API.md) |
+| Python tools | Bench tests, quick station checks, and scripting experiments. | [Python Test Tools](#python-test-tools) |
+| MCP server | Optional local bridge for AI clients and agent workflows. It is tooling around the module, not the primary runtime surface. | [AI Tooling: MCP Server](#ai-tooling-mcp-server) |
+
 ## Repository Layout
 
 ```text
-baskStream-rt/                 Niagara runtime module source
+baskStream-rt/                   Niagara runtime module source
 docs/THIRD_PARTY_API.md          Detailed WebSocket protocol guide
-tools/baskstream-nav-tree.html Companion guide and demo/test app
+tools/baskstream-nav-tree.html   Companion guide and demo/test app
 tools/baskstream-nav-tree-server.mjs
                                  Local helper for the companion app
 tools/baskstream-live-smoke.mjs
                                  Live station smoke test script
-tools/baskstream-test.html     Lower-level standalone test harness
+tools/python-tools/README.md     Python bench-test tooling guide
+tools/python-tools/tools/python/
+                                 Read-only Python client, CLI, and smoke test
+tools/mcp/README.md              Local stdio MCP server guide
+tools/mcp/INSTALL.md             Windows-first MCP install guide
+tools/mcp/CLIENTS.md             MCP client matrix and config examples
+tools/mcp/examples/              Ready-to-edit client config templates
+tools/mcp/src/                   MCP server source for AI station workflows
+tools/codex-plugin/bask-stream/  Codex plugin template for the MCP server
+tools/claude-plugin/bask-stream/ Claude Code plugin template for the MCP server
+tools/baskstream-test.html       Lower-level standalone test harness
 tools/baskstream-test-snippet.js
                                  Browser-console station-page test snippet
 ```
@@ -133,6 +162,57 @@ A practical pattern is:
 
 For alarms, use `subscribe_alarms` when the app needs global alarm awareness. On large stations, prefer event mode, maintain a client-side alarm map keyed by alarm UUID, and call `read_alarms` only for initial load or resync.
 
+## Python Test Tools
+
+The Python tools under `tools/python-tools/tools/python/` are standalone read-only helpers for bench testing and client experiments. They reuse the same station contract as other clients: Niagara web login, `/stream/health`, then MessagePack WebSocket calls to `/stream`.
+
+Setup from the Python tools folder:
+
+```bash
+cd tools/python-tools/tools/python
+python3 -m pip install -r requirements.txt
+```
+
+Useful commands:
+
+```bash
+python3 baskstream_smoke.py --station https://<station> --user <user> --ask-pass --root 'slot:/Drivers'
+python3 baskstream_cli.py --station https://<station> --user <user> --ask-pass health
+python3 baskstream_cli.py --station https://<station> --user <user> --ask-pass tree --base 'slot:/Drivers' --depth 3
+python3 baskstream_cli.py --station https://<station> --user <user> --ask-pass values --base 'slot:/Drivers/.../points'
+```
+
+For local/self-signed stations, the tools default to TLS verification off. Use `--verify-tls` only when the station certificate is trusted by the client machine. See [tools/python-tools/README.md](tools/python-tools/README.md) for platform-specific examples and PowerShell ORD quoting notes.
+
+## AI Tooling: MCP Server
+
+The MCP server under `tools/mcp/` is optional AI-client tooling. It does not replace the Niagara module, the WebSocket protocol, the companion app, or a production graphics/dashboard client. It wraps the same station contract used everywhere else: Niagara login, `/stream/health`, then MessagePack WebSocket calls to `/stream`.
+
+Use the MCP when an AI client should inspect a station, summarize equipment, read live values, review histories/schedules/alarms, or perform explicitly enabled point writes. Use the WebSocket protocol directly for production apps that need persistent UI sessions or long-lived COV subscriptions.
+
+Setup:
+
+```bash
+cd tools/mcp
+npm run setup
+```
+
+`npm run setup` installs dependencies, handles mounted/shared filesystem npm issues, builds the server, and verifies local MCP startup.
+
+Windows-first install guides and client-specific examples are in [tools/mcp/INSTALL.md](tools/mcp/INSTALL.md) and [tools/mcp/CLIENTS.md](tools/mcp/CLIENTS.md). Those guides cover generic MCP JSON, Claude Code, Claude Desktop/MCPB, Codex plugin, Claude Code plugin, Hermes, VS Code, Cursor, Windsurf/Cascade, Cline, and Augment. The companion app Guide tab also generates ready-to-copy setup commands and config snippets.
+
+Keep Niagara credentials in local MCP client settings, environment variables, or ignored `tools/mcp/config.json`; do not commit them. The MCP defaults to read-oriented discovery, diagnostics, values, histories, schedules, alarms, inventory, and summary tools. Point writes require `BASKSTREAM_ALLOW_WRITES=true`; alarm acknowledge/clear requires `BASKSTREAM_ALLOW_ALARM_ACTIONS=true`. Niagara permissions still apply, so use a least-privilege station user.
+
+Recommended AI-client workflow:
+
+1. Run diagnostics and `capabilities`.
+2. Browse/search shallowly before deep metadata requests.
+3. Read current values with `read`.
+4. For writes, call `describe_write` first and only expose actions that response reports as supported.
+5. Enable point writes or alarm actions only through explicit local MCP settings.
+
+See [tools/mcp/README.md](tools/mcp/README.md) for the full tool list and inspector workflow.
+
 ## Network And Security
 
 Common blockers for real deployments:
@@ -154,7 +234,7 @@ tools/baskstream-nav-tree.html
 
 It has two tabs:
 
-- `Guide`: quick setup, app-flow, scale, network/security, and operation-reference guidance.
+- `Guide`: startup checklist, module, companion app, Python tools, optional MCP/client setup generator, scale, network/security, and operation-reference guidance.
 - `Test Console`: connect to a live station, browse the station tree, inspect metadata, read selected point values, and subscribe to the selected point.
 
 The app is intentionally standalone HTML/CSS/JS. There is no npm install, bundler, or app server requirement.

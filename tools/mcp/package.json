@@ -1,0 +1,30 @@
+{
+  "name": "baskstream-mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "baskstream-mcp-server": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "node ./node_modules/typescript/bin/tsc && node -e \"require('fs').chmodSync('dist/index.js', '755')\"",
+    "setup": "node scripts/setup.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "print-config": "node scripts/print-config.mjs",
+    "prepare:mcpb": "node scripts/prepare-mcpb.mjs",
+    "install:windows": "powershell -ExecutionPolicy Bypass -File scripts/install-windows.ps1",
+    "start": "node dist/index.js",
+    "inspector": "npx @modelcontextprotocol/inspector node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@msgpack/msgpack": "^3.1.2",
+    "ws": "^8.18.3",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.8.3"
+  }
+}

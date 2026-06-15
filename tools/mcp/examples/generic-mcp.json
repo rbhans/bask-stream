@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "baskstream": {
+      "command": "node",
+      "args": ["C:\\path\\to\\NiagaraFalls\\tools\\mcp\\dist\\index.js"],
+      "env": {
+        "BASKSTREAM_STATION_URL": "https://<station>",
+        "BASKSTREAM_USER": "<niagara-user>",
+        "BASKSTREAM_PASSWORD": "<niagara-password>",
+        "BASKSTREAM_VERIFY_TLS": "false",
+        "BASKSTREAM_ALLOW_WRITES": "false",
+        "BASKSTREAM_ALLOW_ALARM_ACTIONS": "false"
+      }
+    }
+  }
+}
+

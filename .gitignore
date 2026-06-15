@@ -5,3 +5,8 @@
 build/
 **/build/
 output/
+tools/mcp/config.json
+tools/mcp/node_modules/
+tools/mcp/dist/
+tools/mcp/.mcpb-build/
+tools/mcp/*.mcpb

@@ -570,7 +570,18 @@ final class BaskStreamBrowseResolver
 
   private boolean supportsAction(BComponent component, String actionName)
   {
-    return component != null && component.getAction(actionName) != null;
+    if (component == null)
+    {
+      return false;
+    }
+    try
+    {
+      return component.getAction(actionName) != null;
+    }
+    catch (ClassCastException e)
+    {
+      return false;
+    }
   }
 
   private BValue componentValue(BComponent component, String propertyName)

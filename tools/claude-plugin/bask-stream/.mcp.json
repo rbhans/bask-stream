@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "baskstream": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/bin/launch-mcp.mjs"
+      ],
+      "env": {
+        "BASKSTREAM_STATION_URL": "${BASKSTREAM_STATION_URL}",
+        "BASKSTREAM_USER": "${BASKSTREAM_USER}",
+        "BASKSTREAM_PASSWORD": "${BASKSTREAM_PASSWORD}",
+        "BASKSTREAM_VERIFY_TLS": "${BASKSTREAM_VERIFY_TLS:-false}",
+        "BASKSTREAM_ALLOW_WRITES": "${BASKSTREAM_ALLOW_WRITES:-false}",
+        "BASKSTREAM_ALLOW_ALARM_ACTIONS": "${BASKSTREAM_ALLOW_ALARM_ACTIONS:-false}"
+      },
+      "timeout": 120000
+    }
+  }
+}
+

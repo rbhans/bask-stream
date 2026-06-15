@@ -1,0 +1,9 @@
+{
+  "stationUrl": "https://<station-host>",
+  "username": "<niagara-user>",
+  "password": "use-mcp-client-env-instead-of-committing-real-passwords",
+  "verifyTls": false,
+  "timeoutMs": 45000,
+  "allowWrites": false,
+  "allowAlarmActions": false
+}

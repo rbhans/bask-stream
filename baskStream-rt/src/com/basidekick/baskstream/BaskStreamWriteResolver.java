@@ -419,7 +419,18 @@ final class BaskStreamWriteResolver
 
   private boolean supportsAction(BComponent component, String actionName)
   {
-    return component != null && component.getAction(actionName) != null;
+    if (component == null)
+    {
+      return false;
+    }
+    try
+    {
+      return component.getAction(actionName) != null;
+    }
+    catch (ClassCastException e)
+    {
+      return false;
+    }
   }
 
   private List<Object> priorityLevels(BIWritablePoint writablePoint, Context context)

@@ -1,0 +1,9 @@
+{
+  "name": "bask-stream",
+  "description": "Connect Claude Code to a baskStream-enabled Niagara station through the repo MCP server.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Ben Hansen"
+  }
+}
+

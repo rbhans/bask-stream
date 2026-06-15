@@ -1,0 +1,35 @@
+{
+  "inputs": [
+    {
+      "id": "baskstream-station-url",
+      "type": "promptString",
+      "description": "Niagara station URL, for example https://station-host"
+    },
+    {
+      "id": "baskstream-user",
+      "type": "promptString",
+      "description": "Niagara username"
+    },
+    {
+      "id": "baskstream-password",
+      "type": "promptString",
+      "description": "Niagara password",
+      "password": true
+    }
+  ],
+  "servers": {
+    "baskstream": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["C:\\path\\to\\NiagaraFalls\\tools\\mcp\\dist\\index.js"],
+      "env": {
+        "BASKSTREAM_STATION_URL": "${input:baskstream-station-url}",
+        "BASKSTREAM_USER": "${input:baskstream-user}",
+        "BASKSTREAM_PASSWORD": "${input:baskstream-password}",
+        "BASKSTREAM_VERIFY_TLS": "false",
+        "BASKSTREAM_ALLOW_WRITES": "false",
+        "BASKSTREAM_ALLOW_ALARM_ACTIONS": "false"
+      }
+    }
+  }
+}

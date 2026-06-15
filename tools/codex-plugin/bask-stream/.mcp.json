@@ -1,0 +1,27 @@
+{
+  "mcpServers": {
+    "bask-stream": {
+      "command": "node",
+      "args": [
+        "./bin/launch-mcp.mjs"
+      ],
+      "cwd": ".",
+      "env_vars": [
+        "BASKSTREAM_STATION_URL",
+        "BASKSTREAM_USER",
+        "BASKSTREAM_PASSWORD",
+        "NIAGARA_URL",
+        "NIAGARA_USER",
+        "NIAGARA_PASSWORD",
+        "STREAM_PASSWORD",
+        "BASKSTREAM_VERIFY_TLS",
+        "BASKSTREAM_TIMEOUT_MS",
+        "BASKSTREAM_ALLOW_WRITES",
+        "BASKSTREAM_ALLOW_ALARM_ACTIONS",
+        "BASKSTREAM_CONFIG"
+      ],
+      "startup_timeout_sec": 15,
+      "tool_timeout_sec": 120
+    }
+  }
+}
