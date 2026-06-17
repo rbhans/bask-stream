@@ -1,0 +1,23 @@
+apiVersion: 1
+
+# Set BASKSTREAM_STATION_URL, BASKSTREAM_USERNAME, and BASKSTREAM_PASSWORD
+# before starting Grafana when using this provisioning file.
+datasources:
+  - name: 'baskStream'
+    type: 'basidekick-baskstream-datasource'
+    access: proxy
+    isDefault: false
+    orgId: 1
+    version: 1
+    editable: true
+    jsonData:
+      stationUrl: $BASKSTREAM_STATION_URL
+      username: $BASKSTREAM_USERNAME
+      tlsMode: 'verify'
+      allowPlainHttp: false
+      timeoutSec: 30
+      maxHistoryRecords: 5000
+      maxPointsPerQuery: 1000
+      maxLiveLeaseSec: 300
+    secureJsonData:
+      password: $BASKSTREAM_PASSWORD

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/grafana/grafana/main/docs/sources/developers/plugins/plugin.schema.json",
+  "type": "datasource",
+  "name": "BaskStream",
+  "id": "basidekick-baskstream-datasource",
+  "metrics": true,
+  "backend": true,
+  "streaming": true,
+  "executable": "gpx_bask_stream",
+  "info": {
+    "description": "Read-only Grafana data source for Niagara live values and histories through baskStream.",
+    "author": {
+      "name": "BASidekick"
+    },
+    "keywords": ["datasource", "niagara", "baskstream", "bas"],
+    "logos": {
+      "small": "img/logo.svg",
+      "large": "img/logo.svg"
+    },
+    "links": [
+      {
+        "name": "Documentation",
+        "url": "https://github.com/rbhans/bask-stream"
+      },
+      {
+        "name": "License",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0"
+      }
+    ],
+    "screenshots": [],
+    "version": "%VERSION%",
+    "updated": "%TODAY%"
+  },
+  "dependencies": {
+    "grafanaDependency": ">=13.0.0",
+    "plugins": []
+  }
+}

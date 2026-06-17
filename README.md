@@ -26,8 +26,30 @@ The repository's own code and documentation are open source under the [Apache Li
 | Niagara module | The actual station runtime API. Install this when another app needs authenticated WebSocket access to live station data. | [Station Setup](#station-setup) |
 | Companion app | Human-guided startup, live station testing, API inspection, and generated setup snippets for external tools. | [Companion Guide And Demo App](#companion-guide-and-demo-app) |
 | WebSocket protocol | Production apps, graphics, dashboards, and integrations that should talk directly to the station. | [docs/THIRD_PARTY_API.md](docs/THIRD_PARTY_API.md) |
+| Integration direction | Compatibility rules and the future adapter strategy for Grafana, REST, OpenMetrics, and exporters. | [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) |
 | Python tools | Bench tests, quick station checks, and scripting experiments. | [Python Test Tools](#python-test-tools) |
 | MCP server | Optional local bridge for AI clients and agent workflows. It is tooling around the module, not the primary runtime surface. | [AI Tooling: MCP Server](#ai-tooling-mcp-server) |
+
+## Grafana Integration
+
+The first product integration is a read-only Grafana backend data source at [integrations/grafana/basidekick-baskstream-datasource](integrations/grafana/basidekick-baskstream-datasource). It connects Grafana directly to a Niagara station running baskStream:
+
+```text
+Grafana panel -> BaskStream data source -> Niagara login -> /stream/health -> /stream WebSocket
+```
+
+It does not require a Niagara module API change. The plugin uses the existing `/stream` operations for point search, current values, histories, and live COV updates.
+
+Quick path:
+
+1. Install and enable the baskStream runtime module on the Niagara station.
+2. Create a least-privilege Niagara user for Grafana.
+3. Build and sign the Grafana plugin from `integrations/grafana/basidekick-baskstream-datasource`.
+4. Install the signed plugin into Grafana's plugin directory and restart Grafana.
+5. Add the `BaskStream` data source in Grafana.
+6. Use `History`, `Snapshot`, or `Live` query mode in panels.
+
+For private signed installs, the Grafana root URL used during signing must exactly match Grafana's configured `server.root_url`. See [integrations/grafana/basidekick-baskstream-datasource/INSTALL.md](integrations/grafana/basidekick-baskstream-datasource/INSTALL.md).
 
 ## Repository Layout
 
@@ -35,6 +57,7 @@ The repository's own code and documentation are open source under the [Apache Li
 baskStream-rt/                   Niagara runtime module source
 LICENSE                          Apache License 2.0 for this repository's code
 docs/THIRD_PARTY_API.md          Detailed WebSocket protocol guide
+docs/INTEGRATIONS.md             Integration adapter direction and compatibility rules
 docs/LEGAL_AND_SAFETY.md         EULA, AI-tool, and distribution checklist
 docs/PRIVACY.md                  Local data-handling notes
 docs/TERMS.md                    Open-source terms and third-party boundaries
@@ -53,6 +76,7 @@ tools/mcp/examples/              Ready-to-edit client config templates
 tools/mcp/src/                   MCP server source for AI station workflows
 tools/codex-plugin/bask-stream/  Codex plugin template for the MCP server
 tools/claude-plugin/bask-stream/ Claude Code plugin template for the MCP server
+integrations/grafana/            Grafana integration implementation and product contract
 tools/baskstream-test.html       Lower-level standalone test harness
 tools/baskstream-test-snippet.js
                                  Browser-console station-page test snippet
