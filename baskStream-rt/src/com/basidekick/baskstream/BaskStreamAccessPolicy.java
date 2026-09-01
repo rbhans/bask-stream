@@ -27,10 +27,17 @@ final class BaskStreamAccessPolicy
     return false;
   }
 
+  /**
+   * Preserve the module's established behavior: an unset/empty policy and the
+   * explicit catch-all patterns are wide open, subject to Niagara user permissions.
+   */
   static boolean isDefaultWideOpen(BBaskStreamService service)
   {
     String configured = service.getAllowedPathPatterns();
-    return configured == null || configured.trim().length() == 0 || "slot:/*".equals(configured.trim());
+    return configured == null
+        || configured.trim().length() == 0
+        || "slot:/*".equals(configured.trim())
+        || "*".equals(configured.trim());
   }
 
   static String extractSlotOrd(String ord)

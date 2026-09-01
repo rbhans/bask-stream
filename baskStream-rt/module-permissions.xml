@@ -1,5 +1,10 @@
 <permissions>
   <niagara-permission-groups type="all"/>
   <niagara-permission-groups type="workbench"/>
-  <niagara-permission-groups type="station"/>
+  <niagara-permission-groups type="station">
+    <req-permission>
+      <name>MANAGE_EXECUTION</name>
+      <purposeKey>baskStream manages background connection and scheduling workers and must stop them cleanly.</purposeKey>
+    </req-permission>
+  </niagara-permission-groups>
 </permissions>

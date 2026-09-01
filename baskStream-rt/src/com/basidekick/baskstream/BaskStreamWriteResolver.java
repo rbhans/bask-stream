@@ -157,7 +157,7 @@ final class BaskStreamWriteResolver
   {
     try
     {
-      Thread.sleep(150L);
+      Thread.sleep(service.getWriteSettleMillisValue());
     }
     catch (InterruptedException e)
     {

@@ -188,7 +188,7 @@ Expected result:
 ```text
 [login] authenticatedUser=admin
 [ws] connecting wss://<station>/stream
-[capabilities] apiVersion=1.3
+[capabilities] apiVersion=1.5
 [browse] slot:/Drivers
 - NiagaraNetwork | slot:/Drivers/NiagaraNetwork | niagaraDriver:NiagaraNetwork {ok}
 - BacnetNetwork  | slot:/Drivers/BacnetNetwork  | bacnet:BacnetNetwork {ok}

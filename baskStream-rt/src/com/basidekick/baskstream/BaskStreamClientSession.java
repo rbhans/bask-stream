@@ -10,7 +10,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 
@@ -40,6 +45,11 @@ final class BaskStreamClientSession
   private final BUser user;
   private final Context context;
   private final String sessionId;
+  // Baseline mounted state of the authenticated principal. If the principal is a live station
+  // component it is mounted here and a later unmount means the user was removed (tear down). If
+  // the handshake hands back a detached copy (never mounted), this stays false and we never use
+  // the unmount signal — avoiding a false mass-disconnect on every session.
+  private final boolean userMountedAtStart;
   private final Subscriber subscriber;
   private final Subscriber alarmSubscriber;
   private final Subscriber modelSubscriber;
@@ -54,6 +64,8 @@ final class BaskStreamClientSession
   private final Map<String, BComponent> modelSubscriptions =
       new ConcurrentHashMap<String, BComponent>();
   private final AtomicBoolean closed = new AtomicBoolean(false);
+  private final ExecutorService worker;
+  private volatile Thread workerThread;
   private final Object subscriptionLock = new Object();
   private final Object covLock = new Object();
   private final LinkedHashMap<String, Object> pendingCov = new LinkedHashMap<String, Object>();
@@ -63,6 +75,7 @@ final class BaskStreamClientSession
   private int pendingCovEventCount;
   private ScheduledFuture<?> covFlushFuture;
   private ScheduledFuture<?> leaseSweepFuture;
+  private ScheduledFuture<?> revalidateFuture;
 
   BaskStreamClientSession(BaskStreamWebSocketRuntime runtime, BaskStreamJettyWebSocketConnection connection, BUser user, Context context)
   {
@@ -70,7 +83,19 @@ final class BaskStreamClientSession
     this.connection = connection;
     this.user = user;
     this.context = context;
+    this.userMountedAtStart = user.isMounted();
     this.sessionId = UUID.randomUUID().toString();
+    this.worker = Executors.newSingleThreadExecutor(new ThreadFactory()
+    {
+      @Override
+      public Thread newThread(Runnable r)
+      {
+        Thread t = new Thread(r, "baskStream-session-" + sessionId);
+        t.setDaemon(true);
+        workerThread = t;
+        return t;
+      }
+    });
     this.subscriber = Subscriber.make(this::onComponentEvent);
     this.subscriber.setMask(BComponentEventMask.PROPERTY_EVENTS);
     this.alarmSubscriber = Subscriber.make(this::onAlarmEvent);
@@ -97,6 +122,16 @@ final class BaskStreamClientSession
     }));
   }
 
+  String getUsername()
+  {
+    return user.getUsername();
+  }
+
+  String getSessionId()
+  {
+    return sessionId;
+  }
+
   int getSubscriptionCount()
   {
     return subscriptions.size() + alarmSubscriptions.size() + modelSubscriptions.size();
@@ -117,7 +152,34 @@ final class BaskStreamClientSession
     return modelSubscriptions.size();
   }
 
-  void onBinary(byte[] payload)
+  void onBinary(final byte[] payload)
+  {
+    if (closed.get())
+    {
+      return;
+    }
+
+    // Hand the frame to the per-session worker so the Jetty IO thread is never
+    // blocked (e.g. by a large batch write's settle delays). The single-thread
+    // executor preserves per-session FIFO ordering exactly as the prior inline path.
+    try
+    {
+      worker.execute(new Runnable()
+      {
+        @Override
+        public void run()
+        {
+          processFrame(payload);
+        }
+      });
+    }
+    catch (RejectedExecutionException e)
+    {
+      // Worker already shut down (session closing) — drop, matching the closed() contract.
+    }
+  }
+
+  private void processFrame(byte[] payload)
   {
     if (closed.get())
     {
@@ -228,6 +290,18 @@ final class BaskStreamClientSession
       {
         handleReadSchedule(id, request);
       }
+      else if ("read_tags".equals(op))
+      {
+        handleReadTags(id, request);
+      }
+      else if ("write_tags".equals(op))
+      {
+        handleWriteTags(id, request);
+      }
+      else if ("write_relations".equals(op))
+      {
+        handleWriteRelations(id, request);
+      }
       else
       {
         sendError(id, "unsupported_op", "Unsupported operation: " + op);
@@ -251,37 +325,67 @@ final class BaskStreamClientSession
       return;
     }
 
-    for (BaskStreamPointResolver.ResolvedPoint point : subscriptions.values().toArray(new BaskStreamPointResolver.ResolvedPoint[0]))
+    try
     {
-      removeActualSubscription(point.getPointOrd());
+      // Stop accepting new frames and drain the worker. close() can be invoked from the
+      // worker itself (the send() IO-failure path inside processFrame), so only await
+      // termination when we are NOT on the worker thread — otherwise we would deadlock.
+      worker.shutdown();
+      if (Thread.currentThread() != workerThread)
+      {
+        try
+        {
+          if (!worker.awaitTermination(5L, TimeUnit.SECONDS))
+          {
+            worker.shutdownNow();
+          }
+        }
+        catch (InterruptedException e)
+        {
+          worker.shutdownNow();
+          Thread.currentThread().interrupt();
+        }
+      }
+
+      for (BaskStreamPointResolver.ResolvedPoint point : subscriptions.values().toArray(new BaskStreamPointResolver.ResolvedPoint[0]))
+      {
+        removeActualSubscription(point.getPointOrd());
+      }
+      directSubscriptions.clear();
+      subscriptionGroups.clear();
+      alarmSubscriptions.clear();
+      modelSubscriptions.clear();
+      synchronized (covLock)
+      {
+        pendingCov.clear();
+        pendingCovEventCount = 0;
+        cancelScheduled(covFlushFuture);
+        covFlushFuture = null;
+      }
+      synchronized (subscriptionLock)
+      {
+        cancelScheduled(leaseSweepFuture);
+        leaseSweepFuture = null;
+        cancelScheduled(revalidateFuture);
+        revalidateFuture = null;
+      }
+      subscriber.unsubscribeAll();
+      alarmSubscriber.unsubscribeAll();
+      modelSubscriber.unsubscribeAll();
     }
-    directSubscriptions.clear();
-    subscriptionGroups.clear();
-    alarmSubscriptions.clear();
-    modelSubscriptions.clear();
-    synchronized (covLock)
+    finally
     {
-      pendingCov.clear();
-      pendingCovEventCount = 0;
-      cancelScheduled(covFlushFuture);
-      covFlushFuture = null;
+      // Connection accounting must never leak even if a cleanup operation fails. Without
+      // this guarantee, ordinary short-lived clients can permanently exhaust maxConnections.
+      runtime.onClose(this);
+      runtime.getService().audit("disconnect", "user=" + user.getUsername() + " session=" + sessionId + " reason=" + reason);
     }
-    synchronized (subscriptionLock)
-    {
-      cancelScheduled(leaseSweepFuture);
-      leaseSweepFuture = null;
-    }
-    subscriber.unsubscribeAll();
-    alarmSubscriber.unsubscribeAll();
-    modelSubscriber.unsubscribeAll();
-    runtime.onClose(this);
-    runtime.getService().logFine("Closed baskStream session " + sessionId + " for user " + user.getUsername() + ": " + reason);
   }
 
   private void handleCapabilities(String id)
   {
     Map<String, Object> capabilities = new LinkedHashMap<String, Object>();
-    capabilities.put("apiVersion", "1.3");
+    capabilities.put("apiVersion", "1.5");
     capabilities.put("module", "baskStream");
     capabilities.put("transport", "websocket-msgpack");
     capabilities.put("serverTime", Long.valueOf(Clock.millis()));
@@ -312,10 +416,15 @@ final class BaskStreamClientSession
         "unsubscribe_alarms",
         "read_schedule",
         "subscribe_model",
-        "unsubscribe_model"));
+        "unsubscribe_model",
+        "read_tags",
+        "write_tags",
+        "write_relations"));
 
     Map<String, Object> limits = new LinkedHashMap<String, Object>();
     limits.put("maxConnections", Long.valueOf(runtime.getService().getMaxConnectionsValue()));
+    limits.put("maxConnectionsPerUser", Long.valueOf(runtime.getService().getMaxConnectionsPerUserValue()));
+    limits.put("maxMessageBytes", Long.valueOf(runtime.getService().getMaxMessageBytesValue()));
     limits.put("activeConnections", Long.valueOf(runtime.getService().getActiveConnectionsValue()));
     limits.put("maxSubscriptionsPerClient", Long.valueOf(runtime.getService().getMaxSubscriptionsPerClientValue()));
     limits.put("maxLivePointsPerStream", Long.valueOf(runtime.getService().getMaxSubscriptionsPerClientValue()));
@@ -354,6 +463,7 @@ final class BaskStreamClientSession
     schemas.put("modelEvents", "1");
     schemas.put("subscriptionGroups", "1");
     schemas.put("cov", "2");
+    schemas.put("tags", "1");
     capabilities.put("schemas", schemas);
 
     Map<String, Object> subscriptionsMeta = new LinkedHashMap<String, Object>();
@@ -391,6 +501,15 @@ final class BaskStreamClientSession
         "enumOptions"));
     capabilities.put("pointSnapshot", pointSnapshot);
 
+    Map<String, Object> tagsMeta = new LinkedHashMap<String, Object>();
+    tagsMeta.put("read", Boolean.TRUE);
+    tagsMeta.put("writeDirect", Boolean.TRUE);
+    tagsMeta.put("relations", Boolean.TRUE);
+    tagsMeta.put("impliedTagsReadOnly", Boolean.TRUE);
+    tagsMeta.put("maxTargetsPerRequest", Long.valueOf(runtime.getTagResolver().getMaxTargetsPerRequest()));
+    tagsMeta.put("note", "Tags are dictionary-neutral: address Haystack (hs:), Niagara (n:), and hierarchy/site dictionary tags by qualified name.");
+    capabilities.put("tags", tagsMeta);
+
     Map<String, Object> graphics = new LinkedHashMap<String, Object>();
     graphics.put("plainPx", Boolean.FALSE);
     graphics.put("plainGraphic", Boolean.FALSE);
@@ -401,6 +520,7 @@ final class BaskStreamClientSession
     policy.put("allowedPathPatterns", runtime.getService().getAllowedPathPatterns());
     policy.put("allowedOrigins", runtime.getService().getAllowedOrigins());
     policy.put("slotBrowseOnly", Boolean.TRUE);
+    policy.put("hierarchyBrowse", Boolean.TRUE);
     policy.put("historyOrdReads", Boolean.TRUE);
     capabilities.put("policy", policy);
 
@@ -1070,6 +1190,27 @@ final class BaskStreamClientSession
     send(response);
   }
 
+  private void handleReadTags(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = baseMessage("tags_result", id);
+    response.put("targets", runtime.getTagResolver().readTags(request, context));
+    send(response);
+  }
+
+  private void handleWriteTags(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = baseMessage("tags_written", id);
+    response.put("targets", runtime.getTagResolver().writeTags(request, context));
+    send(response);
+  }
+
+  private void handleWriteRelations(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = baseMessage("relations_written", id);
+    response.put("targets", runtime.getTagResolver().writeRelations(request, context));
+    send(response);
+  }
+
   private void ensureAlarmServiceSubscribed() throws BaskStreamProtocolException
   {
     BAlarmService alarmService = BAlarmService.getService();
@@ -1573,6 +1714,155 @@ final class BaskStreamClientSession
         sweepExpiredSubscriptionGroups();
       }
     }, Math.max(100L, next - now));
+  }
+
+  /**
+   * Begin the periodic session revalidation sweep. Authentication is established once at the
+   * WebSocket handshake, but the socket is long-lived; this re-checks that the connected user
+   * is still valid and that every active subscription is still readable for that user, tearing
+   * down or trimming as needed. Controlled by the service {@code revalidateIntervalSec} property
+   * (0 disables).
+   */
+  void start()
+  {
+    scheduleRevalidation();
+  }
+
+  private void scheduleRevalidation()
+  {
+    if (closed.get())
+    {
+      return;
+    }
+    int intervalSec = runtime.getService().getRevalidateIntervalSecValue();
+    if (intervalSec <= 0)
+    {
+      return;
+    }
+    synchronized (subscriptionLock)
+    {
+      cancelScheduled(revalidateFuture);
+      revalidateFuture = runtime.schedule(new Runnable()
+      {
+        @Override
+        public void run()
+        {
+          try
+          {
+            // Hop onto the per-session worker so component-space access stays single-threaded
+            // and serialized with frame processing, matching the rest of the session.
+            worker.execute(new Runnable()
+            {
+              @Override
+              public void run()
+              {
+                revalidate();
+              }
+            });
+          }
+          catch (RejectedExecutionException ignored)
+          {
+            // Worker already shut down (session closing) — nothing to revalidate.
+          }
+        }
+      }, intervalSec * 1000L);
+    }
+  }
+
+  private void revalidate()
+  {
+    if (closed.get())
+    {
+      return;
+    }
+    try
+    {
+      if (userMountedAtStart && !user.isMounted())
+      {
+        teardown("Authenticated user is no longer present in the station.");
+        return;
+      }
+
+      Set<String> subscribed = new LinkedHashSet<String>(directSubscriptions);
+      synchronized (subscriptionLock)
+      {
+        for (SubscriptionGroup group : subscriptionGroups.values())
+        {
+          subscribed.addAll(group.points);
+        }
+      }
+
+      List<String> revoked = new ArrayList<String>();
+      for (String pointOrd : subscribed)
+      {
+        if (!stillAuthorized(pointOrd))
+        {
+          revoked.add(pointOrd);
+        }
+      }
+
+      if (!revoked.isEmpty())
+      {
+        synchronized (subscriptionLock)
+        {
+          for (String pointOrd : revoked)
+          {
+            directSubscriptions.remove(pointOrd);
+            for (SubscriptionGroup group : subscriptionGroups.values())
+            {
+              group.points.remove(pointOrd);
+            }
+            removeActualSubscription(pointOrd);
+          }
+        }
+        Map<String, Object> notice = baseMessage("subscriptions_revoked", null);
+        notice.put("points", revoked);
+        notice.put("reason", "authorization_revoked");
+        send(notice);
+        runtime.onSubscriptionCountChanged();
+        runtime.getService().audit("subscriptions_revoked", "user=" + user.getUsername()
+          + " session=" + sessionId + " count=" + revoked.size());
+      }
+    }
+    catch (Throwable e)
+    {
+      runtime.getService().LOG.log(Level.WARNING, "baskStream revalidation failed for session " + sessionId, e);
+    }
+    finally
+    {
+      scheduleRevalidation();
+    }
+  }
+
+  private boolean stillAuthorized(String pointOrd)
+  {
+    // The path policy may have been narrowed mid-session — re-check it explicitly.
+    if (!BaskStreamAccessPolicy.isAllowed(runtime.getService(), pointOrd))
+    {
+      return false;
+    }
+    try
+    {
+      OrdTarget target = BOrd.make(pointOrd).resolve(runtime.getService(), context);
+      return target.canRead();
+    }
+    catch (Exception e)
+    {
+      // A transient resolution failure (e.g. a point momentarily unmounted) is not a
+      // permission revocation; keep the subscription rather than dropping it on a glitch.
+      return true;
+    }
+  }
+
+  private void teardown(String reason)
+  {
+    runtime.getService().audit("session_revoked", "user=" + user.getUsername() + " session=" + sessionId
+      + " reason=" + reason);
+    Map<String, Object> notice = baseMessage("session_revoked", null);
+    notice.put("reason", reason);
+    send(notice);
+    connection.closeTransport(1008, "session revoked");
+    close(reason);
   }
 
   private List<Object> subscriptionGroupSummaries(boolean includePoints)

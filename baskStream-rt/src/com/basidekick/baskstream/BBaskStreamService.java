@@ -28,6 +28,18 @@ import javax.baja.web.WebOp;
   flags = Flags.SUMMARY
 )
 @NiagaraProperty(
+  name = "maxConnectionsPerUser",
+  type = "int",
+  defaultValue = "0",
+  flags = Flags.SUMMARY
+)
+@NiagaraProperty(
+  name = "maxMessageBytes",
+  type = "int",
+  defaultValue = "1048576",
+  flags = Flags.SUMMARY
+)
+@NiagaraProperty(
   name = "maxSubscriptionsPerClient",
   type = "int",
   defaultValue = "500",
@@ -58,6 +70,12 @@ import javax.baja.web.WebOp;
   flags = Flags.SUMMARY
 )
 @NiagaraProperty(
+  name = "writeSettleMillis",
+  type = "int",
+  defaultValue = "150",
+  flags = Flags.SUMMARY
+)
+@NiagaraProperty(
   name = "allowedPathPatterns",
   type = "baja:String",
   defaultValue = "slot:/*",
@@ -67,6 +85,24 @@ import javax.baja.web.WebOp;
   name = "allowedOrigins",
   type = "baja:String",
   defaultValue = "",
+  flags = Flags.SUMMARY
+)
+@NiagaraProperty(
+  name = "requireAuthorizationHeader",
+  type = "boolean",
+  defaultValue = "false",
+  flags = Flags.SUMMARY
+)
+@NiagaraProperty(
+  name = "rejectMissingOrigin",
+  type = "boolean",
+  defaultValue = "false",
+  flags = Flags.SUMMARY
+)
+@NiagaraProperty(
+  name = "revalidateIntervalSec",
+  type = "int",
+  defaultValue = "0",
   flags = Flags.SUMMARY
 )
 @NiagaraProperty(
@@ -94,8 +130,8 @@ public final class BBaskStreamService extends BWebServlet
 
 //region /*+ ------------ BEGIN BAJA AUTO GENERATED CODE ------------ +*/
 //@formatter:off
-/*@ $com.basidekick.baskstream.BBaskStreamService(3779186472)1.0$ @*/
-/* Generated Tue Jun 09 08:09:28 MST 2026 by Slot-o-Matic (c) Tridium, Inc. 2012-2026 */
+/*@ $com.basidekick.baskstream.BBaskStreamService(1166238119)1.0$ @*/
+/* Generated Thu Jul 23 18:37:58 MST 2026 by Slot-o-Matic (c) Tridium, Inc. 2012-2026 */
 
   //region Property "wsPath"
 
@@ -142,6 +178,52 @@ public final class BBaskStreamService extends BWebServlet
   public void setMaxConnections(int v) { setInt(maxConnections, v, null); }
 
   //endregion Property "maxConnections"
+
+  //region Property "maxConnectionsPerUser"
+
+  /**
+   * Slot for the {@code maxConnectionsPerUser} property.
+   * @see #getMaxConnectionsPerUser
+   * @see #setMaxConnectionsPerUser
+   */
+  public static final Property maxConnectionsPerUser = newProperty(Flags.SUMMARY, 0, null);
+
+  /**
+   * Get the {@code maxConnectionsPerUser} property.
+   * @see #maxConnectionsPerUser
+   */
+  public int getMaxConnectionsPerUser() { return getInt(maxConnectionsPerUser); }
+
+  /**
+   * Set the {@code maxConnectionsPerUser} property.
+   * @see #maxConnectionsPerUser
+   */
+  public void setMaxConnectionsPerUser(int v) { setInt(maxConnectionsPerUser, v, null); }
+
+  //endregion Property "maxConnectionsPerUser"
+
+  //region Property "maxMessageBytes"
+
+  /**
+   * Slot for the {@code maxMessageBytes} property.
+   * @see #getMaxMessageBytes
+   * @see #setMaxMessageBytes
+   */
+  public static final Property maxMessageBytes = newProperty(Flags.SUMMARY, 1048576, null);
+
+  /**
+   * Get the {@code maxMessageBytes} property.
+   * @see #maxMessageBytes
+   */
+  public int getMaxMessageBytes() { return getInt(maxMessageBytes); }
+
+  /**
+   * Set the {@code maxMessageBytes} property.
+   * @see #maxMessageBytes
+   */
+  public void setMaxMessageBytes(int v) { setInt(maxMessageBytes, v, null); }
+
+  //endregion Property "maxMessageBytes"
 
   //region Property "maxSubscriptionsPerClient"
 
@@ -258,6 +340,29 @@ public final class BBaskStreamService extends BWebServlet
 
   //endregion Property "covBatchWindowMillis"
 
+  //region Property "writeSettleMillis"
+
+  /**
+   * Slot for the {@code writeSettleMillis} property.
+   * @see #getWriteSettleMillis
+   * @see #setWriteSettleMillis
+   */
+  public static final Property writeSettleMillis = newProperty(Flags.SUMMARY, 150, null);
+
+  /**
+   * Get the {@code writeSettleMillis} property.
+   * @see #writeSettleMillis
+   */
+  public int getWriteSettleMillis() { return getInt(writeSettleMillis); }
+
+  /**
+   * Set the {@code writeSettleMillis} property.
+   * @see #writeSettleMillis
+   */
+  public void setWriteSettleMillis(int v) { setInt(writeSettleMillis, v, null); }
+
+  //endregion Property "writeSettleMillis"
+
   //region Property "allowedPathPatterns"
 
   /**
@@ -303,6 +408,75 @@ public final class BBaskStreamService extends BWebServlet
   public void setAllowedOrigins(String v) { setString(allowedOrigins, v, null); }
 
   //endregion Property "allowedOrigins"
+
+  //region Property "requireAuthorizationHeader"
+
+  /**
+   * Slot for the {@code requireAuthorizationHeader} property.
+   * @see #getRequireAuthorizationHeader
+   * @see #setRequireAuthorizationHeader
+   */
+  public static final Property requireAuthorizationHeader = newProperty(Flags.SUMMARY, false, null);
+
+  /**
+   * Get the {@code requireAuthorizationHeader} property.
+   * @see #requireAuthorizationHeader
+   */
+  public boolean getRequireAuthorizationHeader() { return getBoolean(requireAuthorizationHeader); }
+
+  /**
+   * Set the {@code requireAuthorizationHeader} property.
+   * @see #requireAuthorizationHeader
+   */
+  public void setRequireAuthorizationHeader(boolean v) { setBoolean(requireAuthorizationHeader, v, null); }
+
+  //endregion Property "requireAuthorizationHeader"
+
+  //region Property "rejectMissingOrigin"
+
+  /**
+   * Slot for the {@code rejectMissingOrigin} property.
+   * @see #getRejectMissingOrigin
+   * @see #setRejectMissingOrigin
+   */
+  public static final Property rejectMissingOrigin = newProperty(Flags.SUMMARY, false, null);
+
+  /**
+   * Get the {@code rejectMissingOrigin} property.
+   * @see #rejectMissingOrigin
+   */
+  public boolean getRejectMissingOrigin() { return getBoolean(rejectMissingOrigin); }
+
+  /**
+   * Set the {@code rejectMissingOrigin} property.
+   * @see #rejectMissingOrigin
+   */
+  public void setRejectMissingOrigin(boolean v) { setBoolean(rejectMissingOrigin, v, null); }
+
+  //endregion Property "rejectMissingOrigin"
+
+  //region Property "revalidateIntervalSec"
+
+  /**
+   * Slot for the {@code revalidateIntervalSec} property.
+   * @see #getRevalidateIntervalSec
+   * @see #setRevalidateIntervalSec
+   */
+  public static final Property revalidateIntervalSec = newProperty(Flags.SUMMARY, 0, null);
+
+  /**
+   * Get the {@code revalidateIntervalSec} property.
+   * @see #revalidateIntervalSec
+   */
+  public int getRevalidateIntervalSec() { return getInt(revalidateIntervalSec); }
+
+  /**
+   * Set the {@code revalidateIntervalSec} property.
+   * @see #revalidateIntervalSec
+   */
+  public void setRevalidateIntervalSec(int v) { setInt(revalidateIntervalSec, v, null); }
+
+  //endregion Property "revalidateIntervalSec"
 
   //region Property "activeConnections"
 
@@ -446,6 +620,17 @@ public final class BBaskStreamService extends BWebServlet
     return getMaxConnections();
   }
 
+  int getMaxConnectionsPerUserValue()
+  {
+    return Math.max(0, getMaxConnectionsPerUser());
+  }
+
+  int getMaxMessageBytesValue()
+  {
+    // Floor at 4 KiB so an accidental tiny/zero value cannot make every frame unreadable.
+    return Math.max(4096, getMaxMessageBytes());
+  }
+
   int getMaxSubscriptionsPerClientValue()
   {
     return getMaxSubscriptionsPerClient();
@@ -469,6 +654,26 @@ public final class BBaskStreamService extends BWebServlet
   int getCovBatchWindowMillisValue()
   {
     return Math.max(0, getCovBatchWindowMillis());
+  }
+
+  int getWriteSettleMillisValue()
+  {
+    return Math.max(0, getWriteSettleMillis());
+  }
+
+  boolean getRequireAuthorizationHeaderValue()
+  {
+    return getRequireAuthorizationHeader();
+  }
+
+  boolean getRejectMissingOriginValue()
+  {
+    return getRejectMissingOrigin();
+  }
+
+  int getRevalidateIntervalSecValue()
+  {
+    return Math.max(0, getRevalidateIntervalSec());
   }
 
   int getActiveConnectionsValue()
@@ -522,6 +727,17 @@ public final class BBaskStreamService extends BWebServlet
     }
   }
 
+  /**
+   * Security audit trail for connection and authentication events. Emitted at INFO with a stable
+   * {@code AUDIT baskStream} prefix so it can be grepped/routed from the station log. Routing these
+   * into Niagara's formal audit-history (BAuditRecord/audit service) is a deferred follow-up that
+   * needs the audit-service API confirmed on a real station.
+   */
+  void audit(String event, String detail)
+  {
+    LOG.info("AUDIT baskStream " + event + (detail == null || detail.length() == 0 ? "" : " " + detail));
+  }
+
   private boolean isWebSocketUpgrade(WebOp op)
   {
     String upgrade = op.getRequest().getHeader("Upgrade");
@@ -539,15 +755,20 @@ public final class BBaskStreamService extends BWebServlet
       + "\"service\":\"BASkStreamService\","
       + "\"enabled\":" + getEnabled() + ","
       + "\"wsPath\":\"" + escapeJson(getWsPath()) + "\","
-      + "\"apiVersion\":\"1.3\","
+      + "\"apiVersion\":\"1.5\","
       + "\"servletName\":\"" + escapeJson(getServletName()) + "\","
       + "\"pathInfo\":\"" + escapeJson(op.getPathInfo()) + "\","
       + "\"maxConnections\":" + getMaxConnectionsValue() + ","
+      + "\"maxConnectionsPerUser\":" + getMaxConnectionsPerUserValue() + ","
+      + "\"maxMessageBytes\":" + getMaxMessageBytesValue() + ","
       + "\"maxSubscriptionsPerClient\":" + getMaxSubscriptionsPerClientValue() + ","
       + "\"maxPointSnapshotPoints\":" + getMaxPointSnapshotPointsValue() + ","
       + "\"heartbeatIntervalSec\":" + getHeartbeatIntervalSecValue() + ","
       + "\"subscriptionLeaseSec\":" + getSubscriptionLeaseSecValue() + ","
       + "\"covBatchWindowMillis\":" + getCovBatchWindowMillisValue() + ","
+      + "\"revalidateIntervalSec\":" + getRevalidateIntervalSecValue() + ","
+      + "\"requireAuthorizationHeader\":" + getRequireAuthorizationHeaderValue() + ","
+      + "\"rejectMissingOrigin\":" + getRejectMissingOriginValue() + ","
       + "\"allowedOrigins\":\"" + escapeJson(getAllowedOrigins()) + "\","
       + "\"activeConnections\":" + getActiveConnectionsValue() + ","
       + "\"totalSubscriptions\":" + getTotalSubscriptionsValue() + ","

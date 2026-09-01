@@ -1,8 +1,8 @@
 # baskStream
 
-baskStream is a Niagara 4 runtime module that exposes station data through an authenticated WebSocket API. The goal is to give external applications a practical live-data path for graphics, dashboards, commissioning tools, and integrations without forcing every app to live inside Niagara UI.
+baskStream is a Niagara 4 runtime module that gives outside applications an authenticated WebSocket connection to station data. I built it for graphics, dashboards, commissioning tools, and integrations that need live Niagara data without having to run inside Niagara's UI.
 
-The API is designed around Niagara's object model and permissions. It can browse station structure, read and subscribe to point values, write writable points, read alarms, subscribe to alarm changes, inspect schedules, read histories, and expose metadata that helps an app understand devices, points, parent objects, and evidence for equipment classification.
+The API stays close to Niagara's object model and permission system. A client can browse the station, read and subscribe to points, write writable points, work with alarms, inspect schedules and histories, and read or edit direct tags and relations. Discovery responses include the evidence an application needs to understand devices, points, parents, and likely equipment without pretending every station is modeled the same way.
 
 For the full protocol reference, see [docs/THIRD_PARTY_API.md](docs/THIRD_PARTY_API.md).
 
@@ -10,27 +10,28 @@ This project is not affiliated with, endorsed by, or sponsored by Tridium, Honey
 
 The repository's own code and documentation are open source under the [Apache License 2.0](LICENSE). That license does not grant rights to Niagara Framework, Tridium/Honeywell software, product documentation, license keys, services, marks, or customer systems.
 
-## Current API Highlights
+## Current API highlights
 
-- Current protocol examples target API version `1.3`.
+- The current source advertises API version `1.5`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
 - `read` is the batch point snapshot operation for point/value ORDs.
 - Point snapshots can include facets, enum metadata, status, timestamps, display values, and raw values.
 - Clients can pass `fields` to `read` for lean point tables; `point` and `ok` are always returned.
 - `capabilities` advertises point snapshot limits and supported snapshot fields through `pointSnapshot`.
+- API 1.5 adds `read_tags`, `write_tags`, and `write_relations`, plus `hierarchy:` browsing for stations that use Niagara hierarchies.
 - Plain Px/graphic embedding is not implemented yet; `capabilities.graphics.plainPx` and `plainGraphic` report `false`.
 
-## What To Use When
+## Where to start
 
 | Surface | Use it for | Start here |
 | --- | --- | --- |
 | Niagara module | The actual station runtime API. Install this when another app needs authenticated WebSocket access to live station data. | [Station Setup](#station-setup) |
-| Companion app | Human-guided startup, live station testing, API inspection, and generated setup snippets for external tools. | [Companion Guide And Demo App](#companion-guide-and-demo-app) |
+| Companion app | Guided startup, live station testing, API inspection, and setup snippets for external tools. | [Companion guide and demo app](#companion-guide-and-demo-app) |
 | WebSocket protocol | Production apps, graphics, dashboards, and integrations that should talk directly to the station. | [docs/THIRD_PARTY_API.md](docs/THIRD_PARTY_API.md) |
 | Integration direction | Compatibility rules and the future adapter strategy for Grafana, REST, OpenMetrics, and exporters. | [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) |
-| Python tools | Bench tests, quick station checks, and scripting experiments. | [Python Test Tools](#python-test-tools) |
-| MCP server | Optional local bridge for AI clients and agent workflows. It is tooling around the module, not the primary runtime surface. | [AI Tooling: MCP Server](#ai-tooling-mcp-server) |
+| Python tools | Bench tests, quick station checks, and scripting experiments. | [Python test tools](#python-test-tools) |
+| MCP server | An optional local bridge for AI clients and agent workflows. It sits around the module; it is not the main runtime API. | [AI tooling: MCP server](#ai-tooling-mcp-server) |
 
-## Grafana Integration
+## Grafana integration
 
 The first product integration is a read-only Grafana backend data source at [integrations/grafana/basidekick-baskstream-datasource](integrations/grafana/basidekick-baskstream-datasource). It connects Grafana directly to a Niagara station running baskStream:
 
@@ -40,7 +41,7 @@ Grafana panel -> BaskStream data source -> Niagara login -> /stream/health -> /s
 
 It does not require a Niagara module API change. The plugin uses the existing `/stream` operations for point search, current values, histories, and live COV updates.
 
-Quick path:
+To get a first panel running:
 
 1. Install and enable the baskStream runtime module on the Niagara station.
 2. Create a least-privilege Niagara user for Grafana.
@@ -51,7 +52,7 @@ Quick path:
 
 For private signed installs, the Grafana root URL used during signing must exactly match Grafana's configured `server.root_url`. See [integrations/grafana/basidekick-baskstream-datasource/INSTALL.md](integrations/grafana/basidekick-baskstream-datasource/INSTALL.md).
 
-## Repository Layout
+## Repository layout
 
 ```text
 baskStream-rt/                   Niagara runtime module source
@@ -84,7 +85,7 @@ tools/baskstream-test-snippet.js
 
 Build artifacts, generated jars, screenshots, local editor settings, and macOS AppleDouble sidecar files are intentionally ignored.
 
-## Legal And AI Tool Boundary
+## Legal and AI-tool boundaries
 
 This is engineering guidance, not legal advice. Review the current [Tridium Niagara EULA](https://www.tridium.com/us/en/eula), the order terms for the target license, and customer agreements before distributing or using this project on a third-party station.
 
@@ -101,7 +102,7 @@ This is engineering guidance, not legal advice. Review the current [Tridium Niag
 - Use least-privilege Niagara users, and get explicit customer authorization before connecting AI tooling to customer systems.
 - Avoid Tridium, Honeywell, Anthropic, OpenAI, Claude, Codex, or MCP Registry branding in a way that implies partnership, certification, or endorsement.
 
-## Station Setup
+## Station setup
 
 1. Compile the module jar with your Niagara build environment.
 2. Install the compiled baskStream module jar on the station host.
@@ -145,7 +146,7 @@ The WebSocket API runs through Niagara web authentication. A client must authent
 wss://<station>/stream
 ```
 
-## Client Flow
+## Client flow
 
 Recommended external app flow:
 
@@ -160,7 +161,7 @@ Recommended external app flow:
 9. Use `release_subscriptions` when a view closes.
 10. Use alarm, schedule, and history calls only where the app needs those views.
 
-## Core Operations
+## Core operations
 
 | Need | Operation | Use |
 | --- | --- | --- |
@@ -173,10 +174,11 @@ Recommended external app flow:
 | Alarms | `read_alarms`, `ack_alarm`, `clear_alarm`, `subscribe_alarms`, `unsubscribe_alarms` | Load bounded snapshots, acknowledge or force-clear records, and maintain client alarm state with event pushes. |
 | Schedules | `read_schedule` | Read Niagara schedule state and schedule data for UI display. |
 | Histories | `describe_history`, `read_history` | Detect trend availability and load chart records by time range. |
+| Tags and relations | `read_tags`, `write_tags`, `write_relations` | Read direct and implied tags, edit direct tags, and manage component relations. |
 | Model changes | `subscribe_model`, `unsubscribe_model` | Receive branch-scoped structure-change hints, then refresh affected nodes. |
 | Diagnostics | `subscription_status` | Inspect active point subscriptions, groups, leases, and counts. |
 
-## Metadata And Discovery
+## Metadata and discovery
 
 Metadata is additive and request-controlled. It is meant to give client applications useful evidence, not to claim perfect equipment detection in every station.
 
@@ -197,7 +199,7 @@ Recommended pattern:
 4. Use `subscribe_model` as a hint that cached structure may need refresh.
 5. Support manual review and correction in the external app for large or inconsistent sites.
 
-## Live Values And Scale
+## Live values and scale
 
 For graphics and UI apps, avoid subscribing to every discovered point forever. Keep discovered equipment and point metadata cached, then subscribe only to points that are actively needed by the current view.
 
@@ -211,7 +213,7 @@ A practical pattern is:
 
 For alarms, use `subscribe_alarms` when the app needs global alarm awareness. On large stations, prefer event mode, maintain a client-side alarm map keyed by alarm UUID, and call `read_alarms` only for initial load or resync.
 
-## Python Test Tools
+## Python test tools
 
 The Python tools under `tools/python-tools/tools/python/` are standalone read-only helpers for bench testing and client experiments. They reuse the same station contract as other clients: Niagara web login, `/stream/health`, then MessagePack WebSocket calls to `/stream`.
 
@@ -233,7 +235,7 @@ python3 baskstream_cli.py --station https://<station> --user <user> --ask-pass v
 
 For local/self-signed stations, the tools default to TLS verification off. Use `--verify-tls` only when the station certificate is trusted by the client machine. See [tools/python-tools/README.md](tools/python-tools/README.md) for platform-specific examples and PowerShell ORD quoting notes.
 
-## AI Tooling: MCP Server
+## AI tooling: MCP server
 
 The MCP server under `tools/mcp/` is optional AI-client tooling. It does not replace the Niagara module, the WebSocket protocol, the companion app, or a production graphics/dashboard client. It wraps the same station contract used everywhere else: Niagara login, `/stream/health`, then MessagePack WebSocket calls to `/stream`.
 
@@ -265,7 +267,7 @@ Recommended AI-client workflow:
 
 See [tools/mcp/README.md](tools/mcp/README.md) for the full tool list and inspector workflow.
 
-## Network And Security
+## Network and security
 
 Common blockers for real deployments:
 
@@ -276,7 +278,17 @@ Common blockers for real deployments:
 - Niagara user permissions still apply. Use a least-privilege user for external apps.
 - Corporate VPNs, SSL inspection, and gateway timeouts can interrupt long-lived WebSocket sessions.
 
-## Companion Guide And Demo App
+### Settings worth reviewing before deployment
+
+Niagara user permissions are the main access control. Every integration should have a dedicated, least-privilege station user. `allowedPathPatterns` adds another boundary, but its default, `slot:/*`, is intentionally broad for backward compatibility. Narrow it to the parts of the station an integration actually needs.
+
+Non-browser clients such as Grafana, the Python tools, and server-to-server integrations may omit the `Origin` header. baskStream allows that by default. Browser clients that send an origin are checked against the station origin and `allowedOrigins`. If every client in a deployment sends an origin, `rejectMissingOrigin` can make that check strict.
+
+The remaining hardening settings are opt-in so existing clients keep working. `requireAuthorizationHeader` rejects cookie-only WebSocket upgrades, `revalidateIntervalSec` periodically checks long-lived sessions, and `maxConnectionsPerUser` limits one Niagara account's open sockets. Check client compatibility before enabling them. `maxMessageBytes` defaults to 1 MiB.
+
+After a point write, baskStream waits for `writeSettleMillis` before reading the point back. The default is 150 ms. Lower it only when the target points settle faster and the shorter response time matters.
+
+## Companion guide and demo app
 
 The companion app is:
 
@@ -307,7 +319,7 @@ The helper exists so the standalone browser app can test stations with local cre
 
 You can also open the HTML file directly, but browser security rules may block direct station login or self-signed station requests from `file://`.
 
-## Demo App Test Flow
+## Demo app test flow
 
 1. Start the helper with `node tools/baskstream-nav-tree-server.mjs --port=8787`.
 2. Open `http://127.0.0.1:8787/`.
@@ -321,7 +333,7 @@ You can also open the HTML file directly, but browser security rules may block d
 
 The demo app is not intended to be a production UI. It is a companion test tool and implementation reference for third-party clients.
 
-## Development Notes
+## Development notes
 
 - The person compiling/deploying the module should run the real Niagara build and station validation.
 - Local checks can verify JavaScript syntax and helper scripts, but they do not replace a Niagara compile or station test.

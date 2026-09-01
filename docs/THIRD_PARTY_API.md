@@ -12,7 +12,10 @@ This project is not affiliated with, endorsed by, or sponsored by Tridium or Hon
 - Encoding: MessagePack maps
 - Service path: the BASkStreamService `servletName` property must be `stream`; blank values are defaulted to `stream` on startup.
 - Authentication: the WebSocket runs inside the authenticated Niagara web session. Browser-based clients can reuse the logged-in station session; service clients should perform Niagara login first and then connect with the session cookies.
-- Origin policy: browser WebSocket requests must come from the station origin or an exact origin listed in the service `allowedOrigins` property. Service clients that do not send an `Origin` header are allowed after Niagara authentication.
+- Optional header auth (CSWSH hardening): when the service property `requireAuthorizationHeader` is `true`, the handshake is rejected (HTTP 403) unless it carries an `Authorization` header. This defeats cookie-riding cross-site hijacks because a browser cannot set request headers on a WebSocket handshake. Default is `false`, so cookie-authenticated clients keep working unchanged. Clients that can set handshake headers (e.g. a desktop/Electron client) should send `Authorization` so the deployment can then enable this flag.
+- Origin policy: browser WebSocket requests must come from the station origin or an exact origin listed in the service `allowedOrigins` property. Service clients that do not send an `Origin` header are allowed after Niagara authentication, unless the service property `rejectMissingOrigin` is `true` (default `false`).
+- Path policy: `allowedPathPatterns` defaults to `slot:/*`. An empty value preserves that established wide-open behavior; Niagara user permissions still apply to every resolved target. Configure narrower `slot:/...` patterns when an integration should be confined to part of the station.
+- Optional session revalidation: `revalidateIntervalSec` defaults to `0` (disabled) so existing long-lived clients retain their established connection behavior. When an administrator sets a positive interval, the server periodically checks that the connected user is still present and that each active subscription is still readable, trimming or tearing down as needed. See "Server-Initiated Notices" below.
 
 Every request frame should include:
 
@@ -24,6 +27,13 @@ Every request frame should include:
 ```
 
 Responses echo `id` when the operation is request/response based. Push frames such as `cov` and `alarm_cov` do not require a request id.
+
+### Server-Initiated Notices
+
+These unsolicited frames have no `id`. Clients should tolerate (and may act on) them; unknown ops can be safely ignored.
+
+- `subscriptions_revoked` — emitted when periodic revalidation finds that the connected user can no longer read one or more active subscriptions (permission/category change, or a narrowed `allowedPathPatterns`). Shape: `{ "op": "subscriptions_revoked", "points": ["slot:/..."], "reason": "authorization_revoked" }`. The listed points have already been dropped server-side; a client that still needs them must re-`subscribe` (and will be re-checked).
+- `session_revoked` — emitted just before the server closes the socket (close code `1008`) because the connected user is no longer present in the station. Shape: `{ "op": "session_revoked", "reason": "<text>" }`. Clients should re-authenticate before reconnecting.
 
 ## Supported Operations
 
@@ -56,9 +66,11 @@ Response:
   "op": "capabilities_result",
   "id": "caps-1",
   "capabilities": {
-    "apiVersion": "1.3",
-    "operations": ["browse", "read", "subscribe", "replace_subscriptions", "write", "read_alarms", "ack_alarm", "clear_alarm"],
+    "apiVersion": "1.5",
+    "operations": ["browse", "read", "subscribe", "replace_subscriptions", "write", "read_alarms", "ack_alarm", "clear_alarm", "read_tags", "write_tags", "write_relations"],
     "limits": {
+      "maxConnectionsPerUser": 0,
+      "maxMessageBytes": 1048576,
       "maxSubscriptionsPerClient": 500,
       "maxLivePointsPerStream": 500,
       "maxPointSnapshotPoints": 1000,
@@ -166,6 +178,17 @@ Lean repeat browse:
 `metadata` also accepts booleans: `true` is the same as `"full"`, and `false` is the same as `"none"`.
 
 `depth` is clamped by the station service. Clients should use shallow browse calls and drill in as needed rather than requesting broad deep station traversals.
+
+`browse`, `describe`, and `search` also accept Niagara hierarchy ORDs (`hierarchy:`). This is the tagged/grouped tree from HierarchyService, not the raw station slot tree. Use it after tagging equipment with Haystack or other dictionaries — it does not replace `read_tags`/`write_tags`. Grouping nodes often have a `hierarchy:` `ord` and a null `slotPath`. When the node binds to a station component, the response also includes additive `entityOrd`, `targetOrd`, and `targetSlotPath` so tag writes can target the real component. Existing `slot:/` browse/search behavior is unchanged.
+
+```json
+{
+  "op": "browse",
+  "id": "2c",
+  "base": "hierarchy:",
+  "depth": 1
+}
+```
 
 ### `describe`
 
@@ -741,6 +764,130 @@ Push frame:
 
 Treat `model_cov` as a hint and refresh the affected branch with `browse` or `describe`. Keep model subscriptions scoped to branches the app has cached or is actively monitoring.
 
+### `read_tags`
+
+Reads Niagara tags and relations for one or more components. Tags are dictionary-neutral: Project Haystack tags (`hs:...`), Niagara tags (`n:...`), and site/hierarchy tag-dictionary tags are all returned and addressed by their qualified name. Requires read permission on each target.
+
+```json
+{
+  "op": "read_tags",
+  "id": "tags-1",
+  "ords": ["slot:/Drivers/LonNetwork/Floor1/AHU_01"],
+  "dictionary": "hs",
+  "includeRelations": true
+}
+```
+
+- `ords` (or a single `ord`): up to 100 `slot:/` targets per request.
+- `dictionary` (optional): return only tags/relations in one dictionary, e.g. `"hs"` for Haystack or a station's hierarchy/site dictionary namespace.
+- `includeRelations` (optional, default `true`).
+
+Response:
+
+```json
+{
+  "op": "tags_result",
+  "id": "tags-1",
+  "targets": [
+    {
+      "ord": "slot:/Drivers/LonNetwork/Floor1/AHU_01",
+      "ok": true,
+      "slotPath": "slot:/Drivers/LonNetwork/Floor1/AHU_01",
+      "display": "AHU_01",
+      "typeSpec": "lonworks:LonDevice",
+      "tags": [
+        { "id": "hs:equip", "dictionary": "hs", "name": "equip", "value": null, "valueType": "baja:Marker", "marker": true, "source": "direct" },
+        { "id": "hs:ahu", "dictionary": "hs", "name": "ahu", "value": null, "valueType": "baja:Marker", "marker": true, "source": "implied" },
+        { "id": "n:name", "dictionary": "n", "name": "name", "value": "AHU_01", "valueType": "baja:String", "marker": false, "source": "implied" }
+      ],
+      "relations": [
+        { "id": "hs:siteRef", "dictionary": "hs", "name": "siteRef", "direction": "out", "endpointOrd": "slot:/Site", "source": "direct" }
+      ]
+    }
+  ]
+}
+```
+
+`source` is `"direct"` for tags/relations stored on the component, `"implied"` for tags/relations contributed by a tag dictionary (SmartTags), and `"unknown"` when the station's tag provider does not expose the split. Only direct tags/relations are writable.
+
+### `write_tags`
+
+Adds, updates, or removes direct tags on components. Requires admin write permission on each target (tag edits change the component model, matching Workbench semantics). Implied tags from tag dictionaries cannot be removed; attempting to do so returns `implied_tag` for that entry.
+
+```json
+{
+  "op": "write_tags",
+  "id": "tags-2",
+  "targets": [
+    {
+      "ord": "slot:/Drivers/LonNetwork/Floor1/AHU_01",
+      "set": [
+        { "id": "hs:equip" },
+        { "id": "hs:ahu" },
+        { "id": "hs:area", "value": 5200.0 },
+        { "id": "myDict:floorName", "value": "Level 1" }
+      ],
+      "remove": ["hs:stage"]
+    }
+  ]
+}
+```
+
+- A single target can also be written without the `targets` wrapper by putting `ord`, `set`, and `remove` at the top level.
+- `set` entries: `id` is the qualified tag name; `value` omitted or `null` writes a Haystack-style marker tag; boolean/number/string values map to Niagara boolean/double/string tag values. Pass `valueType` (`"marker"`, `"string"`, `"boolean"`, `"double"`, `"long"`) to force a specific value type — numbers default to double to match Niagara's Haystack number tags.
+- `remove` entries: qualified tag names; removal drops every direct value stored under that id.
+- Limits: 100 targets per request, 100 set/remove operations per target.
+
+Response `tags_written` echoes per-operation results and the target's full post-write tag list:
+
+```json
+{
+  "op": "tags_written",
+  "id": "tags-2",
+  "targets": [
+    {
+      "ord": "slot:/Drivers/LonNetwork/Floor1/AHU_01",
+      "ok": true,
+      "results": [
+        { "op": "set", "id": "hs:equip", "ok": true },
+        { "op": "remove", "id": "hs:stage", "ok": false, "code": "tag_not_found", "message": "No direct tag with this id exists on the component." }
+      ],
+      "tags": []
+    }
+  ]
+}
+```
+
+### `write_relations`
+
+Adds or removes direct relations between components — this is how Haystack reference tags (`hs:siteRef`, `hs:equipRef`, `hs:spaceRef`) and hierarchy/site relations are modeled in Niagara. Requires admin write permission on the target component and read permission on each endpoint.
+
+```json
+{
+  "op": "write_relations",
+  "id": "rel-1",
+  "targets": [
+    {
+      "ord": "slot:/Drivers/LonNetwork/Floor1/AHU_01/points/SupplyTemp",
+      "add": [
+        { "id": "hs:equipRef", "endpoint": "slot:/Drivers/LonNetwork/Floor1/AHU_01" }
+      ],
+      "remove": [
+        { "id": "hs:siteRef", "endpoint": "slot:/OldSite" }
+      ]
+    }
+  ]
+}
+```
+
+- `add` entries: `id` (qualified relation name) and `endpoint` (`slot:/` ORD). Relations are outbound from the target by default; pass `"inbound": true` to reverse the direction.
+- `remove` entries: `id` required; `endpoint` and `direction` (`"in"`/`"out"`) optionally narrow the match. Without them, every direct relation with that id is removed.
+- Same limits as `write_tags`: 100 targets per request, 100 operations per target.
+
+Response `relations_written` echoes per-operation results (including a `removed` count for removals) and the target's post-write relation list.
+
+Tag and relation writes on subscribed model branches surface to other clients as `model_cov` hints (`facets_changed`, `relation_added`, `relation_removed`), so apps that maintain a cached model can refresh affected nodes.
+
 ## Node Metadata
 
 `metadata` is attached to each node when requested. It is evidence for your application; it is not a universal equipment classifier.
@@ -900,6 +1047,8 @@ Related blocks:
 
 Tags and relations are supplemental. If a provider throws while reading tags or relations, browse/describe will still succeed and return an empty list for that portion.
 
+For focused or batch tag access — and for editing tags and relations — use the dedicated `read_tags`, `write_tags`, and `write_relations` operations, which also report whether each tag is `direct` (stored on the component, writable) or `implied` (contributed by a tag dictionary, read-only).
+
 ## Equipment Discovery Guidance
 
 baskStream intentionally does not claim 100% equipment detection.
@@ -939,3 +1088,21 @@ Recommended client approach:
 The `metadata` block is additive and request-controlled. Clients can ignore it or omit it and continue using `ord`, `slotPath`, `name`, `typeSpec`, `features`, `operations`, and point read/write payloads.
 
 Third-party clients should not require every metadata subfield to be populated. Different protocols and station models expose different evidence.
+
+### API 1.5 changes
+
+`apiVersion` advanced from `1.4` to `1.5`. The changes are additive:
+
+- New operations `read_tags`, `write_tags`, and `write_relations` for reading and editing Niagara component tags and relations (Haystack `hs:` tags, Niagara `n:` tags, and hierarchy/site tag-dictionary tags and reference relations).
+- New `capabilities.tags` block (`read`, `writeDirect`, `relations`, `impliedTagsReadOnly`, `maxTargetsPerRequest`) and `schemas.tags = "1"`.
+- Tag/relation writes require admin write permission on the target component; reads require read permission. `allowedPathPatterns` applies to targets and relation endpoints.
+- `browse`/`describe`/`search` accept `hierarchy:` ORDs in addition to `slot:/`. `capabilities.policy.slotBrowseOnly` stays `true` (slot-tree clients are unchanged); `hierarchyBrowse` is the additive flag. Hierarchy grouping nodes may include `entityOrd` / `targetOrd` / `targetSlotPath` when they bind to a station component. Component-backed hierarchy nodes are still filtered by `allowedPathPatterns` on their real slot path.
+
+### API 1.4 changes
+
+`apiVersion` advanced from `1.3` to `1.4`. The protocol changes are additive and the existing path, authentication, origin, and write-settle defaults remain compatible:
+
+- New server→client notices `subscriptions_revoked` and `session_revoked` (additive; ignore if unhandled).
+- New service properties: `requireAuthorizationHeader` (default `false`), `rejectMissingOrigin` (default `false`), `revalidateIntervalSec` (default `0` = disabled), `maxConnectionsPerUser` (default `0` = unlimited), `maxMessageBytes` (default `1048576`).
+- `allowedPathPatterns` remains `slot:/*` by default, and an empty value retains the legacy wide-open fallback. Narrow it explicitly when a deployment needs an additional scope boundary beyond Niagara user permissions.
+- Resource limits: inbound frames larger than `maxMessageBytes` cause the station to drop the connection (standard WebSocket message-too-big close). Keep batch requests within this size; it comfortably fits the documented per-request maximums at default. When `maxConnectionsPerUser > 0`, an upgrade beyond a single user's allowance is rejected (HTTP 503 pre-upgrade, or close `1013` if the limit is hit during the open handshake). The `capabilities` response advertises `maxConnectionsPerUser` and `maxMessageBytes` under `limits`.

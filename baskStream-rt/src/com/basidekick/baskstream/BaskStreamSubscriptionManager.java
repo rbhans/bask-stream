@@ -15,9 +15,16 @@ final class BaskStreamSubscriptionManager
     this.service = service;
   }
 
-  boolean register(BaskStreamClientSession session)
+  synchronized boolean register(BaskStreamClientSession session)
   {
     if (getActiveConnectionCount() >= service.getMaxConnectionsValue())
+    {
+      refreshMetrics();
+      return false;
+    }
+
+    int perUserCap = service.getMaxConnectionsPerUserValue();
+    if (perUserCap > 0 && getConnectionCountForUser(session.getUsername()) >= perUserCap)
     {
       refreshMetrics();
       return false;
@@ -26,6 +33,23 @@ final class BaskStreamSubscriptionManager
     boolean added = sessions.add(session);
     refreshMetrics();
     return added;
+  }
+
+  int getConnectionCountForUser(String username)
+  {
+    if (username == null)
+    {
+      return 0;
+    }
+    int count = 0;
+    for (BaskStreamClientSession session : sessions)
+    {
+      if (username.equals(session.getUsername()))
+      {
+        count++;
+      }
+    }
+    return count;
   }
 
   void unregister(BaskStreamClientSession session)

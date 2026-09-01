@@ -27,10 +27,12 @@ Station URLs should use `https://` by default. Plain `http://`/`ws://` is blocke
 
 Use baskStream station-side controls:
 
-- `allowedPathPatterns` for ORD scope.
-- Niagara user permissions for read access.
+- `allowedPathPatterns` for additional ORD scoping. The service default and an empty value both preserve the legacy `slot:/*` behavior, so configure narrower patterns when dashboards should be confined to specific station subtrees. The datasource sends no patterns of its own.
+- Niagara user permissions for read access. Session revalidation is opt-in (`revalidateIntervalSec` defaults to `0`). When enabled, removing the dedicated Grafana user or revoking point access causes the station to drop the subscription (`subscriptions_revoked`) or close the socket (`session_revoked`). The datasource should resubscribe/relogin on these notices.
 - Module max point and subscription limits.
 - Module history limits.
+
+The plugin authenticates with the Niagara session cookie and does not send an `Authorization` header, so the station-side `requireAuthorizationHeader` flag must remain `false` for this datasource. The datasource sends a same-origin `Origin`, so `rejectMissingOrigin` does not affect it.
 
 The plugin enforces its own conservative history, point count, and live lease limits before sending requests, but station-side limits remain authoritative.
 

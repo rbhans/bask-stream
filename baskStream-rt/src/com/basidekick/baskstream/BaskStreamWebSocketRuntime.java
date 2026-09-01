@@ -46,6 +46,7 @@ final class BaskStreamWebSocketRuntime
   private final BaskStreamAlarmResolver alarmResolver;
   private final BaskStreamScheduleResolver scheduleResolver;
   private final BaskStreamWriteResolver writeResolver;
+  private final BaskStreamTagResolver tagResolver;
   private final BaskStreamSubscriptionManager subscriptions;
   private final ScheduledExecutorService scheduler;
   private volatile WebSocketServerFactory socketFactory;
@@ -60,6 +61,7 @@ final class BaskStreamWebSocketRuntime
     this.alarmResolver = new BaskStreamAlarmResolver(service);
     this.scheduleResolver = new BaskStreamScheduleResolver(service);
     this.writeResolver = new BaskStreamWriteResolver(service, resolver);
+    this.tagResolver = new BaskStreamTagResolver(service);
     this.subscriptions = new BaskStreamSubscriptionManager(service);
     this.scheduler = Executors.newSingleThreadScheduledExecutor(new BaskStreamThreadFactory());
   }
@@ -74,8 +76,20 @@ final class BaskStreamWebSocketRuntime
         response.sendError(HttpServletResponse.SC_BAD_REQUEST, "WebSocket upgrade required.");
         return;
       }
+      // CSWSH hardening: optionally require a header-channel credential on the handshake.
+      // A cross-site browser script cannot set request headers on a WebSocket handshake,
+      // so requiring Authorization defeats cookie-riding hijacks even when the station's
+      // web auth would otherwise accept an ambient session cookie. Niagara still performs
+      // the actual credential validation; this only enforces the channel.
+      if (service.getRequireAuthorizationHeaderValue() && !hasAuthorizationHeader(request))
+      {
+        service.audit("upgrade_rejected", "reason=missing_authorization_header " + requestAudit(request));
+        response.sendError(HttpServletResponse.SC_FORBIDDEN, "Authorization header is required for this endpoint.");
+        return;
+      }
       if (!isAllowedOrigin(request))
       {
+        service.audit("upgrade_rejected", "reason=origin_not_allowed " + requestAudit(request));
         response.sendError(HttpServletResponse.SC_FORBIDDEN, "WebSocket Origin is not allowed.");
         return;
       }
@@ -207,9 +221,29 @@ final class BaskStreamWebSocketRuntime
 
     WebSocketServerFactory created = new WebSocketServerFactory(servletContext);
     created.getPolicy().setIdleTimeout(service.getHeartbeatIntervalSecValue() * 2000L);
+    // Bound inbound frames so a single oversized message cannot exhaust JACE memory. Applies to
+    // both binary (the real protocol) and text (rejected by the adapter, but capped before buffering).
+    int maxMessageBytes = service.getMaxMessageBytesValue();
+    created.getPolicy().setMaxBinaryMessageSize(maxMessageBytes);
+    created.getPolicy().setMaxTextMessageSize(maxMessageBytes);
     created.start();
     socketFactory = created;
     return created;
+  }
+
+  private static boolean hasAuthorizationHeader(HttpServletRequest request)
+  {
+    String authorization = request.getHeader("Authorization");
+    return authorization != null && authorization.trim().length() > 0;
+  }
+
+  private static String requestAudit(HttpServletRequest request)
+  {
+    java.security.Principal principal = request.getUserPrincipal();
+    String user = principal == null ? "anonymous" : principal.getName();
+    String origin = request.getHeader("Origin");
+    return "remote=" + request.getRemoteAddr() + " user=" + user
+        + " origin=" + (origin == null ? "-" : origin);
   }
 
   private boolean isAllowedOrigin(HttpServletRequest request)
@@ -217,7 +251,11 @@ final class BaskStreamWebSocketRuntime
     String origin = request.getHeader("Origin");
     if (origin == null || origin.trim().length() == 0)
     {
-      return true;
+      // Native clients (e.g. an Electron desktop app) legitimately omit Origin. Browsers
+      // always send it on a WebSocket handshake, so a missing Origin is not a browser-CSWSH
+      // vector. Deployments that only expect header-authenticated native clients can still
+      // reject the ambiguous no-Origin case via rejectMissingOrigin.
+      return !service.getRejectMissingOriginValue();
     }
 
     String normalizedOrigin = normalizeOrigin(origin);
@@ -374,6 +412,11 @@ final class BaskStreamWebSocketRuntime
     return writeResolver;
   }
 
+  BaskStreamTagResolver getTagResolver()
+  {
+    return tagResolver;
+  }
+
   BBaskStreamService getService()
   {
     return service;
@@ -481,8 +524,10 @@ final class BaskStreamWebSocketRuntime
     @Override
     public Object createWebSocket(ServletUpgradeRequest request, ServletUpgradeResponse response)
     {
-      if (request.getUserPrincipal() == null)
+      java.security.Principal principal = request.getUserPrincipal();
+      if (principal == null)
       {
+        runtime.getService().audit("upgrade_rejected", "reason=unauthenticated");
         try
         {
           response.sendForbidden("Authentication required.");
@@ -496,6 +541,7 @@ final class BaskStreamWebSocketRuntime
 
       if (runtime.subscriptions.getActiveConnectionCount() >= runtime.getService().getMaxConnectionsValue())
       {
+        runtime.getService().audit("upgrade_rejected", "reason=max_connections user=" + principal.getName());
         try
         {
           response.sendError(HttpServletResponse.SC_SERVICE_UNAVAILABLE, "Maximum websocket connection count reached.");
@@ -503,6 +549,21 @@ final class BaskStreamWebSocketRuntime
         catch (IOException e)
         {
           runtime.getService().LOG.log(Level.WARNING, "Unable to reject websocket upgrade after max connection check", e);
+        }
+        return null;
+      }
+
+      int perUserCap = runtime.getService().getMaxConnectionsPerUserValue();
+      if (perUserCap > 0 && runtime.subscriptions.getConnectionCountForUser(principal.getName()) >= perUserCap)
+      {
+        runtime.getService().audit("upgrade_rejected", "reason=max_connections_per_user user=" + principal.getName());
+        try
+        {
+          response.sendError(HttpServletResponse.SC_SERVICE_UNAVAILABLE, "Maximum websocket connection count for user reached.");
+        }
+        catch (IOException e)
+        {
+          runtime.getService().LOG.log(Level.WARNING, "Unable to reject websocket upgrade after per-user connection check", e);
         }
         return null;
       }

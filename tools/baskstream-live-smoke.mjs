@@ -18,6 +18,10 @@ const points = {
 };
 const scheduleOrd = process.env.STREAM_SCHEDULE_ORD || "slot:/Schedules/BooleanSchedule";
 const historyOrd = process.env.STREAM_HISTORY_ORD || "slot:/Drivers/LonNetwork/Floor1/AHU_01/points/SpaceTemp";
+// STREAM_TAGS_ONLY=1 skips the point/history/alarm/schedule sections and runs only
+// ping, capabilities, and the API 1.5 tag/relation section (useful on stations that
+// do not have the standard smoke-test points).
+const tagsOnly = /^(1|true|tags)$/i.test(process.env.STREAM_TAGS_ONLY || "");
 
 if (!password) {
   throw new Error("Set NIAGARA_PASSWORD or STREAM_PASSWORD before running the live smoke test.");
@@ -854,6 +858,7 @@ async function main() {
     fail("capabilities", error);
   }
 
+  if (!tagsOnly) {
   try {
     const browse = await client.send("browse", { base: pointBase, depth: 1 });
     const children = Array.isArray(browse.node?.children) ? browse.node.children : [];
@@ -1317,6 +1322,336 @@ async function main() {
   }
   catch (error) {
     fail("subscribe model", error);
+  }
+  }
+
+  // --- tag and relation operations (API 1.5) ---
+
+  // STREAM_PROBE_ORD=<ord> browses one node and logs its children (diagnostic aid).
+  if (process.env.STREAM_PROBE_ORD) {
+    try {
+      const probe = await client.send("browse", { base: process.env.STREAM_PROBE_ORD, depth: 2 });
+      if (probe.op === "error") {
+        throw new Error(`${probe.code}: ${probe.message}`);
+      }
+      line("probe", {
+        ord: probe.node?.ord,
+        typeSpec: probe.node?.typeSpec,
+        children: (probe.node?.children || []).map((child) => ({
+          ord: child.ord,
+          name: child.name,
+          typeSpec: child.typeSpec,
+          hasChildren: child.hasChildren,
+          children: (child.children || []).map((grandchild) => `${grandchild.name} (${grandchild.typeSpec})`)
+        }))
+      });
+    }
+    catch (error) {
+      line("probe failed", { ord: process.env.STREAM_PROBE_ORD, error: error.message });
+    }
+  }
+
+  const tagPrefix = "bask";
+  const tagIds = {
+    marker: `${tagPrefix}:smokeMarker`,
+    string: `${tagPrefix}:smokeString`,
+    number: `${tagPrefix}:smokeNumber`,
+    bool: `${tagPrefix}:smokeBool`,
+    long: `${tagPrefix}:smokeLong`,
+    // Prove dictionary neutrality: a Project Haystack (hs:) tag and a plain
+    // dictionary-less tag alongside the custom bask: dictionary above.
+    haystack: "hs:baskSmoke",
+    plain: "baskSmokePlain"
+  };
+  const relationId = `${tagPrefix}:smokeRef`;
+  let tagTarget = process.env.STREAM_TAG_TARGET || null;
+  let tagEndpoint = process.env.STREAM_TAG_ENDPOINT || null;
+  let tagOpsSupported = false;
+
+  const findTag = (entry, id) => (entry?.tags || []).find((tag) => tag.id === id);
+  const findRelation = (entry, id) => (entry?.relations || []).find((relation) => relation.id === id);
+  const firstTarget = (response) => response?.targets?.[0];
+
+  try {
+    const caps = await client.send("capabilities");
+    const ops = caps.capabilities?.operations || [];
+    const missing = ["read_tags", "write_tags", "write_relations"].filter((op) => !ops.includes(op));
+    if (missing.length > 0) {
+      throw new Error(`Station module does not support ${missing.join(", ")} (apiVersion ${caps.capabilities?.apiVersion}). Deploy the API 1.5 baskStream build first.`);
+    }
+    const tagsMeta = caps.capabilities?.tags || {};
+    if (tagsMeta.read !== true || tagsMeta.writeDirect !== true || tagsMeta.relations !== true) {
+      throw new Error("Capabilities tags block missing read/writeDirect/relations flags.");
+    }
+    if (typeof tagsMeta.maxTargetsPerRequest !== "number") {
+      throw new Error("Capabilities tags block missing numeric maxTargetsPerRequest.");
+    }
+    tagOpsSupported = true;
+    pass("tags capabilities", {
+      apiVersion: caps.capabilities?.apiVersion,
+      maxTargetsPerRequest: tagsMeta.maxTargetsPerRequest,
+      impliedTagsReadOnly: tagsMeta.impliedTagsReadOnly
+    });
+  }
+  catch (error) {
+    fail("tags capabilities", error);
+  }
+
+  if (tagOpsSupported) {
+    try {
+      if (!tagTarget) {
+        const probe = await client.send("read_tags", { ord: points.numeric });
+        if (firstTarget(probe)?.ok === true) {
+          tagTarget = points.numeric;
+        }
+      }
+      if (!tagTarget) {
+        const browse = await client.send("browse", { base: "slot:/", depth: 1 });
+        const children = Array.isArray(browse.node?.children) ? browse.node.children : [];
+        const child = children.find((c) => c.slotPath && /Drivers/.test(c.slotPath))
+          || children.find((c) => c.slotPath && !/Services/.test(c.slotPath))
+          || children[0];
+        if (!child?.slotPath) {
+          throw new Error("Could not discover a tag test target from slot:/ browse.");
+        }
+        tagTarget = child.slotPath;
+      }
+      if (!tagEndpoint) {
+        const browse = await client.send("browse", { base: "slot:/", depth: 1 });
+        const children = Array.isArray(browse.node?.children) ? browse.node.children : [];
+        const other = children.find((c) => c.slotPath && c.slotPath !== tagTarget);
+        tagEndpoint = other?.slotPath || "slot:/";
+      }
+
+      const baseline = firstTarget(await client.send("read_tags", { ord: tagTarget }));
+      if (!baseline || baseline.ok !== true) {
+        throw new Error(`Baseline read_tags failed: ${baseline?.code} ${baseline?.message}`);
+      }
+      if (!Array.isArray(baseline.tags) || !Array.isArray(baseline.relations)) {
+        throw new Error("Baseline read_tags missing tags/relations arrays.");
+      }
+      if (findTag(baseline, tagIds.marker)) {
+        throw new Error(`Target already carries ${tagIds.marker}; refusing to reuse it for the smoke test.`);
+      }
+      pass("read_tags baseline", {
+        target: tagTarget,
+        tags: baseline.tags.length,
+        relations: baseline.relations.length,
+        impliedTags: baseline.tags.filter((tag) => tag.source === "implied").length
+      });
+    }
+    catch (error) {
+      tagOpsSupported = false;
+      fail("read_tags baseline", error);
+    }
+  }
+
+  if (tagOpsSupported) {
+    try {
+      const written = firstTarget(await client.send("write_tags", {
+        targets: [{
+          ord: tagTarget,
+          set: [
+            { id: tagIds.marker },
+            { id: tagIds.string, value: "smoke" },
+            { id: tagIds.number, value: 42.5 },
+            { id: tagIds.bool, value: true },
+            { id: tagIds.long, value: 7, valueType: "long" },
+            { id: tagIds.haystack },
+            { id: tagIds.plain, value: "plain" }
+          ]
+        }]
+      }));
+      if (!written || written.ok !== true) {
+        throw new Error(`write_tags failed: ${written?.code} ${written?.message}`);
+      }
+      const badOps = (written.results || []).filter((entry) => entry.ok !== true);
+      if (badOps.length > 0) {
+        throw new Error(`write_tags rejected: ${JSON.stringify(badOps)}`);
+      }
+
+      const readBack = firstTarget(await client.send("read_tags", { ord: tagTarget }));
+      const checks = [
+        [tagIds.marker, (tag) => tag.marker === true && tag.value === null],
+        [tagIds.string, (tag) => tag.value === "smoke" && /String/.test(tag.valueType)],
+        [tagIds.number, (tag) => equivalent(tag.value, 42.5) && /Double/.test(tag.valueType)],
+        [tagIds.bool, (tag) => tag.value === true && /Boolean/.test(tag.valueType)],
+        [tagIds.long, (tag) => equivalent(tag.value, 7) && /Long/.test(tag.valueType)],
+        [tagIds.haystack, (tag) => tag.marker === true && tag.dictionary === "hs"],
+        [tagIds.plain, (tag) => tag.value === "plain" && tag.dictionary === null]
+      ];
+      for (const [id, check] of checks) {
+        const tag = findTag(readBack, id);
+        if (!tag) {
+          throw new Error(`Readback missing ${id}.`);
+        }
+        if (!check(tag)) {
+          throw new Error(`Readback ${id} value/type mismatch: ${JSON.stringify(tag)}`);
+        }
+        if (tag.source !== "direct" && tag.source !== "unknown") {
+          throw new Error(`Readback ${id} expected direct source, got ${tag.source}.`);
+        }
+      }
+      pass("write_tags set + readback", {
+        target: tagTarget,
+        written: (written.results || []).length,
+        sources: checks.map(([id]) => findTag(readBack, id)?.source)
+      });
+    }
+    catch (error) {
+      fail("write_tags set + readback", error);
+    }
+
+    try {
+      const filtered = firstTarget(await client.send("read_tags", { ord: tagTarget, dictionary: tagPrefix }));
+      const ids = (filtered?.tags || []).map((tag) => tag.id).sort();
+      const expected = Object.values(tagIds).filter((id) => id.startsWith(`${tagPrefix}:`)).sort();
+      if (JSON.stringify(ids) !== JSON.stringify(expected)) {
+        throw new Error(`Dictionary filter mismatch: expected ${expected.join(", ")}, got ${ids.join(", ")}.`);
+      }
+      if ((filtered?.tags || []).some((tag) => tag.dictionary !== tagPrefix)) {
+        throw new Error("Dictionary filter returned a foreign-dictionary tag.");
+      }
+      pass("read_tags dictionary filter", { dictionary: tagPrefix, tags: ids.length });
+    }
+    catch (error) {
+      fail("read_tags dictionary filter", error);
+    }
+
+    try {
+      const added = firstTarget(await client.send("write_relations", {
+        targets: [{
+          ord: tagTarget,
+          add: [{ id: relationId, endpoint: tagEndpoint }]
+        }]
+      }));
+      if (!added || added.ok !== true) {
+        throw new Error(`write_relations add failed: ${added?.code} ${added?.message}`);
+      }
+      const addResult = (added.results || [])[0];
+      if (addResult?.ok !== true) {
+        throw new Error(`Relation add rejected: ${JSON.stringify(addResult)}`);
+      }
+      const withRelation = firstTarget(await client.send("read_tags", { ord: tagTarget }));
+      const relation = findRelation(withRelation, relationId);
+      if (!relation) {
+        throw new Error("Readback missing added relation.");
+      }
+      if (relation.direction !== "out") {
+        throw new Error(`Added relation direction was ${relation.direction}, expected out.`);
+      }
+
+      const removed = firstTarget(await client.send("write_relations", {
+        targets: [{
+          ord: tagTarget,
+          remove: [{ id: relationId }]
+        }]
+      }));
+      const removeResult = (removed?.results || [])[0];
+      if (removeResult?.ok !== true || Number(removeResult?.removed) < 1) {
+        throw new Error(`Relation remove rejected: ${JSON.stringify(removeResult)}`);
+      }
+      const afterRemove = firstTarget(await client.send("read_tags", { ord: tagTarget }));
+      if (findRelation(afterRemove, relationId)) {
+        throw new Error("Relation still present after remove.");
+      }
+      pass("write_relations add/remove", {
+        target: tagTarget,
+        endpoint: tagEndpoint,
+        endpointOrd: relation.endpointOrd,
+        removed: removeResult.removed
+      });
+    }
+    catch (error) {
+      fail("write_relations add/remove", error);
+    }
+
+    try {
+      const hierarchyRoot = await client.send("browse", { base: "hierarchy:", depth: 1 });
+      if (hierarchyRoot.op === "error") {
+        throw new Error(`hierarchy: browse failed: ${hierarchyRoot.code} ${hierarchyRoot.message}`);
+      }
+      if (!hierarchyRoot.node || !hierarchyRoot.node.ord) {
+        throw new Error("hierarchy: browse did not return a root node (deploy the hierarchy-aware browse build).");
+      }
+      const hierarchies = Array.isArray(hierarchyRoot.node.children) ? hierarchyRoot.node.children : [];
+      const details = {
+        rootOrd: hierarchyRoot.node.ord,
+        rootType: hierarchyRoot.node.typeSpec,
+        hierarchies: hierarchies.map((child) => ({ ord: child.ord, name: child.name }))
+      };
+      if (hierarchies.length > 0) {
+        const first = await client.send("browse", { base: hierarchies[0].ord, depth: 1 });
+        if (first.op === "error") {
+          throw new Error(`hierarchy child browse failed: ${first.code} ${first.message}`);
+        }
+        const levelChildren = Array.isArray(first.node?.children) ? first.node.children : [];
+        details.firstHierarchy = hierarchies[0].name;
+        details.firstHierarchyChildren = levelChildren.map((child) => ({
+          ord: child.ord,
+          name: child.name,
+          typeSpec: child.typeSpec,
+          slotPath: child.slotPath || null
+        }));
+      }
+      else {
+        details.note = "Station has no hierarchy definitions; hierarchy: root browse still succeeded.";
+      }
+      pass("hierarchy browse", details);
+    }
+    catch (error) {
+      fail("hierarchy browse", error);
+    }
+
+    try {
+      const impliedCandidate = (firstTarget(await client.send("read_tags", { ord: tagTarget }))?.tags || [])
+        .find((tag) => tag.source === "implied");
+      if (impliedCandidate) {
+        const attempt = firstTarget(await client.send("write_tags", {
+          ord: tagTarget,
+          remove: [impliedCandidate.id]
+        }));
+        const result = (attempt?.results || [])[0];
+        if (result?.ok !== false || result?.code !== "implied_tag") {
+          throw new Error(`Implied tag removal should fail with implied_tag, got ${JSON.stringify(result)}`);
+        }
+        pass("implied tag remove rejected", { id: impliedCandidate.id, code: result.code });
+      }
+      else {
+        pass("implied tag remove rejected", { skipped: "target has no implied tags" });
+      }
+    }
+    catch (error) {
+      fail("implied tag remove rejected", error);
+    }
+
+    try {
+      const cleanup = firstTarget(await client.send("write_tags", {
+        ord: tagTarget,
+        remove: Object.values(tagIds)
+      }));
+      const badRemovals = (cleanup?.results || []).filter((entry) => entry.ok !== true);
+      if (badRemovals.length > 0) {
+        throw new Error(`Cleanup removals rejected: ${JSON.stringify(badRemovals)}`);
+      }
+      const afterCleanup = firstTarget(await client.send("read_tags", { ord: tagTarget, dictionary: tagPrefix }));
+      if ((afterCleanup?.tags || []).length !== 0) {
+        throw new Error(`Smoke tags still present after cleanup: ${JSON.stringify(afterCleanup.tags)}`);
+      }
+
+      const missing = firstTarget(await client.send("write_tags", {
+        ord: tagTarget,
+        remove: [tagIds.marker]
+      }));
+      const missingResult = (missing?.results || [])[0];
+      if (missingResult?.ok !== false || missingResult?.code !== "tag_not_found") {
+        throw new Error(`Removing an absent tag should report tag_not_found, got ${JSON.stringify(missingResult)}`);
+      }
+      pass("write_tags remove + tag_not_found", { removed: Object.values(tagIds).length });
+    }
+    catch (error) {
+      fail("write_tags remove + tag_not_found", error);
+    }
   }
 
   client.fire("unsubscribe", { points: Object.values(points) });

@@ -104,6 +104,7 @@ final class BaskStreamBrowseResolver
         writable,
         limit,
         metadataMode,
+        isHierarchyOrd(ord),
         context,
         matches,
         truncatedReasons);
@@ -179,7 +180,7 @@ final class BaskStreamBrowseResolver
 
   private Map<String, Object> resolveNode(String ord, Context context, int depth, String metadataMode) throws BaskStreamProtocolException
   {
-    if (!isAllowed(ord))
+    if (!isHierarchyOrd(ord) && !isAllowed(ord))
     {
       throw new BaskStreamProtocolException("forbidden_point", "Node is outside the allowedPathPatterns policy.");
     }
@@ -207,7 +208,9 @@ final class BaskStreamBrowseResolver
         throw new BaskStreamProtocolException("invalid_point", "Resolved target is not browsable.");
       }
 
-      return toWire(navNode, target, context, depth, metadataMode);
+      requireAllowedHierarchyTarget(ord, object, target);
+
+      return toWire(navNode, target, context, depth, metadataMode, isHierarchyOrd(ord));
     }
     catch (BaskStreamProtocolException e)
     {
@@ -221,6 +224,11 @@ final class BaskStreamBrowseResolver
   }
 
   private Map<String, Object> toWire(BINavNode navNode, OrdTarget target, Context context, int depth, String metadataMode)
+  {
+    return toWire(navNode, target, context, depth, metadataMode, false);
+  }
+
+  private Map<String, Object> toWire(BINavNode navNode, OrdTarget target, Context context, int depth, String metadataMode, boolean hierarchyMode)
   {
     BObject object = target.get();
     BComponent component = object instanceof BComponent ? (BComponent) object : target.getComponent();
@@ -237,7 +245,7 @@ final class BaskStreamBrowseResolver
     Map<String, Object> wire = new LinkedHashMap<String, Object>();
     wire.put("ord", ord);
     wire.put("slotPath", component == null || component.getSlotPath() == null ? null : component.getSlotPath().toString());
-    wire.put("name", component == null ? navNode.getNavName() : component.getName());
+    wire.put("name", component == null || isHierarchyType(typeSpec) ? navNode.getNavName() : component.getName());
     wire.put("display", safe(navNode.getNavDisplayName(context)));
     wire.put("description", safe(navNode.getNavDescription(context)));
     wire.put("typeSpec", typeSpec);
@@ -247,6 +255,7 @@ final class BaskStreamBrowseResolver
     wire.put("writable", Boolean.valueOf(writable));
     wire.put("features", buildFeatures(point, history, alarm, schedule));
     wire.put("operations", buildOperations(hasChildren, point, writable, history, alarm, schedule));
+    putHierarchyBindings(wire, object);
     if (includeMetadata(metadataMode))
     {
       wire.put("metadata", metadata(object, component, point, writable, history, alarm, schedule, context));
@@ -263,7 +272,7 @@ final class BaskStreamBrowseResolver
       List<Object> childWires = new ArrayList<Object>(children.length);
       for (int i = 0; i < children.length; i++)
       {
-        Map<String, Object> childWire = toChildWire(children[i], context, depth - 1, metadataMode);
+        Map<String, Object> childWire = toChildWire(children[i], context, depth - 1, metadataMode, hierarchyMode);
         if (childWire != null)
         {
           childWires.add(childWire);
@@ -1004,6 +1013,11 @@ final class BaskStreamBrowseResolver
 
   private Map<String, Object> toChildWire(BINavNode child, Context context, int depth, String metadataMode)
   {
+    return toChildWire(child, context, depth, metadataMode, false);
+  }
+
+  private Map<String, Object> toChildWire(BINavNode child, Context context, int depth, String metadataMode, boolean hierarchyMode)
+  {
     BOrd ord = child.getNavOrd();
     if (ord == null)
     {
@@ -1015,7 +1029,14 @@ final class BaskStreamBrowseResolver
     {
       OrdTarget childTarget = ord.resolve(service, context);
       String slotOrd = slotOrd(childTarget, childOrd);
-      if (slotOrd == null || !isAllowed(slotOrd))
+      if (hierarchyMode && isHierarchyOrd(childOrd))
+      {
+        if (!isAllowedHierarchyChild(childTarget))
+        {
+          return null;
+        }
+      }
+      else if (slotOrd == null || !isAllowed(slotOrd))
       {
         return null;
       }
@@ -1024,7 +1045,7 @@ final class BaskStreamBrowseResolver
       {
         return fallbackNode(child, slotOrd, "not_readable", metadataMode);
       }
-      return toWire(child, childTarget, context, depth, metadataMode);
+      return toWire(child, childTarget, context, depth, metadataMode, hierarchyMode);
     }
     catch (Exception e)
     {
@@ -1084,7 +1105,7 @@ final class BaskStreamBrowseResolver
 
   private SearchNode resolveSearchRoot(String ord, Context context) throws BaskStreamProtocolException
   {
-    if (!isAllowed(ord))
+    if (!isHierarchyOrd(ord) && !isAllowed(ord))
     {
       throw new BaskStreamProtocolException("forbidden_point", "Node is outside the allowedPathPatterns policy.");
     }
@@ -1112,6 +1133,8 @@ final class BaskStreamBrowseResolver
         throw new BaskStreamProtocolException("invalid_point", "Resolved target is not searchable.");
       }
 
+      requireAllowedHierarchyTarget(ord, object, target);
+
       return new SearchNode(navNode, target, 0, ord);
     }
     catch (BaskStreamProtocolException e)
@@ -1137,6 +1160,7 @@ final class BaskStreamBrowseResolver
       Boolean writable,
       int limit,
       String metadataMode,
+      boolean hierarchyMode,
       Context context,
       List<Object> matches,
       List<Object> truncatedReasons)
@@ -1172,7 +1196,7 @@ final class BaskStreamBrowseResolver
       }
       visited++;
 
-      Map<String, Object> node = toWire(current.navNode, current.target, context, 0, metadataMode);
+      Map<String, Object> node = toWire(current.navNode, current.target, context, 0, metadataMode, hierarchyMode);
       if (matches(node, query, kind, requiredFeatures, requiredOperations, writable))
       {
         matches.add(node);
@@ -1196,7 +1220,7 @@ final class BaskStreamBrowseResolver
       BINavNode[] children = current.navNode.getNavChildren();
       for (int i = children.length - 1; i >= 0; i--)
       {
-        SearchNode child = resolveSearchChild(children[i], current.depth + 1, context);
+        SearchNode child = resolveSearchChild(children[i], current.depth + 1, hierarchyMode, context);
         if (child != null)
         {
           stack.add(child);
@@ -1206,7 +1230,7 @@ final class BaskStreamBrowseResolver
     return visited;
   }
 
-  private SearchNode resolveSearchChild(BINavNode child, int depth, Context context)
+  private SearchNode resolveSearchChild(BINavNode child, int depth, boolean hierarchyMode, Context context)
   {
     BOrd ord = child.getNavOrd();
     if (ord == null)
@@ -1219,7 +1243,14 @@ final class BaskStreamBrowseResolver
     {
       OrdTarget target = ord.resolve(service, context);
       String slotOrd = slotOrd(target, rawOrd);
-      if (slotOrd == null || !isAllowed(slotOrd) || !target.canRead())
+      if (hierarchyMode && isHierarchyOrd(rawOrd))
+      {
+        if (!isAllowedHierarchyChild(target) || !target.canRead())
+        {
+          return null;
+        }
+      }
+      else if (slotOrd == null || !isAllowed(slotOrd) || !target.canRead())
       {
         return null;
       }
@@ -1523,9 +1554,9 @@ final class BaskStreamBrowseResolver
   private String normalizeOrd(String ord) throws BaskStreamProtocolException
   {
     String candidate = ord == null || ord.trim().length() == 0 ? "slot:/" : ord.trim();
-    if (!candidate.startsWith("slot:/"))
+    if (!candidate.startsWith("slot:/") && !candidate.startsWith("hierarchy:"))
     {
-      throw new BaskStreamProtocolException("invalid_point", "Only slot:/ ORDs are supported.");
+      throw new BaskStreamProtocolException("invalid_point", "Only slot:/ and hierarchy: ORDs are supported.");
     }
     return candidate;
   }
@@ -1546,6 +1577,84 @@ final class BaskStreamBrowseResolver
   private boolean isAllowed(String ord)
   {
     return BaskStreamAccessPolicy.isAllowed(service, ord);
+  }
+
+  private static boolean isHierarchyOrd(String ord)
+  {
+    return ord != null && ord.startsWith("hierarchy:");
+  }
+
+  private static boolean isHierarchyType(String typeSpec)
+  {
+    return typeSpec != null && typeSpec.startsWith("hierarchy:");
+  }
+
+  private void requireAllowedHierarchyTarget(String ord, BObject object, OrdTarget target)
+      throws BaskStreamProtocolException
+  {
+    if (!isHierarchyOrd(ord))
+    {
+      return;
+    }
+    BComponent component = object instanceof BComponent ? (BComponent) object : target.getComponent();
+    if (component != null && component.getSlotPath() != null
+        && !BaskStreamAccessPolicy.isAllowed(service, component.getSlotPath().toString()))
+    {
+      throw new BaskStreamProtocolException("forbidden_point", "Node is outside the allowedPathPatterns policy.");
+    }
+  }
+
+  private boolean isAllowedHierarchyChild(OrdTarget target)
+  {
+    if (target == null)
+    {
+      return false;
+    }
+    BObject object = target.get();
+    BComponent component = object instanceof BComponent ? (BComponent) object : target.getComponent();
+    if (component != null && component.getSlotPath() != null)
+    {
+      return BaskStreamAccessPolicy.isAllowed(service, component.getSlotPath().toString());
+    }
+    return true;
+  }
+
+  /**
+   * Additive hierarchy bindings. Invoked only for hierarchy:* types so slot:/
+   * node shape is unchanged. Uses reflection to avoid a hierarchy-rt dependency.
+   */
+  private void putHierarchyBindings(Map<String, Object> wire, BObject object)
+  {
+    if (object == null || !isHierarchyType(object.getType().toString()))
+    {
+      return;
+    }
+    try
+    {
+      Object entityOrd = object.getClass().getMethod("getEntityOrd").invoke(object);
+      Object targetOrd = object.getClass().getMethod("getTargetOrd").invoke(object);
+      Object targetComponent = object.getClass().getMethod("getTargetComponent").invoke(object);
+      if (entityOrd != null)
+      {
+        wire.put("entityOrd", entityOrd.toString());
+      }
+      if (targetOrd != null)
+      {
+        wire.put("targetOrd", targetOrd.toString());
+      }
+      if (targetComponent instanceof BComponent)
+      {
+        BComponent bound = (BComponent) targetComponent;
+        if (bound.getSlotPath() != null)
+        {
+          wire.put("targetSlotPath", bound.getSlotPath().toString());
+        }
+      }
+    }
+    catch (Exception ignored)
+    {
+      // Stations without hierarchy-rt, or older LevelElem shapes, skip extra fields.
+    }
   }
 
   private static final class SearchNode

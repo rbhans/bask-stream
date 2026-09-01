@@ -32,10 +32,15 @@ final class BaskStreamJettyWebSocketConnection extends WebSocketAdapter
       BaskStreamClientSession next = runtime.buildSession(this, upgradeRequest);
       if (!runtime.onOpen(next))
       {
+        runtime.getService().audit("connect_rejected", "reason=connection_limit user=" + next.getUsername()
+          + " remote=" + String.valueOf(session.getRemoteAddress()));
         session.close(1013, "Connection limit reached.");
         return;
       }
       clientSession = next;
+      runtime.getService().audit("connect", "user=" + next.getUsername()
+        + " remote=" + String.valueOf(session.getRemoteAddress()) + " session=" + next.getSessionId());
+      next.start();
     }
     catch (BaskStreamProtocolException e)
     {
@@ -96,6 +101,15 @@ final class BaskStreamJettyWebSocketConnection extends WebSocketAdapter
     if (getRemote() != null)
     {
       getRemote().sendBytes(ByteBuffer.wrap(payload));
+    }
+  }
+
+  void closeTransport(int statusCode, String reason)
+  {
+    Session session = getSession();
+    if (session != null && session.isOpen())
+    {
+      session.close(statusCode, reason);
     }
   }
 }
