@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -284,10 +283,6 @@ func (c *Client) ReadWithin(ctx context.Context, timeout time.Duration) (map[str
 		}
 		messageType, body, err := c.ws.ReadMessage()
 		if err != nil {
-			var netErr net.Error
-			if errors.As(err, &netErr) && netErr.Timeout() {
-				return nil, false, nil
-			}
 			return nil, false, fmt.Errorf("read websocket message: %w", err)
 		}
 		if messageType != websocket.BinaryMessage {
@@ -304,7 +299,6 @@ func (c *Client) ReadWithin(ctx context.Context, timeout time.Duration) (map[str
 func (c *Client) Close() {
 	if c.ws != nil {
 		_ = c.ws.Close()
-		c.ws = nil
 	}
 }
 

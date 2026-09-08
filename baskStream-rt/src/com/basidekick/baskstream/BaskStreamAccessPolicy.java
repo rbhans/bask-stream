@@ -12,7 +12,10 @@ final class BaskStreamAccessPolicy
 
   static boolean isAllowed(BBaskStreamService service, String ord)
   {
-    if (ord == null)
+    // Slot paths are the policy boundary. Do not let a later ORD query or
+    // parent traversal escape a prefix that matched the allowlist.
+    if (ord == null || ord.indexOf('|') >= 0
+        || ord.matches(".*(?:^|/)[.]{1,2}(?:/|$).*"))
     {
       return false;
     }

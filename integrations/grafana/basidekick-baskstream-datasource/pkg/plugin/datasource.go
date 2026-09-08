@@ -370,7 +370,6 @@ func (d *Datasource) RunStream(ctx context.Context, req *backend.RunStreamReques
 
 	leaseSec := liveLeaseSec(qm.LeaseSec, config)
 	group := streamGroup(req, qm, leaseSec)
-	defer releaseSubscriptions(config, client, group)
 
 	response, err := client.Call(ctx, "replace_subscriptions", map[string]any{
 		"group":    group,
@@ -386,33 +385,64 @@ func (d *Datasource) RunStream(ctx context.Context, req *backend.RunStreamReques
 
 	renewTicker := time.NewTicker(renewInterval(leaseSec))
 	defer renewTicker.Stop()
+	// Heartbeats are independent of leases and incoming COV traffic.
+	heartbeatTicker := time.NewTicker(liveHeartbeatInterval(capabilities))
+	defer heartbeatTicker.Stop()
+	type readResult struct {
+		message map[string]any
+		err     error
+	}
+	messages := make(chan readResult, 1)
+	stopReader := make(chan struct{})
+	readerDone := make(chan struct{})
+	go func() {
+		defer close(readerDone)
+		for {
+			message, _, readErr := client.ReadWithin(ctx, 30*time.Second)
+			select {
+			case messages <- readResult{message, readErr}:
+			case <-stopReader:
+				return
+			}
+			if readErr != nil {
+				return
+			}
+		}
+	}()
+	defer func() {
+		close(stopReader)
+		releaseSubscriptions(config, client, group)
+		client.Close() // Unblocks the reader before returning ownership.
+		<-readerDone
+	}()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-heartbeatTicker.C:
+			if _, err = client.Send(ctx, "ping", nil); err != nil {
+				return err
+			}
 		case <-renewTicker.C:
 			if _, err = client.Send(ctx, "renew_subscriptions", map[string]any{
-				"group":    group,
-				"leaseSec": leaseSec,
+				"group": group, "leaseSec": leaseSec,
 			}); err != nil {
 				return err
 			}
-		default:
-		}
-
-		message, ok, err := client.ReadWithin(ctx, renewInterval(leaseSec))
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
+		case received := <-messages:
+			if received.err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				return received.err
 			}
-			return err
-		}
-		if !ok || stringValue(message["op"]) != "cov" {
-			continue
-		}
-		if err = sendLiveFrame(sender, qm, message); err != nil {
-			return err
+			if stringValue(received.message["op"]) != "cov" {
+				continue
+			}
+			if err = sendLiveFrame(sender, qm, received.message); err != nil {
+				return err
+			}
 		}
 	}
 }
@@ -697,6 +727,18 @@ func streamGroup(req *backend.RunStreamRequest, qm queryModel, leaseSec int) str
 func hashGroup(parts ...string) string {
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(sum[:16])
+}
+
+func liveHeartbeatInterval(response map[string]any) time.Duration {
+	interval := 15 * time.Second
+	if capabilities, ok := response["capabilities"].(map[string]any); ok {
+		if limits, ok := capabilities["limits"].(map[string]any); ok {
+			if seconds, ok := int64Value(limits["heartbeatIntervalSec"]); ok && seconds > 0 && seconds < 30 {
+				interval = time.Duration(seconds) * time.Second / 2
+			}
+		}
+	}
+	return interval
 }
 
 func renewInterval(leaseSec int) time.Duration {

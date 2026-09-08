@@ -807,3 +807,13 @@ func decodeResourceBody(t *testing.T, resp *backend.CallResourceResponse) map[st
 	}
 	return body
 }
+
+func TestLiveHeartbeatInterval(t *testing.T) {
+	if got := liveHeartbeatInterval(nil); got != 15*time.Second {
+		t.Fatalf("default = %v", got)
+	}
+	response := map[string]any{"capabilities": map[string]any{"limits": map[string]any{"heartbeatIntervalSec": int64(1)}}}
+	if got := liveHeartbeatInterval(response); got != 500*time.Millisecond {
+		t.Fatalf("short station timeout = %v", got)
+	}
+}

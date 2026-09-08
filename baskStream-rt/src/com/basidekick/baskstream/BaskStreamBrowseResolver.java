@@ -230,6 +230,31 @@ final class BaskStreamBrowseResolver
 
   private Map<String, Object> toWire(BINavNode navNode, OrdTarget target, Context context, int depth, String metadataMode, boolean hierarchyMode)
   {
+    BrowseBudget budget = new BrowseBudget();
+    Map<String, Object> result = toWire(navNode, target, context, depth, metadataMode, hierarchyMode, budget);
+    if (budget.truncated) result.put("truncated", Boolean.TRUE);
+    return result;
+  }
+
+  private static final class BrowseBudget
+  {
+    int remaining = MAX_SEARCH_LIMIT;
+    final long deadline = System.currentTimeMillis() + DEFAULT_SEARCH_TIMEOUT_MILLIS;
+    boolean truncated;
+    boolean take()
+    {
+      if (remaining <= 0 || System.currentTimeMillis() > deadline)
+      {
+        truncated = true;
+        return false;
+      }
+      remaining--;
+      return true;
+    }
+  }
+
+  private Map<String, Object> toWire(BINavNode navNode, OrdTarget target, Context context, int depth, String metadataMode, boolean hierarchyMode, BrowseBudget budget)
+  {
     BObject object = target.get();
     BComponent component = object instanceof BComponent ? (BComponent) object : target.getComponent();
 
@@ -269,10 +294,11 @@ final class BaskStreamBrowseResolver
     if (depth > 0 && hasChildren)
     {
       BINavNode[] children = navNode.getNavChildren();
-      List<Object> childWires = new ArrayList<Object>(children.length);
+      List<Object> childWires = new ArrayList<Object>(Math.min(children.length, MAX_SEARCH_LIMIT));
       for (int i = 0; i < children.length; i++)
       {
-        Map<String, Object> childWire = toChildWire(children[i], context, depth - 1, metadataMode, hierarchyMode);
+        if (!budget.take()) break;
+        Map<String, Object> childWire = toChildWire(children[i], context, depth - 1, metadataMode, hierarchyMode, budget);
         if (childWire != null)
         {
           childWires.add(childWire);
@@ -1018,6 +1044,11 @@ final class BaskStreamBrowseResolver
 
   private Map<String, Object> toChildWire(BINavNode child, Context context, int depth, String metadataMode, boolean hierarchyMode)
   {
+    return toChildWire(child, context, depth, metadataMode, hierarchyMode, new BrowseBudget());
+  }
+
+  private Map<String, Object> toChildWire(BINavNode child, Context context, int depth, String metadataMode, boolean hierarchyMode, BrowseBudget budget)
+  {
     BOrd ord = child.getNavOrd();
     if (ord == null)
     {
@@ -1043,13 +1074,13 @@ final class BaskStreamBrowseResolver
 
       if (!childTarget.canRead())
       {
-        return fallbackNode(child, slotOrd, "not_readable", metadataMode);
+        return null;
       }
-      return toWire(child, childTarget, context, depth, metadataMode, hierarchyMode);
+      return toWire(child, childTarget, context, depth, metadataMode, hierarchyMode, budget);
     }
     catch (Exception e)
     {
-      return fallbackNode(child, extractSlotOrd(childOrd), e.getClass().getSimpleName(), metadataMode);
+      return null;
     }
   }
 
@@ -1169,6 +1200,7 @@ final class BaskStreamBrowseResolver
     Set<String> seen = new LinkedHashSet<String>();
     stack.add(root);
     int visited = 0;
+    int examined = 1;
 
     while (!stack.isEmpty())
     {
@@ -1220,6 +1252,17 @@ final class BaskStreamBrowseResolver
       BINavNode[] children = current.navNode.getNavChildren();
       for (int i = children.length - 1; i >= 0; i--)
       {
+        if (System.currentTimeMillis() > deadline)
+        {
+          addTruncationReason(truncatedReasons, "timeout");
+          break;
+        }
+        if (examined >= maxVisited)
+        {
+          addTruncationReason(truncatedReasons, "visited");
+          break;
+        }
+        examined++;
         SearchNode child = resolveSearchChild(children[i], current.depth + 1, hierarchyMode, context);
         if (child != null)
         {

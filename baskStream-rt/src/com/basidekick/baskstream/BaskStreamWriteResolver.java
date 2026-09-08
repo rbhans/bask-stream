@@ -49,7 +49,7 @@ final class BaskStreamWriteResolver
     this.pointResolver = pointResolver;
   }
 
-  List<Object> write(Map<String, Object> request, Context context) throws BaskStreamProtocolException
+  List<Object> write(Map<String, Object> request, Context context, java.util.function.BooleanSupplier cancelled) throws BaskStreamProtocolException
   {
     List<Map<String, Object>> specs = normalizeSpecs(request);
     List<Object> results = new ArrayList<Object>(specs.size());
@@ -63,11 +63,17 @@ final class BaskStreamWriteResolver
 
       try
       {
-        results.add(writeOne(pointOrd, spec, context));
+        if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) break;
+        results.add(writeOne(pointOrd, spec, context, cancelled));
       }
       catch (BaskStreamProtocolException e)
       {
         results.add(errorEntry(pointOrd, e.getCode(), e.getMessage()));
+      }
+      catch (RuntimeException e)
+      {
+        results.add(errorEntry(pointOrd, "write_failed", e.getMessage() == null
+            ? e.getClass().getSimpleName() : e.getMessage()));
       }
     }
     return results;
@@ -124,7 +130,7 @@ final class BaskStreamWriteResolver
     return result;
   }
 
-  private Map<String, Object> writeOne(String pointOrd, Map<String, Object> spec, Context context)
+  private Map<String, Object> writeOne(String pointOrd, Map<String, Object> spec, Context context, java.util.function.BooleanSupplier cancelled)
       throws BaskStreamProtocolException
   {
     BaskStreamPointResolver.ResolvedPoint point = pointResolver.resolve(pointOrd, context);
@@ -142,6 +148,10 @@ final class BaskStreamWriteResolver
 
     String requestedAction = normalizeAction(optionalString(spec, "action"));
     ActionInvocation invocation = buildInvocation(component, requestedAction, spec);
+    if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
+    {
+      throw new BaskStreamProtocolException("write_cancelled", "Session closed before write invocation.");
+    }
     component.invoke(invocation.action, invocation.parameter, context);
 
     Map<String, Object> result = snapshotAfterWrite(point, context).toWire();

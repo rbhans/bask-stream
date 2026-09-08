@@ -156,13 +156,9 @@ final class BaskStreamTagResolver
     {
       Id id = parseId(qname);
       BIDataValue value = toDataValue(setSpec.get("value"), optionalString(setSpec, "valueType"));
-      boolean ok = tags.set(new Tag(id, value));
-      result.put("ok", Boolean.valueOf(ok));
-      if (!ok)
-      {
-        result.put("code", "tag_rejected");
-        result.put("message", "Niagara rejected the tag set (target tags may be read-only).");
-      }
+      boolean changed = tags.set(new Tag(id, value));
+      result.put("ok", Boolean.TRUE);
+      result.put("changed", Boolean.valueOf(changed));
     }
     catch (BaskStreamProtocolException e)
     {
@@ -332,6 +328,11 @@ final class BaskStreamTagResolver
     try
     {
       Id id = parseId(qname);
+      if (direction != null && !("in".equalsIgnoreCase(direction) || "inbound".equalsIgnoreCase(direction)
+          || "out".equalsIgnoreCase(direction) || "outbound".equalsIgnoreCase(direction)))
+      {
+        throw new BaskStreamProtocolException("bad_request", "Relation direction must be in or out.");
+      }
       Relations relations = component.relations();
       BRelation[] stored = component.getComponentRelations();
       if (stored == null)
@@ -418,7 +419,7 @@ final class BaskStreamTagResolver
     {
       return relation.isOutbound();
     }
-    return true;
+    return false;
   }
 
   private boolean matchesEndpoint(Relation relation, String endpointOrd)
@@ -482,7 +483,7 @@ final class BaskStreamTagResolver
     try
     {
       Relations relations = component.relations();
-      Set<Id> directIds = directRelationIds(relations);
+      Set<String> directIds = directRelationKeys(relations);
       int count = 0;
       for (Relation relation : relations.getAll())
       {
@@ -500,7 +501,7 @@ final class BaskStreamTagResolver
         wire.put("name", relation.getId().getName());
         wire.put("direction", relation.isInbound() ? "in" : "out");
         wire.put("endpointOrd", relation.getEndpointOrd() == null ? null : relation.getEndpointOrd().toString());
-        wire.put("source", directIds == null ? "unknown" : directIds.contains(relation.getId()) ? "direct" : "implied");
+        wire.put("source", directIds == null ? "unknown" : directIds.contains(relationKey(relation)) ? "direct" : "implied");
         out.add(wire);
       }
     }
@@ -532,7 +533,7 @@ final class BaskStreamTagResolver
     }
   }
 
-  private Set<Id> directRelationIds(Relations relations)
+  private Set<String> directRelationKeys(Relations relations)
   {
     if (!(relations instanceof SmartRelations))
     {
@@ -540,10 +541,10 @@ final class BaskStreamTagResolver
     }
     try
     {
-      Set<Id> ids = new LinkedHashSet<Id>();
+      Set<String> ids = new LinkedHashSet<String>();
       for (Relation relation : ((SmartRelations) relations).getDirectRelations())
       {
-        ids.add(relation.getId());
+        ids.add(relationKey(relation));
       }
       return ids;
     }
@@ -551,6 +552,12 @@ final class BaskStreamTagResolver
     {
       return null;
     }
+  }
+
+  private String relationKey(Relation relation)
+  {
+    return relation.getId().toString() + "\n" + relation.isInbound() + "\n"
+        + String.valueOf(relation.getEndpointOrd());
   }
 
   private boolean isImpliedOnly(Tags tags, Id id)

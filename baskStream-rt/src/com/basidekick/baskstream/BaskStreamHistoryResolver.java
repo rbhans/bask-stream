@@ -228,13 +228,15 @@ final class BaskStreamHistoryResolver
     BAbsTime startTime = BAbsTime.make(start);
     BAbsTime endTime = BAbsTime.make(end);
 
+    boolean truncated = false;
     Cursor<BHistoryRecord> cursor = null;
     try
     {
       cursor = history.timeQueryCursor(startTime, endTime, false, context);
       int count = 0;
-      while (cursor.next() && count < limit)
+      while (cursor.next())
       {
+        if (count >= limit) { truncated = true; break; }
         records.add(toWire(cursor.get(), context));
         count++;
       }
@@ -253,6 +255,7 @@ final class BaskStreamHistoryResolver
     }
 
     wire.put("records", records);
+    wire.put("truncated", Boolean.valueOf(truncated));
     wire.put("count", Long.valueOf(records.size()));
     wire.put("start", Long.valueOf(start));
     wire.put("end", Long.valueOf(end));

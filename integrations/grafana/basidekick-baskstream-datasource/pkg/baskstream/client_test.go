@@ -1,7 +1,13 @@
 package baskstream
 
 import (
+	"context"
+	"github.com/gorilla/websocket"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -64,5 +70,30 @@ func TestPrepareRequestDoesNotMutateCallerFieldsWhenIDIsGenerated(t *testing.T) 
 	}
 	if _, ok := fields["op"]; ok {
 		t.Fatal("prepareRequest must not mutate caller fields with op")
+	}
+}
+
+func TestReadTimeoutIsFatal(t *testing.T) {
+	done := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upgrader := websocket.Upgrader{}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		<-done
+	}))
+	defer server.Close()
+	defer close(done)
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &Client{ws: conn}
+	defer client.Close()
+	_, ok, err := client.ReadWithin(context.Background(), 20*time.Millisecond)
+	if err == nil || ok {
+		t.Fatalf("read timeout must be fatal: ok=%v err=%v", ok, err)
 	}
 }

@@ -14,6 +14,12 @@ final class BaskStreamJettyWebSocketConnection extends WebSocketAdapter
   private final BaskStreamWebSocketRuntime runtime;
   private final ServletUpgradeRequest upgradeRequest;
   private volatile BaskStreamClientSession clientSession;
+  private final java.util.ArrayDeque<byte[]> outbound = new java.util.ArrayDeque<byte[]>();
+  private long outboundBytes;
+  private boolean sending;
+  private boolean transportClosed;
+  private static final long MAX_OUTBOUND_BYTES = 16L * 1024L * 1024L;
+  private static final int MAX_OUTBOUND_FRAMES = 128;
 
   BaskStreamJettyWebSocketConnection(BaskStreamWebSocketRuntime runtime, ServletUpgradeRequest upgradeRequest)
   {
@@ -75,6 +81,12 @@ final class BaskStreamJettyWebSocketConnection extends WebSocketAdapter
   @Override
   public void onWebSocketClose(int statusCode, String reason)
   {
+    synchronized (outbound)
+    {
+      transportClosed = true;
+      outbound.clear();
+      outboundBytes = 0L;
+    }
     BaskStreamClientSession current = clientSession;
     clientSession = null;
     if (current != null)
@@ -98,14 +110,73 @@ final class BaskStreamJettyWebSocketConnection extends WebSocketAdapter
 
   void send(byte[] payload) throws IOException
   {
-    if (getRemote() != null)
+    boolean start;
+    synchronized (outbound)
     {
-      getRemote().sendBytes(ByteBuffer.wrap(payload));
+      if (transportClosed || getRemote() == null) throw new IOException("WebSocket is closed.");
+      if (outbound.size() >= MAX_OUTBOUND_FRAMES || outboundBytes + payload.length > MAX_OUTBOUND_BYTES)
+      {
+        throw new IOException("WebSocket outbound queue limit reached.");
+      }
+      outbound.addLast(payload);
+      outboundBytes += payload.length;
+      start = !sending;
+      sending = true;
+    }
+    if (start) sendNext();
+  }
+
+  private void sendNext()
+  {
+    final byte[] payload;
+    synchronized (outbound)
+    {
+      payload = outbound.peekFirst();
+      if (transportClosed || payload == null)
+      {
+        sending = false;
+        return;
+      }
+    }
+    try
+    {
+      getRemote().sendBytes(ByteBuffer.wrap(payload), new org.eclipse.jetty.websocket.api.WriteCallback()
+      {
+        public void writeSuccess()
+        {
+          synchronized (outbound)
+          {
+            if (transportClosed) return;
+            outbound.removeFirst();
+            outboundBytes -= payload.length;
+          }
+          sendNext();
+        }
+
+        public void writeFailed(Throwable failure)
+        {
+          closeTransport(1011, "WebSocket send failed.");
+          BaskStreamClientSession current = clientSession;
+          if (current != null) current.close("WebSocket send failed");
+        }
+      });
+    }
+    catch (RuntimeException failure)
+    {
+      closeTransport(1011, "WebSocket send failed.");
+      BaskStreamClientSession current = clientSession;
+      if (current != null) current.close("WebSocket send failed");
     }
   }
 
   void closeTransport(int statusCode, String reason)
   {
+    synchronized (outbound)
+    {
+      transportClosed = true;
+      outbound.clear();
+      outboundBytes = 0L;
+    }
     Session session = getSession();
     if (session != null && session.isOpen())
     {

@@ -11,7 +11,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
@@ -75,6 +74,7 @@ final class BaskStreamClientSession
   private int pendingCovEventCount;
   private ScheduledFuture<?> covFlushFuture;
   private ScheduledFuture<?> leaseSweepFuture;
+  private long leaseSweepAt;
   private ScheduledFuture<?> revalidateFuture;
 
   BaskStreamClientSession(BaskStreamWebSocketRuntime runtime, BaskStreamJettyWebSocketConnection connection, BUser user, Context context)
@@ -85,7 +85,8 @@ final class BaskStreamClientSession
     this.context = context;
     this.userMountedAtStart = user.isMounted();
     this.sessionId = UUID.randomUUID().toString();
-    this.worker = Executors.newSingleThreadExecutor(new ThreadFactory()
+    this.worker = new java.util.concurrent.ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+        new java.util.concurrent.ArrayBlockingQueue<Runnable>(32), new ThreadFactory()
     {
       @Override
       public Thread newThread(Runnable r)
@@ -175,7 +176,11 @@ final class BaskStreamClientSession
     }
     catch (RejectedExecutionException e)
     {
-      // Worker already shut down (session closing) — drop, matching the closed() contract.
+      if (!closed.get())
+      {
+        connection.closeTransport(1013, "Request queue limit reached.");
+        close("request queue limit");
+      }
     }
   }
 
@@ -190,7 +195,7 @@ final class BaskStreamClientSession
     String id = null;
     try
     {
-      Map<String, Object> request = runtime.getCodec().decodeMessage(payload);
+      Map<String, Object> request = runtime.getCodec().decodeMessage(payload, runtime.getService().getMaxMessageBytesValue());
       String op = runtime.getCodec().requireString(request, "op");
       id = runtime.getCodec().optionalString(request, "id");
 
@@ -327,10 +332,9 @@ final class BaskStreamClientSession
 
     try
     {
-      // Stop accepting new frames and drain the worker. close() can be invoked from the
-      // worker itself (the send() IO-failure path inside processFrame), so only await
-      // termination when we are NOT on the worker thread — otherwise we would deadlock.
-      worker.shutdown();
+      // Cancel queued requests and interrupt settle waits. Never await our own worker.
+      connection.closeTransport(1000, "Session closed.");
+      worker.shutdownNow();
       if (Thread.currentThread() != workerThread)
       {
         try
@@ -548,7 +552,7 @@ final class BaskStreamClientSession
   private void handleWrite(String id, Map<String, Object> request) throws BaskStreamProtocolException
   {
     Map<String, Object> response = baseMessage("write_result", id);
-    response.put("points", runtime.getWriteResolver().write(request, context));
+    response.put("points", runtime.getWriteResolver().write(request, context, () -> closed.get()));
     send(response);
   }
 
@@ -612,8 +616,23 @@ final class BaskStreamClientSession
     synchronized (subscriptionLock)
     {
       SubscriptionGroup group = subscriptionGroups.get(groupName);
+      if (group == null && !desired.isEmpty()
+          && subscriptionGroups.size() >= Math.max(1, runtime.getService().getMaxSubscriptionsPerClientValue()))
+      {
+        throw new BaskStreamProtocolException("subscription_limit", "Subscription group limit reached.");
+      }
       Set<String> oldPoints = group == null ? Collections.<String>emptySet() : new LinkedHashSet<String>(group.points);
       LinkedHashSet<String> newPoints = new LinkedHashSet<String>();
+      // Release this group's obsolete references before admitting replacements.
+      // Other groups and direct subscriptions continue to retain their points.
+      if (group != null)
+      {
+        group.points.retainAll(desired);
+        for (String oldPoint : oldPoints)
+        {
+          if (!desired.contains(oldPoint)) removePointIfUnreferenced(oldPoint);
+        }
+      }
 
       for (String pointOrd : desired)
       {
@@ -1111,7 +1130,7 @@ final class BaskStreamClientSession
       modelSubscriptions.put(key, component);
       if (!modelSubscriber.isSubscribed(component))
       {
-        modelSubscriber.subscribe(component, runtime.getService().getHeartbeatIntervalSecValue() * 1000, context);
+        modelSubscriber.subscribe(component, 0, context);
       }
     }
     if (depth <= 0)
@@ -1220,7 +1239,7 @@ final class BaskStreamClientSession
     }
     if (!alarmSubscriber.isSubscribed(alarmService))
     {
-      alarmSubscriber.subscribe(alarmService, runtime.getService().getHeartbeatIntervalSecValue() * 1000, context);
+      alarmSubscriber.subscribe(alarmService, 0, context);
     }
   }
 
@@ -1241,7 +1260,7 @@ final class BaskStreamClientSession
     subscriptions.put(pointOrd, resolved);
     if (resolved.getComponent() != null && !subscriber.isSubscribed(resolved.getComponent()))
     {
-      subscriber.subscribe(resolved.getComponent(), runtime.getService().getHeartbeatIntervalSecValue() * 1000, context);
+      subscriber.subscribe(resolved.getComponent(), 0, context);
     }
     return resolved;
   }
@@ -1685,8 +1704,6 @@ final class BaskStreamClientSession
 
   private void scheduleLeaseSweepLocked()
   {
-    cancelScheduled(leaseSweepFuture);
-    leaseSweepFuture = null;
     if (closed.get())
     {
       return;
@@ -1701,17 +1718,22 @@ final class BaskStreamClientSession
         next = group.expiresAt;
       }
     }
-    if (next == Long.MAX_VALUE)
-    {
-      return;
-    }
+    if (next == leaseSweepAt && leaseSweepFuture != null && !leaseSweepFuture.isDone()) return;
+    cancelScheduled(leaseSweepFuture);
+    leaseSweepFuture = null;
+    leaseSweepAt = next;
+    if (next == Long.MAX_VALUE) return;
 
     leaseSweepFuture = runtime.schedule(new Runnable()
     {
       @Override
       public void run()
       {
-        sweepExpiredSubscriptionGroups();
+        synchronized (subscriptionLock)
+        {
+          leaseSweepAt = 0L;
+          sweepExpiredSubscriptionGroups();
+        }
       }
     }, Math.max(100L, next - now));
   }

@@ -23,13 +23,23 @@ final class BaskStreamCodec
 
   Map<String, Object> decodeMessage(byte[] payload) throws BaskStreamProtocolException
   {
+    return decodeMessage(payload, MAX_PAYLOAD_BYTES);
+  }
+
+  Map<String, Object> decodeMessage(byte[] payload, int maxPayloadBytes) throws BaskStreamProtocolException
+  {
     try
     {
-      if (payload.length > MAX_PAYLOAD_BYTES)
+      if (payload.length > maxPayloadBytes)
       {
         throw new BaskStreamProtocolException("bad_request", "MessagePack payload exceeds maximum size.");
       }
-      Object decoded = decode(new DataInputStream(new ByteArrayInputStream(payload)), 0);
+      DataInputStream input = new DataInputStream(new ByteArrayInputStream(payload));
+      Object decoded = decode(input, 0);
+      if (input.available() != 0)
+      {
+        throw new BaskStreamProtocolException("bad_request", "Trailing bytes after MessagePack message.");
+      }
       if (!(decoded instanceof Map))
       {
         throw new BaskStreamProtocolException("bad_request", "Message payload must be a map.");
@@ -149,7 +159,12 @@ final class BaskStreamCodec
       case 0xce:
         return Long.valueOf(in.readInt() & 0xffffffffL);
       case 0xcf:
-        return Long.valueOf(in.readLong());
+        long unsigned = in.readLong();
+        if (unsigned < 0L)
+        {
+          throw new BaskStreamProtocolException("bad_request", "Unsigned integer exceeds supported range.");
+        }
+        return Long.valueOf(unsigned);
       case 0xd0:
         return Long.valueOf(in.readByte());
       case 0xd1:
@@ -206,6 +221,10 @@ final class BaskStreamCodec
       if (!(key instanceof String))
       {
         throw new BaskStreamProtocolException("bad_request", "MessagePack map keys must be strings.");
+      }
+      if (values.containsKey(key))
+      {
+        throw new BaskStreamProtocolException("bad_request", "Duplicate MessagePack map key: " + key);
       }
       values.put((String) key, decode(in, depth));
     }

@@ -59,6 +59,7 @@ final class BaskStreamAlarmResolver
     }
 
     List<Object> alarms = new ArrayList<Object>();
+    boolean truncated = false;
 
     try (AlarmSpaceConnection connection = alarmService.getAlarmDb().getConnection(context))
     {
@@ -67,13 +68,14 @@ final class BaskStreamAlarmResolver
       {
         cursor = openCursor(connection, spec.scope);
         int count = 0;
-        while (cursor.next() && count < spec.limit)
+        while (cursor.next())
         {
           BAlarmRecord record = cursor.get();
           if (spec.source != null && !matchesSource(record, spec.source))
           {
             continue;
           }
+          if (count >= spec.limit) { truncated = true; break; }
           alarms.add(toWire(record, context));
           count++;
         }
@@ -97,7 +99,9 @@ final class BaskStreamAlarmResolver
           e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
     }
 
-    return result(spec, alarms);
+    Map<String, Object> response = result(spec, alarms);
+    response.put("truncated", Boolean.valueOf(truncated));
+    return response;
   }
 
   Map<String, Object> acknowledgeAlarms(Object uuidValue, String sourceOrd, Context context, String userName)

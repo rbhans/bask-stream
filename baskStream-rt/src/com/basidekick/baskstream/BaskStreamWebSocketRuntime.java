@@ -5,7 +5,6 @@ import java.net.URISyntaxException;
 import java.security.Principal;
 import java.util.Collection;
 import java.util.Locale;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
@@ -63,7 +62,10 @@ final class BaskStreamWebSocketRuntime
     this.writeResolver = new BaskStreamWriteResolver(service, resolver);
     this.tagResolver = new BaskStreamTagResolver(service);
     this.subscriptions = new BaskStreamSubscriptionManager(service);
-    this.scheduler = Executors.newSingleThreadScheduledExecutor(new BaskStreamThreadFactory());
+    java.util.concurrent.ScheduledThreadPoolExecutor scheduled =
+        new java.util.concurrent.ScheduledThreadPoolExecutor(1, new BaskStreamThreadFactory());
+    scheduled.setRemoveOnCancelPolicy(true);
+    this.scheduler = scheduled;
   }
 
   void handleUpgrade(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException
