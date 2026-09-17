@@ -1,5 +1,7 @@
 # baskStream MCP Server
 
+Version 0.2.0 adds typed API 1.5 tag/relation tools, secure TLS defaults with `BASKSTREAM_CA_FILE` support, separate model-edit permission, credential destination scoping, malformed-message handling, and protocol regression tests. New installs should run `npm run configure`. Build a self-contained Codex plugin with `npm run package:codex`; see `../codex-plugin/bask-stream/README.md` for setup and migration.
+
 Local stdio MCP server for AI access to a baskStream-enabled Niagara station.
 
 This project is not affiliated with, endorsed by, or sponsored by Tridium, Honeywell, Anthropic, OpenAI, Claude, Codex, or any MCP client vendor.
@@ -50,7 +52,7 @@ Prefer MCP client environment settings so station credentials stay in the local 
         "BASKSTREAM_STATION_URL": "https://<station>",
         "BASKSTREAM_USER": "<niagara-user>",
         "BASKSTREAM_PASSWORD": "<niagara-password>",
-        "BASKSTREAM_VERIFY_TLS": "false",
+        "BASKSTREAM_VERIFY_TLS": "true",
         "BASKSTREAM_ALLOW_WRITES": "false",
         "BASKSTREAM_ALLOW_ALARM_ACTIONS": "false",
         "BASKSTREAM_ALLOW_RAW": "false"
@@ -66,7 +68,7 @@ For terminal runs, export the same values before starting the server:
 export BASKSTREAM_STATION_URL="https://<station>"
 export BASKSTREAM_USER="<niagara-user>"
 export BASKSTREAM_PASSWORD="<station-password>"
-export BASKSTREAM_VERIFY_TLS="false"
+export BASKSTREAM_VERIFY_TLS="true"
 ```
 
 Optional mutation flags:
@@ -147,6 +149,7 @@ Read-only:
 - `baskstream_read_history`
 - `baskstream_describe_history`
 - `baskstream_read_schedule`
+- `baskstream_read_tags`
 - `baskstream_read_alarms`
 - `baskstream_subscription_status`
 - `baskstream_inventory`
@@ -157,6 +160,7 @@ Read-only:
 Mutation-capable:
 
 - `baskstream_write_point` requires `BASKSTREAM_ALLOW_WRITES=true`.
+- `baskstream_write_tags` and `baskstream_write_relations` require `BASKSTREAM_ALLOW_TAG_WRITES=true`.
 - `baskstream_ack_alarms` and `baskstream_clear_alarms` require `BASKSTREAM_ALLOW_ALARM_ACTIONS=true`.
 - `baskstream_call_raw` is hidden unless `BASKSTREAM_ALLOW_RAW=true`. It can call arbitrary request/response operations and should be reserved for local development/debugging. Mutating raw operations also require the matching mutation flag.
 
@@ -165,5 +169,5 @@ Mutation-capable:
 - The MCP opens short-lived station WebSocket sessions per tool call. It is for AI workflows, diagnostics, discovery, reads, writes, and summaries.
 - Long-lived COV subscriptions are still better handled by the companion app or a production client that owns a persistent WebSocket.
 - Niagara permissions still apply. Use a least-privilege Niagara user.
-- For self-signed stations, keep `verifyTls` false only in development or controlled bench environments.
+- For self-signed/private-CA stations, provide the administrator-verified PEM certificate using `BASKSTREAM_CA_FILE` or setup's `--ca`. Certificate validity and hostname verification remain enabled. Explicit `verifyTls=false` remains supported as a legacy bypass, but is no longer the default.
 - Plugin templates are included under `tools/codex-plugin/bask-stream/` and `tools/claude-plugin/bask-stream/`; both delegate to this single MCP implementation.

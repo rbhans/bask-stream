@@ -50,7 +50,10 @@ async function inspectMcpServer() {
       "baskstream_capabilities",
       "baskstream_read_points",
       "baskstream_describe_write",
-      "baskstream_write_point"
+      "baskstream_write_point",
+      "baskstream_read_tags",
+      "baskstream_write_tags",
+      "baskstream_write_relations"
     ]) {
       if (names.includes(required)) {
         ok(`tool available: ${required}`);
@@ -65,7 +68,7 @@ async function inspectMcpServer() {
       fail("BASKSTREAM_ALLOW_RAW=true but raw operation tool is missing");
     }
     else if (!rawEnabled && names.includes("baskstream_call_raw")) {
-      fail("raw operation tool is exposed without BASKSTREAM_ALLOW_RAW=true");
+      warn("raw operation tool is enabled by file configuration");
     }
     else if (rawEnabled) {
       ok("raw operation tool available by explicit opt-in");
@@ -92,9 +95,7 @@ async function inspectMcpServer() {
       }
     });
     const structured = result.structuredContent;
-    const healthStatus = structured?.health?.status;
-    const websocketOk = structured?.websocket?.ok;
-    if (healthStatus === 200 && websocketOk) {
+    if (!result.isError && structured?.ok === true && structured?.loginHealth && structured?.capabilities) {
       ok(`station health 200 and WebSocket connected for ${structured?.stationUrl ?? "configured station"}`);
     }
     else {

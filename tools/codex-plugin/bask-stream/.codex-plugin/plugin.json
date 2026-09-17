@@ -1,7 +1,7 @@
 {
   "name": "bask-stream",
-  "version": "0.1.0",
-  "description": "Connect Codex to a baskStream-enabled Niagara station through the repo MCP server.",
+  "version": "0.2.0",
+  "description": "Connect Codex to Niagara through a bundled baskStream MCP, secure connection setup, and station workflows.",
   "author": {
     "name": "Ben Hansen"
   },

@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import crypto from "node:crypto";
-import fs from "node:fs/promises";
 import http from "node:http";
 import https from "node:https";
 import path from "node:path";
@@ -12,20 +11,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import WebSocket from "ws";
 import { z, type ZodRawShape } from "zod";
+import { loadConfig as loadConnectionConfig, configFor as scopedConfig, assertOperationAllowed, assertOrdScope, type BaskStreamConfig } from "./config.js";
 
 type JsonRecord = Record<string, unknown>;
 type ResponseFormat = "json" | "markdown";
-
-interface BaskStreamConfig {
-  stationUrl: string;
-  username?: string;
-  password?: string;
-  verifyTls: boolean;
-  timeoutMs: number;
-  allowWrites: boolean;
-  allowAlarmActions: boolean;
-  allowRawOperations: boolean;
-}
 
 interface HttpResponse {
   status: number;
@@ -72,75 +61,12 @@ const rawMutationOps = new Set([
 const rawWriteOps = new Set(["write"]);
 const rawAlarmActionOps = new Set(["ack_alarm", "ack_alarms", "clear_alarm", "clear_alarms"]);
 
-const config = await loadConfig();
+const config = await loadConnectionConfig(packageRoot);
 
 const server = new McpServer({
   name: "baskstream-mcp-server",
-  version: "0.1.0"
+  version: "0.2.0"
 });
-
-function boolFrom(value: unknown, fallback: boolean): boolean {
-  if (typeof value === "boolean") {
-    return value;
-  }
-  if (typeof value === "string") {
-    return ["1", "true", "yes", "on"].includes(value.toLowerCase());
-  }
-  return fallback;
-}
-
-function numberFrom(value: unknown, fallback: number): number {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-  return fallback;
-}
-
-async function readJsonIfExists(filePath: string): Promise<JsonRecord> {
-  try {
-    return JSON.parse(await fs.readFile(filePath, "utf8")) as JsonRecord;
-  }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return {};
-    }
-    throw error;
-  }
-}
-
-async function loadConfig(): Promise<BaskStreamConfig> {
-  const configPath = process.env.BASKSTREAM_CONFIG || path.join(packageRoot, "config.json");
-  const fileConfig = await readJsonIfExists(configPath);
-  return {
-    stationUrl: String(
-      process.env.BASKSTREAM_STATION_URL ||
-      process.env.NIAGARA_URL ||
-      fileConfig.stationUrl ||
-      "https://localhost"
-    ).replace(/\/+$/, ""),
-    username: stringOrUndefined(process.env.BASKSTREAM_USER || process.env.NIAGARA_USER || fileConfig.username),
-    password: stringOrUndefined(
-      process.env.BASKSTREAM_PASSWORD ||
-      process.env.NIAGARA_PASSWORD ||
-      process.env.STREAM_PASSWORD ||
-      fileConfig.password
-    ),
-    verifyTls: boolFrom(process.env.BASKSTREAM_VERIFY_TLS ?? fileConfig.verifyTls, false),
-    timeoutMs: Math.max(1000, numberFrom(process.env.BASKSTREAM_TIMEOUT_MS ?? fileConfig.timeoutMs, 45000)),
-    allowWrites: boolFrom(process.env.BASKSTREAM_ALLOW_WRITES ?? fileConfig.allowWrites, false),
-    allowAlarmActions: boolFrom(
-      process.env.BASKSTREAM_ALLOW_ALARM_ACTIONS ?? fileConfig.allowAlarmActions,
-      false
-    ),
-    allowRawOperations: boolFrom(process.env.BASKSTREAM_ALLOW_RAW ?? fileConfig.allowRawOperations, false)
-  };
-}
 
 function stringOrUndefined(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -151,11 +77,7 @@ function stringOrUndefined(value: unknown): string | undefined {
 }
 
 function configFor(params: JsonRecord): BaskStreamConfig {
-  return {
-    ...config,
-    stationUrl: String(params.station_url || config.stationUrl).replace(/\/+$/, ""),
-    username: stringOrUndefined(params.user) || config.username
-  };
+  return scopedConfig(config, params);
 }
 
 function cookieHeader(cookies: Map<string, string>): string {
@@ -248,6 +170,7 @@ class BaskStreamClient {
         method,
         path: `${url.pathname}${url.search}`,
         rejectUnauthorized: this.clientConfig.verifyTls,
+        ca: this.clientConfig.ca,
         timeout: timeoutMs,
         headers: {
           Host: url.host,
@@ -258,7 +181,13 @@ class BaskStreamClient {
       }, (res) => {
         storeCookies(this.cookies, res.headers);
         const chunks: Buffer[] = [];
-        res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        let size = 0;
+        res.on("error", reject);
+        res.on("data", (chunk) => {
+          size += chunk.length;
+          if (size > 8 * 1024 * 1024) req.destroy(new Error("HTTP response exceeds 8 MiB."));
+          else chunks.push(Buffer.from(chunk));
+        });
         res.on("end", () => resolve({
           status: res.statusCode || 0,
           headers: res.headers,
@@ -322,14 +251,16 @@ class BaskStreamClient {
 
     const serverFirst = serverFirstResponse.body.trim();
     const parsed = parseScram(serverFirst);
-    if (!parsed.r?.startsWith(nonce) || !parsed.s || !parsed.i) {
+    const iterations = Number(parsed.i);
+    if (!parsed.r?.startsWith(nonce) || parsed.r.length <= nonce.length || !parsed.s
+        || !Number.isInteger(iterations) || iterations < 1 || iterations > 1000000) {
       throw new Error("Invalid SCRAM server first message.");
     }
 
     const salted = crypto.pbkdf2Sync(
       Buffer.from(String(password).normalize("NFKC"), "utf8"),
       Buffer.from(parsed.s, "base64"),
-      Number(parsed.i),
+      iterations,
       32,
       "sha256"
     );
@@ -346,6 +277,13 @@ class BaskStreamClient {
     );
     if (finalResponse.status !== 200) {
       throw new Error(`SCRAM final message failed with HTTP ${finalResponse.status}.`);
+    }
+    const serverFinal = parseScram(finalResponse.body.trim());
+    const expectedSignature = hmac(hmac(salted, "Server Key"), authMessage);
+    const signature = Buffer.from(serverFinal.v || "", "base64");
+    if (serverFinal.e || signature.length !== expectedSignature.length
+        || !crypto.timingSafeEqual(signature, expectedSignature)) {
+      throw new Error("SCRAM server signature verification failed.");
     }
 
     await this.request("GET", "/j_security_check/");
@@ -367,12 +305,16 @@ class BaskStreamClient {
       },
       origin: this.stationUrl.origin,
       rejectUnauthorized: this.clientConfig.verifyTls,
+      ca: this.clientConfig.ca,
+      maxPayload: 16 * 1024 * 1024,
       handshakeTimeout: this.clientConfig.timeoutMs
     });
+    this.ws.on("error", () => {}); // Per-call listeners report failures; idle errors must not crash stdio.
     await new Promise<void>((resolve, reject) => {
       const cleanup = () => {
         this.ws?.off("open", onOpen);
         this.ws?.off("error", onError);
+        this.ws?.off("close", onClose);
       };
       const onOpen = () => {
         cleanup();
@@ -382,12 +324,16 @@ class BaskStreamClient {
         cleanup();
         reject(error);
       };
+      const onClose = () => { cleanup(); reject(new Error("Station closed during WebSocket setup.")); };
       this.ws?.once("open", onOpen);
       this.ws?.once("error", onError);
+      this.ws?.once("close", onClose);
     });
   }
 
   async call(op: string, fields: JsonRecord = {}): Promise<JsonRecord> {
+    assertOperationAllowed(this.clientConfig, op);
+    assertOrdScope(this.clientConfig, fields);
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("Station WebSocket is not connected.");
     }
@@ -421,7 +367,9 @@ class BaskStreamClient {
         if (!isBinary) {
           return;
         }
-        const decoded = decode(rawDataToBytes(data));
+        let decoded: unknown;
+        try { decoded = decode(rawDataToBytes(data)); }
+        catch { cleanup(); reject(new Error("Station sent invalid MessagePack.")); return; }
         if (!isRecord(decoded)) {
           return;
         }
@@ -450,7 +398,8 @@ class BaskStreamClient {
 
   close(): void {
     if (this.ws && this.ws.readyState !== WebSocket.CLOSED) {
-      this.ws.close();
+      this.ws.on("error", () => {});
+      this.ws.terminate();
     }
     this.ws = null;
   }
@@ -486,7 +435,8 @@ async function withClient<T>(params: JsonRecord, fn: (client: BaskStreamClient, 
 async function withHttpClient<T>(params: JsonRecord, fn: (client: BaskStreamClient, cfg: BaskStreamConfig) => Promise<T>): Promise<T> {
   const cfg = configFor(params);
   const client = new BaskStreamClient(cfg);
-  return fn(client, cfg);
+  try { return await fn(client, cfg); }
+  finally { client.close(); }
 }
 
 function assertWritesAllowed(cfg: BaskStreamConfig): void {
@@ -710,7 +660,7 @@ registerTool(
     inputSchema: {
       ...connectionFields,
       base: z.string().default("slot:/Drivers"),
-      depth: z.number().int().min(0).max(8).default(1),
+      depth: z.number().int().min(0).max(4).default(1),
       metadata: metadataMode
     },
     readOnly: true
@@ -748,10 +698,12 @@ registerTool(
       ...connectionFields,
       base: z.string().default("slot:/Drivers"),
       query: z.string().default(""),
+      kind: z.string().optional(),
+      writable: z.boolean().optional(),
       features: z.array(z.string()).optional(),
       operations: z.array(z.string()).optional(),
       metadata: metadataMode,
-      depth: z.number().int().min(0).max(128).default(32),
+      depth: z.number().int().min(0).max(64).default(32),
       limit: z.number().int().min(1).max(5000).default(250),
       maxVisited: z.number().int().min(1).max(200000).default(50000),
       timeoutMillis: z.number().int().min(100).max(30000).default(5000)
@@ -763,6 +715,8 @@ registerTool(
     response: await client.call("search", operationFields(params, [
       "base",
       "query",
+      "kind",
+      "writable",
       "features",
       "operations",
       "metadata",
@@ -979,7 +933,7 @@ registerTool(
     inputSchema: {
       ...connectionFields,
       base: z.string().default("slot:/Drivers"),
-      depth: z.number().int().min(0).max(128).default(32),
+      depth: z.number().int().min(0).max(64).default(32),
       query: z.string().default(""),
       limit: z.number().int().min(1).max(5000).default(500),
       maxVisited: z.number().int().min(1).max(200000).default(50000),
@@ -1040,7 +994,7 @@ registerTool(
     inputSchema: {
       ...connectionFields,
       base: z.string(),
-      depth: z.number().int().min(0).max(128).default(16),
+      depth: z.number().int().min(0).max(64).default(16),
       limit: z.number().int().min(1).max(5000).default(1000),
       maxItems: z.number().int().min(1).max(100).default(50)
     },
@@ -1077,6 +1031,7 @@ registerTool(
         points: points.length
       },
       equipmentCandidates: equipment.slice(0, maxItems).map(compactNode),
+      coverage: isRecord(response.result) ? { truncated: response.result.truncated, truncatedReasons: response.result.truncatedReasons, visited: response.result.visited } : null,
       pointContainers: pointContainers.slice(0, maxItems).map(compactNode),
       samplePoints: points.slice(0, maxItems).map(compactNode),
       summary: [
@@ -1095,7 +1050,7 @@ registerTool(
     inputSchema: {
       ...connectionFields,
       base: z.string().default("slot:/Drivers"),
-      depth: z.number().int().min(0).max(128).default(32),
+      depth: z.number().int().min(0).max(64).default(32),
       limit: z.number().int().min(1).max(5000).default(500),
       maxItems: z.number().int().min(1).max(100).default(40)
     },
@@ -1117,6 +1072,7 @@ registerTool(
       base: params.base,
       count: nodes.length,
       histories: nodes.slice(0, Number(params.maxItems || 40)).map(compactNode),
+      coverage: isRecord(response.result) ? { truncated: response.result.truncated, truncatedReasons: response.result.truncatedReasons, visited: response.result.visited } : null,
       summary: [`Found ${nodes.length} history-capable node(s) under ${String(params.base)}.`]
     };
   })
@@ -1152,6 +1108,32 @@ registerTool(
     };
   })
 );
+
+registerTool("baskstream_read_tags", {
+  title: "Read Tags and Relations",
+  description: "Reads direct and implied tags and relations on up to 100 components. Requires station API read_tags support.",
+  inputSchema: { ...connectionFields, ords: z.array(z.string()).min(1).max(100), dictionary: z.string().optional(), includeRelations: z.boolean().default(true) },
+  readOnly: true
+}, async params => withClient(params, async client => ({
+  ok: true, response: await client.call("read_tags", operationFields(params, ["ords", "dictionary", "includeRelations"]))
+})));
+
+const tagSet = z.object({ id: z.string().min(1), value: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
+  valueType: z.enum(["marker", "string", "boolean", "double", "long"]).optional() });
+const tagTarget = z.object({ ord: z.string(), set: z.array(tagSet).max(100).default([]), remove: z.array(z.string()).max(100).default([]) })
+  .refine(t => t.set.length + t.remove.length > 0 && t.set.length + t.remove.length <= 100, "Use 1 to 100 operations per target.");
+const relationAdd = z.object({ id: z.string().min(1), endpoint: z.string(), inbound: z.boolean().default(false) });
+const relationRemove = z.object({ id: z.string().min(1), endpoint: z.string().optional(), direction: z.enum(["in", "out"]).optional() });
+const relationTarget = z.object({ ord: z.string(), add: z.array(relationAdd).max(100).default([]), remove: z.array(relationRemove).max(100).default([]) })
+  .refine(t => t.add.length + t.remove.length > 0 && t.add.length + t.remove.length <= 100, "Use 1 to 100 operations per target.");
+for (const [op, schema] of [["write_tags", tagTarget], ["write_relations", relationTarget]] as const) {
+  registerTool(`baskstream_${op}`, {
+    title: op === "write_tags" ? "Write Direct Tags" : "Write Direct Relations",
+    description: "Changes the station component model. Requires BASKSTREAM_ALLOW_TAG_WRITES=true and Niagara admin write permission. Read existing tags first; report per-entry failures.",
+    inputSchema: { ...connectionFields, targets: z.array(schema).min(1).max(100) },
+    readOnly: false, destructive: true, idempotent: false
+  }, async params => withClient(params, async client => ({ ok: true, response: await client.call(op, { targets: params.targets }) })));
+}
 
 if (config.allowRawOperations) {
   registerTool(

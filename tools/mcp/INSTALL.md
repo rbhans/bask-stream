@@ -38,7 +38,7 @@ npm run setup
 $env:BASKSTREAM_STATION_URL = "https://<station>"
 $env:BASKSTREAM_USER = "<niagara-user>"
 $env:BASKSTREAM_PASSWORD = "<niagara-password>"
-$env:BASKSTREAM_VERIFY_TLS = "false"
+$env:BASKSTREAM_VERIFY_TLS = "true"
 $env:BASKSTREAM_ALLOW_WRITES = "false"
 $env:BASKSTREAM_ALLOW_ALARM_ACTIONS = "false"
 $env:BASKSTREAM_ALLOW_RAW = "false"
@@ -76,7 +76,7 @@ Use this shape for clients that accept an `mcpServers` JSON block:
         "BASKSTREAM_STATION_URL": "https://<station>",
         "BASKSTREAM_USER": "<niagara-user>",
         "BASKSTREAM_PASSWORD": "<niagara-password>",
-        "BASKSTREAM_VERIFY_TLS": "false",
+        "BASKSTREAM_VERIFY_TLS": "true",
         "BASKSTREAM_ALLOW_WRITES": "false",
         "BASKSTREAM_ALLOW_ALARM_ACTIONS": "false",
         "BASKSTREAM_ALLOW_RAW": "false"
@@ -154,7 +154,7 @@ claude mcp add `
   --env BASKSTREAM_STATION_URL="https://<station>" `
   --env BASKSTREAM_USER="<niagara-user>" `
   --env BASKSTREAM_PASSWORD="<niagara-password>" `
-  --env BASKSTREAM_VERIFY_TLS="false" `
+  --env BASKSTREAM_VERIFY_TLS="true" `
   --env BASKSTREAM_ALLOW_WRITES="false" `
   --env BASKSTREAM_ALLOW_ALARM_ACTIONS="false" `
   --env BASKSTREAM_ALLOW_RAW="false" `
@@ -185,7 +185,7 @@ mcp_servers:
       BASKSTREAM_STATION_URL: "https://<station>"
       BASKSTREAM_USER: "<niagara-user>"
       BASKSTREAM_PASSWORD: "<niagara-password>"
-      BASKSTREAM_VERIFY_TLS: "false"
+      BASKSTREAM_VERIFY_TLS: "true"
       BASKSTREAM_ALLOW_WRITES: "false"
       BASKSTREAM_ALLOW_ALARM_ACTIONS: "false"
       BASKSTREAM_ALLOW_RAW: "false"
@@ -317,7 +317,7 @@ Keep the MCP guidance generic for any baskStream/Niagara client:
 - `npm run doctor` checks the station too when station env vars are set.
 - `npm run setup -- --force-install` forces dependency reinstall if `node_modules` is stale.
 - `npm run prepare:mcpb -- --force-install` forces MCPB bundle dependency reinstall if the ignored bundle folder is stale.
-- For self-signed Niagara certificates, set `BASKSTREAM_VERIFY_TLS=false` in development.
+- For self-signed/private-CA Niagara certificates, keep `BASKSTREAM_VERIFY_TLS=true` and set `BASKSTREAM_CA_FILE` to the PEM certificate obtained from the station administrator. Use the matching hostname.
 - `baskstream_call_raw` is not listed unless the server starts with `BASKSTREAM_ALLOW_RAW=true`.
 - If the station health check returns a redirect or unauthorized status, verify credentials and WebService.
 - If tools are missing in a client, restart the AI client and confirm the path points at `tools/mcp/dist/index.js`.

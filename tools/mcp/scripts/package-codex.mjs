@@ -1,0 +1,24 @@
+#!/usr/bin/env node
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const repo=path.resolve(root,'../..');
+const parent=await fs.mkdtemp(path.join(os.tmpdir(),'baskstream-codex-'));
+const target=path.join(parent,'bask-stream');
+const filter=source=>!path.basename(source).startsWith('._') && path.basename(source)!=='.DS_Store';
+await fs.cp(path.join(root,'../codex-plugin/bask-stream'),target,{recursive:true,filter});
+const mcp=path.join(target,'mcp');
+await fs.mkdir(path.join(mcp,'scripts'),{recursive:true});
+await fs.cp(path.join(root,'dist'),path.join(mcp,'dist'),{recursive:true,filter});
+for(const name of ['package.json','package-lock.json']) await fs.copyFile(path.join(root,name),path.join(mcp,name));
+await fs.copyFile(path.join(root,'scripts/configure.mjs'),path.join(mcp,'scripts/configure.mjs'));
+await fs.copyFile(path.join(repo,'LICENSE'),path.join(target,'LICENSE'));
+execFileSync(process.platform==='win32'?'npm.cmd':'npm',['ci','--omit=dev','--ignore-scripts','--no-bin-links','--no-audit','--no-fund'],{cwd:mcp,stdio:'inherit'});
+await fs.mkdir(path.join(target,'references'),{recursive:true});
+await fs.copyFile(path.join(repo,'docs/THIRD_PARTY_API.md'),path.join(target,'references/THIRD_PARTY_API.md'));
+const revision=execFileSync('git',['rev-parse','HEAD'],{cwd:repo,encoding:'utf8'}).trim();
+await fs.writeFile(path.join(target,'build-info.json'),JSON.stringify({mcpVersion:'0.2.0',baseRevision:revision,workingTreeChanges:execFileSync('git',['status','--porcelain'],{cwd:repo,encoding:'utf8'}).trim().length>0,builtAt:new Date().toISOString()},null,2)+'\n');
+console.log(`Plugin bundle: ${target}`);

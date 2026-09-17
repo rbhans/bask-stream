@@ -1,6 +1,7 @@
 param(
   [string]$StationUrl = "",
   [string]$User = "",
+  [string]$CaFile = "",
   [switch]$AllowWrites,
   [switch]$AllowAlarmActions,
   [switch]$SkipDoctor
@@ -47,7 +48,8 @@ npm run setup
 
 Set-McpEnv "BASKSTREAM_STATION_URL" $StationUrl
 Set-McpEnv "BASKSTREAM_USER" $User
-Set-McpEnv "BASKSTREAM_VERIFY_TLS" "false"
+Set-McpEnv "BASKSTREAM_VERIFY_TLS" "true"
+Set-McpEnv "BASKSTREAM_CA_FILE" $CaFile
 Set-McpEnv "BASKSTREAM_ALLOW_WRITES" ($(if ($AllowWrites) { "true" } else { "false" }))
 Set-McpEnv "BASKSTREAM_ALLOW_ALARM_ACTIONS" ($(if ($AllowAlarmActions) { "true" } else { "false" }))
 Set-McpEnv "BASKSTREAM_ALLOW_RAW" "false"

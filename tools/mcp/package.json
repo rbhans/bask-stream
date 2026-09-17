@@ -1,6 +1,6 @@
 {
   "name": "baskstream-mcp-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -8,6 +8,9 @@
     "baskstream-mcp-server": "./dist/index.js"
   },
   "scripts": {
+    "test": "npm run build && node --test test/*.test.mjs",
+    "configure": "node scripts/configure.mjs",
+    "package:codex": "npm run build && node scripts/package-codex.mjs",
     "build": "node ./node_modules/typescript/bin/tsc && node -e \"require('fs').chmodSync('dist/index.js', '755')\"",
     "setup": "node scripts/setup.mjs",
     "doctor": "node scripts/doctor.mjs",

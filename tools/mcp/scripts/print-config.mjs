@@ -13,7 +13,7 @@ const commonEnv = {
   BASKSTREAM_STATION_URL: "https://<station>",
   BASKSTREAM_USER: "<niagara-user>",
   BASKSTREAM_PASSWORD: "<niagara-password>",
-  BASKSTREAM_VERIFY_TLS: "false",
+  BASKSTREAM_VERIFY_TLS: "true",
   BASKSTREAM_ALLOW_WRITES: "false",
   BASKSTREAM_ALLOW_ALARM_ACTIONS: "false",
   BASKSTREAM_ALLOW_RAW: "false"
@@ -71,7 +71,7 @@ console.log(json({
         BASKSTREAM_STATION_URL: "${input:baskstream-station-url}",
         BASKSTREAM_USER: "${input:baskstream-user}",
         BASKSTREAM_PASSWORD: "${input:baskstream-password}",
-        BASKSTREAM_VERIFY_TLS: "false",
+        BASKSTREAM_VERIFY_TLS: "true",
         BASKSTREAM_ALLOW_WRITES: "false",
         BASKSTREAM_ALLOW_ALARM_ACTIONS: "false",
         BASKSTREAM_ALLOW_RAW: "false"
@@ -137,7 +137,7 @@ console.log(`claude mcp add \`
   --env BASKSTREAM_STATION_URL="https://<station>" \`
   --env BASKSTREAM_USER="<niagara-user>" \`
   --env BASKSTREAM_PASSWORD="<niagara-password>" \`
-  --env BASKSTREAM_VERIFY_TLS="false" \`
+  --env BASKSTREAM_VERIFY_TLS="true" \`
   --env BASKSTREAM_ALLOW_WRITES="false" \`
   --env BASKSTREAM_ALLOW_ALARM_ACTIONS="false" \`
   --env BASKSTREAM_ALLOW_RAW="false" \`
@@ -154,7 +154,7 @@ console.log(`mcp_servers:
       BASKSTREAM_STATION_URL: "https://<station>"
       BASKSTREAM_USER: "<niagara-user>"
       BASKSTREAM_PASSWORD: "<niagara-password>"
-      BASKSTREAM_VERIFY_TLS: "false"
+      BASKSTREAM_VERIFY_TLS: "true"
       BASKSTREAM_ALLOW_WRITES: "false"
       BASKSTREAM_ALLOW_ALARM_ACTIONS: "false"
       BASKSTREAM_ALLOW_RAW: "false"
