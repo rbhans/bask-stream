@@ -12,7 +12,9 @@ The repository's own code and documentation are open source under the [Apache Li
 
 ## Current API highlights
 
-- The current source advertises API version `1.5`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
+- The current source advertises API version `1.6`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
+- API 1.6 adds [station model editing](docs/MODEL_EDITING_API.md): installed component types, properties, clone/rename/move/delete, hierarchy configuration, slots, links and actions, with preview/apply and recorded outcomes.
+- `BASkStreamService.writesEnabled=false` turns off all writes through the module while reads continue. It defaults to true for compatibility. New model-plan application additionally requires `modelEditsEnabled=true` (default false).
 - `read` is the batch point snapshot operation for point/value ORDs.
 - Point snapshots can include facets, enum metadata, status, timestamps, display values, and raw values.
 - Clients can pass `fields` to `read` for lean point tables; `point` and `ok` are always returned.

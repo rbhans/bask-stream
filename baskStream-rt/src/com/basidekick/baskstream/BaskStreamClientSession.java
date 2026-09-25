@@ -64,13 +64,12 @@ final class BaskStreamClientSession
       new ConcurrentHashMap<String, BComponent>();
   private final AtomicBoolean closed = new AtomicBoolean(false);
   private final ExecutorService worker;
-  private volatile Thread workerThread;
   private final Object subscriptionLock = new Object();
   private final Object covLock = new Object();
   private final LinkedHashMap<String, Object> pendingCov = new LinkedHashMap<String, Object>();
   private long covSequence;
   private long alarmSequence;
-  private long modelSequence;
+  private final java.util.concurrent.atomic.AtomicLong modelSequence = new java.util.concurrent.atomic.AtomicLong();
   private int pendingCovEventCount;
   private ScheduledFuture<?> covFlushFuture;
   private ScheduledFuture<?> leaseSweepFuture;
@@ -93,10 +92,18 @@ final class BaskStreamClientSession
       {
         Thread t = new Thread(r, "baskStream-session-" + sessionId);
         t.setDaemon(true);
-        workerThread = t;
         return t;
       }
-    });
+    })
+    {
+      @Override
+      protected void terminated()
+      {
+        // Runs once the worker has really stopped, so a request that was still subscribing
+        // when the session closed cannot leave Niagara subscriptions behind.
+        releaseSubscriptions();
+      }
+    };
     this.subscriber = Subscriber.make(this::onComponentEvent);
     this.subscriber.setMask(BComponentEventMask.PROPERTY_EVENTS);
     this.alarmSubscriber = Subscriber.make(this::onAlarmEvent);
@@ -199,7 +206,15 @@ final class BaskStreamClientSession
       String op = runtime.getCodec().requireString(request, "op");
       id = runtime.getCodec().optionalString(request, "id");
 
-      if ("ping".equals(op))
+      if ("write".equals(op) || "write_tags".equals(op) || "write_relations".equals(op)
+          || "ack_alarm".equals(op) || "ack_alarms".equals(op) || "clear_alarm".equals(op) || "clear_alarms".equals(op))
+        runtime.getService().requireWritesEnabled();
+
+      if (isModelOperation(op))
+      {
+        handleModelOperation(id, op, request);
+      }
+      else if ("ping".equals(op))
       {
         sendPong(id);
       }
@@ -330,35 +345,12 @@ final class BaskStreamClientSession
       return;
     }
 
+    // Never wait here. close() can run on Niagara event threads, the shared scheduler, or
+    // Jetty threads, sometimes while holding this session's send lock. Waiting for the worker
+    // would stall those threads for every client.
     try
     {
-      // Cancel queued requests and interrupt settle waits. Never await our own worker.
       connection.closeTransport(1000, "Session closed.");
-      worker.shutdownNow();
-      if (Thread.currentThread() != workerThread)
-      {
-        try
-        {
-          if (!worker.awaitTermination(5L, TimeUnit.SECONDS))
-          {
-            worker.shutdownNow();
-          }
-        }
-        catch (InterruptedException e)
-        {
-          worker.shutdownNow();
-          Thread.currentThread().interrupt();
-        }
-      }
-
-      for (BaskStreamPointResolver.ResolvedPoint point : subscriptions.values().toArray(new BaskStreamPointResolver.ResolvedPoint[0]))
-      {
-        removeActualSubscription(point.getPointOrd());
-      }
-      directSubscriptions.clear();
-      subscriptionGroups.clear();
-      alarmSubscriptions.clear();
-      modelSubscriptions.clear();
       synchronized (covLock)
       {
         pendingCov.clear();
@@ -366,16 +358,9 @@ final class BaskStreamClientSession
         cancelScheduled(covFlushFuture);
         covFlushFuture = null;
       }
-      synchronized (subscriptionLock)
-      {
-        cancelScheduled(leaseSweepFuture);
-        leaseSweepFuture = null;
-        cancelScheduled(revalidateFuture);
-        revalidateFuture = null;
-      }
-      subscriber.unsubscribeAll();
-      alarmSubscriber.unsubscribeAll();
-      modelSubscriber.unsubscribeAll();
+      // Drop queued requests and interrupt settle waits. The executor's terminated() hook
+      // releases subscriptions once the running request, if any, has finished.
+      worker.shutdownNow();
     }
     finally
     {
@@ -386,10 +371,38 @@ final class BaskStreamClientSession
     }
   }
 
+  private void releaseSubscriptions()
+  {
+    try
+    {
+      synchronized (subscriptionLock)
+      {
+        cancelScheduled(leaseSweepFuture);
+        leaseSweepFuture = null;
+        cancelScheduled(revalidateFuture);
+        revalidateFuture = null;
+      }
+      directSubscriptions.clear();
+      subscriptionGroups.clear();
+      subscriptions.clear();
+      alarmSubscriptions.clear();
+      modelSubscriptions.clear();
+      subscriber.unsubscribeAll();
+      alarmSubscriber.unsubscribeAll();
+      modelSubscriber.unsubscribeAll();
+      runtime.onSubscriptionCountChanged();
+    }
+    catch (RuntimeException e)
+    {
+      // This can run on whichever thread stops the executor; never let cleanup fail its caller.
+      runtime.getService().LOG.log(Level.WARNING, "baskStream subscription cleanup failed for session " + sessionId, e);
+    }
+  }
+
   private void handleCapabilities(String id)
   {
     Map<String, Object> capabilities = new LinkedHashMap<String, Object>();
-    capabilities.put("apiVersion", "1.5");
+    capabilities.put("apiVersion", "1.6");
     capabilities.put("module", "baskStream");
     capabilities.put("transport", "websocket-msgpack");
     capabilities.put("serverTime", Long.valueOf(Clock.millis()));
@@ -423,7 +436,15 @@ final class BaskStreamClientSession
         "unsubscribe_model",
         "read_tags",
         "write_tags",
-        "write_relations"));
+        "write_relations",
+        "describe_component_types", "describe_component", "preview_model_changes", "apply_model_changes",
+        "model_plan_status", "cancel_model_plan", "create_components", "update_component_properties",
+        "rename_component", "move_components", "delete_components", "create_hierarchy", "configure_hierarchy"));
+    capabilities.put("writesEnabled", runtime.getService().writesAllowed());
+    capabilities.put("modelEditing", BaskStreamModelPlans.map("enabled", runtime.getService().modelEditsAllowed(),
+        "actions", java.util.Arrays.asList(BaskStreamModelResolver.ACTIONS), "maxChanges", BaskStreamModelResolver.MAX_CHANGES,
+        "previewRequired", true, "atomic", false, "planTtlMillis", BaskStreamModelPlans.PREVIEW_TTL,
+        "resultTtlMillis", BaskStreamModelPlans.RESULT_TTL, "survivesReconnect", true, "survivesRestart", false));
 
     Map<String, Object> limits = new LinkedHashMap<String, Object>();
     limits.put("maxConnections", Long.valueOf(runtime.getService().getMaxConnectionsValue()));
@@ -1196,6 +1217,51 @@ final class BaskStreamClientSession
     return summary;
   }
 
+  private boolean isModelOperation(String op)
+  {
+    return java.util.Arrays.asList("describe_component_types", "describe_component", "preview_model_changes",
+        "apply_model_changes", "model_plan_status", "cancel_model_plan", "create_components",
+        "update_component_properties", "rename_component", "move_components", "delete_components",
+        "create_hierarchy", "configure_hierarchy").contains(op);
+  }
+
+  private void handleModelOperation(String id, String op, Map<String, Object> request) throws Exception
+  {
+    BaskStreamModelResolver model = runtime.getModelResolver();
+    Map<String, Object> result;
+    if ("describe_component_types".equals(op)) result = model.types(request, context);
+    else if ("describe_component".equals(op)) result = model.describe(request, context);
+    else if ("apply_model_changes".equals(op))
+    {
+      result = model.apply(request, context);
+      runtime.modelChanged(result);
+    }
+    else if ("model_plan_status".equals(op)) result = model.status(request, context);
+    else if ("cancel_model_plan".equals(op)) result = model.cancel(request, context);
+    else if ("preview_model_changes".equals(op)) result = model.preview(request, context);
+    else
+    {
+      // Convenience operation names compile into the same preview/apply engine.
+      // None is a second, unreviewed path around an approved plan.
+      String action = "create_components".equals(op) ? "create" : "update_component_properties".equals(op) ? "update"
+          : "rename_component".equals(op) ? "rename" : "move_components".equals(op) ? "move"
+          : "delete_components".equals(op) ? "delete" : op;
+      Object raw = request.get("changes");
+      List<Object> changes = new ArrayList<Object>();
+      if (raw != null && !(raw instanceof List)) throw new BaskStreamProtocolException("bad_request", "changes must be an array.");
+      List<?> inputs = raw == null ? java.util.Collections.singletonList(request) : (List<?>)raw;
+      for (Object input : inputs)
+      {
+        Map<String, Object> change = new LinkedHashMap<String, Object>(BaskStreamModelResolver.object(input, "change"));
+        change.remove("op"); change.remove("id"); change.put("action", action); changes.add(change);
+      }
+      result = model.preview(BaskStreamModelPlans.map("changes", changes), context);
+    }
+    Map<String, Object> response = baseMessage("model_result", id);
+    response.put("operation", op); response.put("result", result);
+    send(response);
+  }
+
   private void handleReadSchedule(String id, Map<String, Object> request) throws BaskStreamProtocolException
   {
     String ord = runtime.getCodec().optionalString(request, "ord");
@@ -1375,7 +1441,8 @@ final class BaskStreamClientSession
     {
       return;
     }
-    sweepExpiredSubscriptionGroups();
+    // No lease sweep here: it takes subscriptionLock, which the worker can hold for a whole
+    // batch, and this runs on Niagara's event thread. The lease timer handles expiry.
 
     String slotName = event.getSlotName();
     List<Object> changes = new ArrayList<Object>();
@@ -1415,6 +1482,10 @@ final class BaskStreamClientSession
     }
 
     BAlarmRecord record = alarmRecord(event);
+    if (record != null && !runtime.getAlarmResolver().canView(record, context))
+    {
+      return;
+    }
     for (BaskStreamAlarmResolver.AlarmSubscriptionSpec spec : alarmSubscriptions.values())
     {
       try
@@ -1470,18 +1541,42 @@ final class BaskStreamClientSession
       return;
     }
     Map<String, Object> message = baseMessage("model_cov", null);
-    message.put("sequence", Long.valueOf(++modelSequence));
+    message.put("sequence", Long.valueOf(modelSequence.incrementAndGet()));
     message.put("timestamp", Long.valueOf(Clock.millis()));
     message.put("eventId", Long.valueOf(event.getId()));
     message.put("event", modelEventName(event.getId()));
     message.put("slot", event.getSlotName());
     message.put("source", componentSummary(source));
     BValue value = event.getValue();
-    if (value != null)
+    if (value != null && !BaskStreamModelResolver.sensitive(event.getSlotName(), value.getType().toString()))
     {
       message.put("valueType", value.getType().toString());
       message.put("value", value.toString(context));
     }
+    message.put("refreshRecommended", Boolean.TRUE);
+    send(message);
+  }
+
+  void modelChanged(Set<String> affected)
+  {
+    if (closed.get()) return;
+    Set<String> bases = new LinkedHashSet<String>();
+    for (Map.Entry<String, BComponent> watch : modelSubscriptions.entrySet())
+    {
+      if (!canReadModelComponent(watch.getValue())) continue;
+      String base = componentKey(watch.getValue());
+      if (base == null) continue;
+      String prefix = base.endsWith("/") ? base : base + "/";
+      for (String changed : affected)
+        if (changed.equals(base) || changed.startsWith(prefix) || base.startsWith(changed.endsWith("/") ? changed : changed + "/"))
+        { bases.add(base); break; }
+    }
+    if (bases.isEmpty()) return;
+    Map<String, Object> message = baseMessage("model_cov", null);
+    message.put("sequence", Long.valueOf(modelSequence.incrementAndGet()));
+    message.put("timestamp", Long.valueOf(Clock.millis()));
+    message.put("event", "model_plan_applied");
+    message.put("bases", new ArrayList<String>(bases));
     message.put("refreshRecommended", Boolean.TRUE);
     send(message);
   }
@@ -1729,10 +1824,25 @@ final class BaskStreamClientSession
       @Override
       public void run()
       {
-        synchronized (subscriptionLock)
+        // Hop onto the session worker so the shared scheduler never waits on subscriptionLock.
+        try
         {
-          leaseSweepAt = 0L;
-          sweepExpiredSubscriptionGroups();
+          worker.execute(new Runnable()
+          {
+            @Override
+            public void run()
+            {
+              synchronized (subscriptionLock)
+              {
+                leaseSweepAt = 0L;
+                sweepExpiredSubscriptionGroups();
+              }
+            }
+          });
+        }
+        catch (RejectedExecutionException ignored)
+        {
+          // Closing, or the request queue is full; the next request's sweep reschedules the timer.
         }
       }
     }, Math.max(100L, next - now));

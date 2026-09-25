@@ -37,6 +37,10 @@ These unsolicited frames have no `id`. Clients should tolerate (and may act on) 
 
 ## Supported Operations
 
+API 1.6 also provides the [station model editing API](MODEL_EDITING_API.md): component/type inspection, component and hierarchy editing, dynamic slots, links, generic actions, preview/apply, plan status and cancellation. That reference includes the complete action schema and partial-result contract.
+
+The station-side `writesEnabled` switch disables **all** mutations, including the existing point, tag/relation, and alarm operations documented below. Reads and subscriptions stay available. It defaults to true for compatibility; new model-plan application additionally requires `modelEditsEnabled=true` (default false). Both states are advertised by health/capabilities.
+
 ### `ping`
 
 Request:
@@ -66,7 +70,7 @@ Response:
   "op": "capabilities_result",
   "id": "caps-1",
   "capabilities": {
-    "apiVersion": "1.5",
+    "apiVersion": "1.6",
     "operations": ["browse", "read", "subscribe", "replace_subscriptions", "write", "read_alarms", "ack_alarm", "clear_alarm", "read_tags", "write_tags", "write_relations"],
     "limits": {
       "maxConnectionsPerUser": 0,
@@ -509,6 +513,8 @@ Response:
 
 If a higher priority input is active, a lower priority write can succeed without changing the output. Clients should inspect `activeLevel`, `status`, and the returned value.
 
+Each action is checked against the user's invoke permission for that action slot, not just the point. Operator actions need operator invoke. Admin-only actions, which usually include the emergency actions, need admin invoke. A refused action returns a per-point `forbidden_action` entry.
+
 ### `describe_write`
 
 Returns write capabilities without writing. Use this before rendering set/override/auto controls.
@@ -626,6 +632,8 @@ Common scopes:
 - `ack_pending`
 - `all`
 
+Records are included only when the user has operator read permission on the record's alarm class. The same filter applies to `subscribe_alarms` snapshots and live `alarm_cov` events.
+
 ### `ack_alarm`
 
 Acknowledges one or more alarm records by UUID through Niagara `BAlarmService.ackAlarm`. The authenticated Niagara user is used as the acknowledgement user.
@@ -651,6 +659,8 @@ Batch form:
 ```
 
 Optional `source` narrows the action to an expected alarm source ORD and is also used with `allowedPathPatterns` when the service is not wide open.
+
+Acknowledging requires operator write permission on the record's alarm class. If the user cannot read the alarm class, the entry reports `invalid_alarm`, the same as a missing record. If the user can read it but lacks write permission, the entry reports `forbidden_alarm`. When writes are disabled, the whole request fails with `writes_disabled` before any record is looked up.
 
 Response:
 
@@ -680,7 +690,7 @@ Force-clears one or more alarm records by UUID. This is intentionally separate f
 }
 ```
 
-Batch form uses `clear_alarms` with `uuids`. Prefer `ack_alarm` for ordinary operator acknowledgement and reserve `clear_alarm` for explicit force-clear workflows.
+Batch form uses `clear_alarms` with `uuids`. Prefer `ack_alarm` for ordinary operator acknowledgement and reserve `clear_alarm` for explicit force-clear workflows. Force-clearing requires admin write permission on the record's alarm class; otherwise the entry reports `forbidden_alarm`.
 
 ### `subscribe_alarms`
 
@@ -1088,6 +1098,15 @@ Recommended client approach:
 The `metadata` block is additive and request-controlled. Clients can ignore it or omit it and continue using `ord`, `slotPath`, `name`, `typeSpec`, `features`, `operations`, and point read/write payloads.
 
 Third-party clients should not require every metadata subfield to be populated. Different protocols and station models expose different evidence.
+
+### Permission tightening (API 1.6 source, 2026-09-24)
+
+These changes keep `apiVersion` at `1.6` and add no new fields. Clients that connect with a restricted Niagara user may now see less data or receive refusals where they previously succeeded:
+
+- Alarm reads, subscriptions, and live events are filtered by operator read on the alarm class. Acknowledge needs operator write on the alarm class; force-clear needs admin write. New per-entry code: `forbidden_alarm`.
+- Histories reached through a point (`slot:/` ORD) are omitted when the user cannot read the history itself.
+- `write` checks invoke permission for each action slot. New per-point code: `forbidden_action`.
+- Model editing rejects link and relation values in `add_slot`, `update`, and nested values. Use `create_link`/`delete_link` and `write_relations` instead.
 
 ### API 1.5 changes
 

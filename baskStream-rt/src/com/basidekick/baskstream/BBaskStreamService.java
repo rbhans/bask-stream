@@ -16,6 +16,18 @@ import javax.baja.web.WebOp;
 
 @NiagaraType
 @NiagaraProperty(
+  name = "writesEnabled",
+  type = "boolean",
+  defaultValue = "true",
+  flags = Flags.SUMMARY
+)
+@NiagaraProperty(
+  name = "modelEditsEnabled",
+  type = "boolean",
+  defaultValue = "false",
+  flags = Flags.SUMMARY
+)
+@NiagaraProperty(
   name = "wsPath",
   type = "baja:String",
   defaultValue = "/stream",
@@ -130,8 +142,54 @@ public final class BBaskStreamService extends BWebServlet
 
 //region /*+ ------------ BEGIN BAJA AUTO GENERATED CODE ------------ +*/
 //@formatter:off
-/*@ $com.basidekick.baskstream.BBaskStreamService(1166238119)1.0$ @*/
-/* Generated Thu Jul 23 18:37:58 MST 2026 by Slot-o-Matic (c) Tridium, Inc. 2012-2026 */
+/*@ $com.basidekick.baskstream.BBaskStreamService(2116518806)1.0$ @*/
+/* Generated Mon Sep 21 05:57:05 MST 2026 by Slot-o-Matic (c) Tridium, Inc. 2012-2026 */
+
+  //region Property "writesEnabled"
+
+  /**
+   * Slot for the {@code writesEnabled} property.
+   * @see #getWritesEnabled
+   * @see #setWritesEnabled
+   */
+  public static final Property writesEnabled = newProperty(Flags.SUMMARY, true, null);
+
+  /**
+   * Get the {@code writesEnabled} property.
+   * @see #writesEnabled
+   */
+  public boolean getWritesEnabled() { return getBoolean(writesEnabled); }
+
+  /**
+   * Set the {@code writesEnabled} property.
+   * @see #writesEnabled
+   */
+  public void setWritesEnabled(boolean v) { setBoolean(writesEnabled, v, null); }
+
+  //endregion Property "writesEnabled"
+
+  //region Property "modelEditsEnabled"
+
+  /**
+   * Slot for the {@code modelEditsEnabled} property.
+   * @see #getModelEditsEnabled
+   * @see #setModelEditsEnabled
+   */
+  public static final Property modelEditsEnabled = newProperty(Flags.SUMMARY, false, null);
+
+  /**
+   * Get the {@code modelEditsEnabled} property.
+   * @see #modelEditsEnabled
+   */
+  public boolean getModelEditsEnabled() { return getBoolean(modelEditsEnabled); }
+
+  /**
+   * Set the {@code modelEditsEnabled} property.
+   * @see #modelEditsEnabled
+   */
+  public void setModelEditsEnabled(boolean v) { setBoolean(modelEditsEnabled, v, null); }
+
+  //endregion Property "modelEditsEnabled"
 
   //region Property "wsPath"
 
@@ -540,6 +598,35 @@ public final class BBaskStreamService extends BWebServlet
     return ACTIVE.get();
   }
 
+  // Slot-o-matic supplies the new property members at the user-owned build.
+  // Keep the accessors distinct from generated getters.
+  boolean writesAllowed()
+  {
+    Property p = getProperty("writesEnabled");
+    return p != null && getBoolean(p);
+  }
+
+  boolean modelEditsAllowed()
+  {
+    Property p = getProperty("modelEditsEnabled");
+    return writesAllowed() && p != null && getBoolean(p);
+  }
+
+  void requireWritesEnabled() throws BaskStreamProtocolException
+  {
+    if (!getEnabled() || !writesAllowed())
+      throw new BaskStreamProtocolException("writes_disabled", "Station writes are disabled on BASkStreamService.");
+    if (Thread.currentThread().isInterrupted())
+      throw new BaskStreamProtocolException("write_cancelled", "Write was cancelled.");
+  }
+
+  void requireModelEditsEnabled() throws BaskStreamProtocolException
+  {
+    requireWritesEnabled();
+    if (!modelEditsAllowed())
+      throw new BaskStreamProtocolException("model_edits_disabled", "Enable modelEditsEnabled on BASkStreamService to apply model plans.");
+  }
+
   @Override
   public void serviceStarted() throws Exception
   {
@@ -658,7 +745,8 @@ public final class BBaskStreamService extends BWebServlet
 
   int getWriteSettleMillisValue()
   {
-    return Math.max(0, getWriteSettleMillis());
+    // Capped: the delay runs once per point, and a batch can hold 1,000 points.
+    return Math.min(5000, Math.max(0, getWriteSettleMillis()));
   }
 
   boolean getRequireAuthorizationHeaderValue()
@@ -755,7 +843,9 @@ public final class BBaskStreamService extends BWebServlet
       + "\"service\":\"BASkStreamService\","
       + "\"enabled\":" + getEnabled() + ","
       + "\"wsPath\":\"" + escapeJson(getWsPath()) + "\","
-      + "\"apiVersion\":\"1.5\","
+      + "\"apiVersion\":\"1.6\","
+      + "\"writesEnabled\":" + writesAllowed() + ","
+      + "\"modelEditsEnabled\":" + modelEditsAllowed() + ","
       + "\"servletName\":\"" + escapeJson(getServletName()) + "\","
       + "\"pathInfo\":\"" + escapeJson(op.getPathInfo()) + "\","
       + "\"maxConnections\":" + getMaxConnectionsValue() + ","

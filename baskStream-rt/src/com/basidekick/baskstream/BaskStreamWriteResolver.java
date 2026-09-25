@@ -16,6 +16,7 @@ import javax.baja.control.util.BNumericOverride;
 import javax.baja.control.util.BOverride;
 import javax.baja.control.util.BStringOverride;
 import javax.baja.naming.OrdTarget;
+import javax.baja.security.BPermissions;
 import javax.baja.sys.Action;
 import javax.baja.sys.BAbsTime;
 import javax.baja.sys.BBoolean;
@@ -32,6 +33,7 @@ import javax.baja.sys.BString;
 import javax.baja.sys.BValue;
 import javax.baja.sys.Clock;
 import javax.baja.sys.Context;
+import javax.baja.sys.Flags;
 import javax.baja.sys.Property;
 import javax.baja.status.BIStatusValue;
 import javax.baja.status.BStatusValue;
@@ -148,10 +150,16 @@ final class BaskStreamWriteResolver
 
     String requestedAction = normalizeAction(optionalString(spec, "action"));
     ActionInvocation invocation = buildInvocation(component, requestedAction, spec);
+    if (!canInvokeAction(component, invocation.action, context))
+    {
+      throw new BaskStreamProtocolException("forbidden_action",
+          "The authenticated user cannot invoke '" + invocation.name + "' on this point.");
+    }
     if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
     {
       throw new BaskStreamProtocolException("write_cancelled", "Session closed before write invocation.");
     }
+    service.requireWritesEnabled();
     component.invoke(invocation.action, invocation.parameter, context);
 
     Map<String, Object> result = snapshotAfterWrite(point, context).toWire();
@@ -160,6 +168,17 @@ final class BaskStreamWriteResolver
     result.put("activeLevel", activeLevel(component, context));
     result.put("writeTime", Long.valueOf(Clock.millis()));
     return result;
+  }
+
+  /**
+   * OrdTarget.canInvoke() on the point itself only checks operator invoke. Each action
+   * slot has its own operator flag, so admin-only actions such as emergencyOverride
+   * need admin invoke.
+   */
+  private static boolean canInvokeAction(BComponent component, Action action, Context context)
+  {
+    BPermissions permissions = component.getPermissions(context);
+    return Flags.isOperator(component, action) ? permissions.hasOperatorInvoke() : permissions.hasAdminInvoke();
   }
 
   private PointSnapshot snapshotAfterWrite(BaskStreamPointResolver.ResolvedPoint point, Context context)

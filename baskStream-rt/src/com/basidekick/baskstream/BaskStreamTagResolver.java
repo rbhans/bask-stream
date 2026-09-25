@@ -156,6 +156,7 @@ final class BaskStreamTagResolver
     {
       Id id = parseId(qname);
       BIDataValue value = toDataValue(setSpec.get("value"), optionalString(setSpec, "valueType"));
+      service.requireWritesEnabled();
       boolean changed = tags.set(new Tag(id, value));
       result.put("ok", Boolean.TRUE);
       result.put("changed", Boolean.valueOf(changed));
@@ -193,6 +194,7 @@ final class BaskStreamTagResolver
         result.put("message", "Tag is implied by a tag dictionary and cannot be removed from the component.");
         return result;
       }
+      service.requireWritesEnabled();
       boolean ok = tags.removeAll(id);
       result.put("ok", Boolean.valueOf(ok));
       if (!ok)
@@ -293,6 +295,7 @@ final class BaskStreamTagResolver
       boolean inbound = Boolean.TRUE.equals(addSpec.get("inbound"));
       // Component-space relations must be BRelation structs; ComponentRelations.add
       // rejects generic javax.baja.tag.BasicRelation instances ("not a BRelation type").
+      service.requireWritesEnabled();
       Relation added = relations.add(new BRelation(id, endpoint, inbound));
       result.put("ok", Boolean.valueOf(added != null));
       if (added == null)
@@ -357,6 +360,7 @@ final class BaskStreamTagResolver
         {
           continue;
         }
+        service.requireWritesEnabled();
         if (removeStoredRelation(component, relations, relation))
         {
           removed++;

@@ -1,17 +1,20 @@
 package com.basidekick.baskstream;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import javax.baja.alarm.AlarmSpaceConnection;
 import javax.baja.alarm.BAckState;
+import javax.baja.alarm.BAlarmClass;
 import javax.baja.alarm.BAlarmRecord;
 import javax.baja.alarm.BAlarmService;
 import javax.baja.alarm.BSourceState;
 import javax.baja.naming.BOrd;
 import javax.baja.naming.BOrdList;
+import javax.baja.security.BPermissions;
 import javax.baja.sys.BObject;
 import javax.baja.sys.Clock;
 import javax.baja.sys.Context;
@@ -60,6 +63,7 @@ final class BaskStreamAlarmResolver
 
     List<Object> alarms = new ArrayList<Object>();
     boolean truncated = false;
+    Map<String, BPermissions> classPermissions = new HashMap<String, BPermissions>();
 
     try (AlarmSpaceConnection connection = alarmService.getAlarmDb().getConnection(context))
     {
@@ -72,6 +76,10 @@ final class BaskStreamAlarmResolver
         {
           BAlarmRecord record = cursor.get();
           if (spec.source != null && !matchesSource(record, spec.source))
+          {
+            continue;
+          }
+          if (!alarmClassPermissions(alarmService, record, context, classPermissions).hasOperatorRead())
           {
             continue;
           }
@@ -129,6 +137,36 @@ final class BaskStreamAlarmResolver
     }
   }
 
+  /**
+   * Alarm records are visible only when the user can read the record's alarm class,
+   * which is how Niagara scopes alarm visibility.
+   */
+  boolean canView(BAlarmRecord record, Context context)
+  {
+    BAlarmService alarmService = BAlarmService.getService();
+    return alarmService != null
+        && alarmClassPermissions(alarmService, record, context, null).hasOperatorRead();
+  }
+
+  private static BPermissions alarmClassPermissions(BAlarmService alarmService, BAlarmRecord record, Context context,
+      Map<String, BPermissions> cache)
+  {
+    String className = record.getAlarmClass();
+    String key = className == null ? "" : className;
+    BPermissions permissions = cache == null ? null : cache.get(key);
+    if (permissions == null)
+    {
+      // lookupAlarmClass returns the default alarm class for unknown names.
+      BAlarmClass alarmClass = alarmService.lookupAlarmClass(className);
+      permissions = alarmClass == null ? BPermissions.none : alarmClass.getPermissions(context);
+      if (cache != null)
+      {
+        cache.put(key, permissions);
+      }
+    }
+    return permissions;
+  }
+
   Map<String, Object> result(AlarmSubscriptionSpec spec, List<Object> alarms)
   {
     Map<String, Object> result = new LinkedHashMap<String, Object>();
@@ -150,6 +188,8 @@ final class BaskStreamAlarmResolver
     {
       throw new BaskStreamProtocolException("alarm_failed", "Niagara AlarmService is not available.");
     }
+    // Check the gate before any lookup so a disabled station does not reveal which UUIDs exist.
+    service.requireWritesEnabled();
 
     List<Object> results = new ArrayList<Object>(uuids.size());
     for (String uuid : uuids)
@@ -157,12 +197,26 @@ final class BaskStreamAlarmResolver
       try
       {
         BAlarmRecord record = resolveAlarmRecord(alarmService, uuid, context);
+        BPermissions permissions = alarmClassPermissions(alarmService, record, context, null);
+        if (!permissions.hasOperatorRead())
+        {
+          // Report unreadable records the same way as missing ones.
+          throw new BaskStreamProtocolException("invalid_alarm", "Alarm record was not found.");
+        }
         requireAllowedRecord(record);
         if (source != null && !matchesSource(record, source))
         {
           throw new BaskStreamProtocolException("forbidden_point", "Alarm record did not match the requested source filter.");
         }
-        if ("ack_alarm".equals(action))
+        boolean ack = "ack_alarm".equals(action);
+        if (ack ? !permissions.hasOperatorWrite() : !permissions.hasAdminWrite())
+        {
+          throw new BaskStreamProtocolException("forbidden_alarm", ack
+              ? "Acknowledging requires operator write permission on the alarm class."
+              : "Force-clearing requires admin write permission on the alarm class.");
+        }
+        service.requireWritesEnabled();
+        if (ack)
         {
           acknowledgeAlarm(alarmService, record, context, userName);
         }

@@ -121,6 +121,10 @@ final class BaskStreamHistoryResolver
     for (int i = 0; i < historyExts.length; i++)
     {
       BIHistory history = historyExts[i].getHistory();
+      if (history != null && !canReadHistory(history, context))
+      {
+        continue;
+      }
       if (history instanceof BHistory)
       {
         histories.add(describeSingleHistory((BHistory) history, historyExts[i], context));
@@ -187,7 +191,7 @@ final class BaskStreamHistoryResolver
     for (int i = 0; i < historyExts.length; i++)
     {
       BHistory history = historyExts[i].getHistory() instanceof BHistory ? (BHistory) historyExts[i].getHistory() : null;
-      if (history == null)
+      if (history == null || !canReadHistory(history, context))
       {
         continue;
       }
@@ -200,6 +204,14 @@ final class BaskStreamHistoryResolver
     }
 
     return histories;
+  }
+
+  /**
+   * Histories carry their own categories, so reading a point does not imply reading its history.
+   */
+  private static boolean canReadHistory(BIHistory history, Context context)
+  {
+    return history.getPermissions(context).hasOperatorRead();
   }
 
   private void ensureDirectHistoryAllowed(BHistory history) throws BaskStreamProtocolException

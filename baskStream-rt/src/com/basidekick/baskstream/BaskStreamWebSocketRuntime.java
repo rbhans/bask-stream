@@ -46,6 +46,7 @@ final class BaskStreamWebSocketRuntime
   private final BaskStreamScheduleResolver scheduleResolver;
   private final BaskStreamWriteResolver writeResolver;
   private final BaskStreamTagResolver tagResolver;
+  private final BaskStreamModelResolver modelResolver;
   private final BaskStreamSubscriptionManager subscriptions;
   private final ScheduledExecutorService scheduler;
   private volatile WebSocketServerFactory socketFactory;
@@ -61,6 +62,7 @@ final class BaskStreamWebSocketRuntime
     this.scheduleResolver = new BaskStreamScheduleResolver(service);
     this.writeResolver = new BaskStreamWriteResolver(service, resolver);
     this.tagResolver = new BaskStreamTagResolver(service);
+    this.modelResolver = new BaskStreamModelResolver(service);
     this.subscriptions = new BaskStreamSubscriptionManager(service);
     java.util.concurrent.ScheduledThreadPoolExecutor scheduled =
         new java.util.concurrent.ScheduledThreadPoolExecutor(1, new BaskStreamThreadFactory());
@@ -417,6 +419,27 @@ final class BaskStreamWebSocketRuntime
   BaskStreamTagResolver getTagResolver()
   {
     return tagResolver;
+  }
+
+  BaskStreamModelResolver getModelResolver()
+  {
+    return modelResolver;
+  }
+
+  void modelChanged(java.util.Map<String, Object> result)
+  {
+    if (!("applied".equals(result.get("state")) || "partial".equals(result.get("state")))) return;
+    java.util.Set<String> affected = new java.util.LinkedHashSet<String>();
+    Object changes = result.get("changes");
+    if (changes instanceof java.util.List)
+      for (Object item : (java.util.List<?>)changes)
+        if (item instanceof java.util.Map)
+          for (String key : new String[]{"ord", "parent", "source", "target", "destination"})
+          {
+            Object value = ((java.util.Map<?, ?>)item).get(key);
+            if (value instanceof String && ((String)value).startsWith("slot:/")) affected.add((String)value);
+          }
+    subscriptions.modelChanged(affected);
   }
 
   BBaskStreamService getService()
