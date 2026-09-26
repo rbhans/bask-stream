@@ -2468,9 +2468,11 @@
       ]
     },
     "subscriptions_revoked": {
-      "summary": "Revalidation dropped subscribed points the user can no longer read; reason is 'authorization_revoked'.",
+      "summary": "Revalidation dropped subscriptions the user can no longer see: points (read permission or path policy; also points that failed to resolve on two consecutive sweeps), alarm subscription filters now outside the path policy, and model subscriptions whose component is gone or no longer readable. reason is 'authorization_revoked'.",
       "keys": [
         "points",
+        "alarmSubscriptions",
+        "modelSubscriptions",
         "reason"
       ]
     },

@@ -76,6 +76,8 @@ final class BaskStreamClientSession
   private long leaseSweepAt;
   private ScheduledFuture<?> revalidateFuture;
   private final Map<String, RequestHandler> handlers = bindHandlers();
+  // Points whose authorization check failed on the last revalidation sweep. Worker thread only.
+  private final Set<String> unresolvedAtRevalidation = new java.util.HashSet<String>();
 
   BaskStreamClientSession(BaskStreamWebSocketRuntime runtime, BaskStreamJettyWebSocketConnection connection, BUser user, Context context)
   {
@@ -1835,15 +1837,60 @@ final class BaskStreamClientSession
       }
 
       List<String> revoked = new ArrayList<String>();
+      unresolvedAtRevalidation.retainAll(subscribed);
       for (String pointOrd : subscribed)
       {
-        if (!stillAuthorized(pointOrd))
+        Boolean authorized = stillAuthorized(pointOrd);
+        if (authorized == null)
+        {
+          // One failed check may be a glitch; failing twice in a row means the point is gone.
+          if (!unresolvedAtRevalidation.add(pointOrd))
+          {
+            revoked.add(pointOrd);
+          }
+          continue;
+        }
+        unresolvedAtRevalidation.remove(pointOrd);
+        if (!authorized.booleanValue())
         {
           revoked.add(pointOrd);
         }
       }
+      unresolvedAtRevalidation.removeAll(revoked);
 
-      if (!revoked.isEmpty())
+      // Alarm events are checked per record as they fire; here only the filter's path can go stale.
+      List<String> revokedAlarms = new ArrayList<String>();
+      for (BaskStreamAlarmResolver.AlarmSubscriptionSpec spec :
+          alarmSubscriptions.values().toArray(new BaskStreamAlarmResolver.AlarmSubscriptionSpec[0]))
+      {
+        try
+        {
+          runtime.getAlarmResolver().requireAllowed(spec);
+        }
+        catch (BaskStreamProtocolException e)
+        {
+          alarmSubscriptions.remove(spec.key());
+          revokedAlarms.add(spec.key());
+        }
+      }
+      if (!revokedAlarms.isEmpty() && alarmSubscriptions.isEmpty())
+      {
+        alarmSubscriber.unsubscribeAll();
+      }
+
+      // Model subscriptions: also drops components that were deleted, moved out of scope or hidden.
+      List<String> revokedModels = new ArrayList<String>();
+      for (Map.Entry<String, BComponent> entry : new ArrayList<Map.Entry<String, BComponent>>(modelSubscriptions.entrySet()))
+      {
+        if (!canReadModelComponent(entry.getValue()))
+        {
+          modelSubscriptions.remove(entry.getKey());
+          modelSubscriber.unsubscribe(entry.getValue(), context);
+          revokedModels.add(entry.getKey());
+        }
+      }
+
+      if (!revoked.isEmpty() || !revokedAlarms.isEmpty() || !revokedModels.isEmpty())
       {
         synchronized (subscriptionLock)
         {
@@ -1859,11 +1906,14 @@ final class BaskStreamClientSession
         }
         Map<String, Object> notice = baseMessage("subscriptions_revoked", null);
         notice.put("points", revoked);
+        notice.put("alarmSubscriptions", revokedAlarms);
+        notice.put("modelSubscriptions", revokedModels);
         notice.put("reason", "authorization_revoked");
         send(notice);
         runtime.onSubscriptionCountChanged();
         runtime.getService().audit("subscriptions_revoked", "user=" + user.getUsername()
-          + " session=" + sessionId + " count=" + revoked.size());
+          + " session=" + sessionId + " points=" + revoked.size() + " alarms=" + revokedAlarms.size()
+          + " models=" + revokedModels.size());
       }
     }
     catch (Throwable e)
@@ -1876,23 +1926,22 @@ final class BaskStreamClientSession
     }
   }
 
-  private boolean stillAuthorized(String pointOrd)
+  /** TRUE or FALSE, or null when the check itself failed (for example, the point did not resolve). */
+  private Boolean stillAuthorized(String pointOrd)
   {
     // The path policy may have been narrowed mid-session — re-check it explicitly.
     if (!BaskStreamAccessPolicy.isAllowed(runtime.getService(), pointOrd))
     {
-      return false;
+      return Boolean.FALSE;
     }
     try
     {
       OrdTarget target = BOrd.make(pointOrd).resolve(runtime.getService(), context);
-      return target.canRead();
+      return Boolean.valueOf(target.canRead());
     }
     catch (Exception e)
     {
-      // A transient resolution failure (e.g. a point momentarily unmounted) is not a
-      // permission revocation; keep the subscription rather than dropping it on a glitch.
-      return true;
+      return null;
     }
   }
 
