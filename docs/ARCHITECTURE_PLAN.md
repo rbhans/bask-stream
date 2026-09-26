@@ -134,8 +134,8 @@ Using baskStream only, against a test station and the Python BACnet simulator (1
 
 What needs fixing (Phase 2–3 unless noted):
 
-1. **Edits run with baskStream's Java permissions.** Enabling a BACnet/IP port or setting its adapter made the driver open a socket on baskStream's thread. The security manager denied it (`SocketPermission ... listen`) and the driver silently reset the setting. The same edit works in Workbench. Run mutations on a Niagara-owned thread, or through a path that does not put baskStream's protection domain on the stack.
-2. **Silent reverts are reported as applied.** After apply, read each value back and flag any mismatch (`reverted: true`) instead of reporting success.
+1. **Edits run with baskStream's Java permissions.** *(Phase 2d: documented and surfaced as `reverted`; the permission request is decision 5 below.)* Enabling a BACnet/IP port or setting its adapter made the driver open a socket on baskStream's thread. The security manager denied it (`SocketPermission ... listen`) and the driver silently reset the setting. The same edit works in Workbench. Run mutations on a Niagara-owned thread, or through a path that does not put baskStream's protection domain on the stack.
+2. **Silent reverts are reported as applied.** *(Fixed in Phase 2d: property results and steps carry `reverted: true`.)* After apply, read each value back and flag any mismatch (`reverted: true`) instead of reporting success.
 3. **Device discovery results are not readable.** `submitDeviceManagerJob` runs, but the found devices are not exposed as slots. Point discovery results are readable (`dc0…dcN` `bacnet:DiscoveryPoint` slots on the job). A dedicated `discover_devices`/`discover_points` operation should wrap both.
 4. **`read` on an unsubscribed proxy point returns stale data.** Add an option that subscribes briefly and waits for the first poll ("fresh read").
 5. **Write replies can show the pre-write value.** The 150 ms settle delay is shorter than a BACnet poll. Return a "pending" state, or wait for the next value change with a timeout.
@@ -159,3 +159,4 @@ Environment notes: when the simulator ran on the Mac and the station in a Parall
 2. Target date for Niagara 5 support. This decides whether Phase 4 moves ahead of Phase 3.
 3. Should the default for `writesEnabled` become `false`?
 4. Add an optional JSON wire mode alongside MessagePack?
+5. Should baskStream request Niagara's `NETWORK_COMMUNICATION` permission so model edits can reconfigure driver network ports? It can be scoped by host and port and marked optional, so the station admin approves it at install. A narrow grant (BACnet/IP 47808, for example) fixes only that driver; a general grant gives baskStream broad network rights it does not otherwise need. Until decided, such edits report `reverted` and must be made in Workbench.

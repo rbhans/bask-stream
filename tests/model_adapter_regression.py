@@ -111,6 +111,12 @@ class ModelAdapterRegression {
     reject("forbidden_component",()->preview(model,cx,m("action","clone","source","slot:/Test/Vault","parent","slot:/Test","name","VaultCopy")));
     Sys.adminDenied.clear();
     check("preview".equals(preview(model,cx,m("action","clone","source","slot:/Test/Vault","parent","slot:/Test","name","VaultCopy")).get("state")));
+    StubbornComponent port=new StubbornComponent();test.add("Port",port,null);port.add("adapter",new BSimple("none"),null);port.add("label",new BSimple("a"),null);
+    Map<String,Object> undone=apply(model,cx,preview(model,cx,m("action","update","ord","slot:/Test/Port","properties",m("adapter",value("eth0")))));
+    check(undone.toString().contains("reverted=true"));
+    Map<String,Object> kept=apply(model,cx,preview(model,cx,m("action","update","ord","slot:/Test/Port","properties",m("label",value("b")))));
+    check(!kept.toString().contains("reverted"));
+    System.out.println("PASS: reverted values are reported");
     System.out.println("PASS: protected services, program types, service copies, confirm-required actions, password copies");
     System.out.println("PASS: actual resolver with API doubles: all 15 actions, refs, master gate, deduplication, naming, stale values, redaction, fresh permissions, nested read permissions, scope, service protection, deletion, cycles and move identity");
   }
@@ -194,6 +200,7 @@ class CopyHints {Context cx;boolean keepHandles,swizzleHandles;}
 interface IPropertyValidator {void validateSet(BComplex c,Property p,BValue v,Context cx);}
 class LinkCheck {boolean isValid(){return true;}String getInvalidReason(){return "invalid";}}
 class BLink extends BComplex {static final Type TYPE=new Type("baja:Link");}
+class StubbornComponent extends BComponent {void set(Property p,BValue v,Context cx){if("adapter".equals(p.name)&&cx!=null)return;super.set(p,v,cx);} }
 class BPassword extends BSimple {BPassword(String v){super(v);} }
 class BRelation extends BComplex {static final Type TYPE=new Type("baja:Relation");}
 interface Knob {BComponent getTargetComponent();String getSourceSlotName();String getTargetSlotName();}

@@ -368,7 +368,12 @@ final class BaskStreamModelResolver
           if (!old.equivalent(pt.owner.get(pt.property))) throw error("stale_plan", "Property changed: " + path);
           service.requireModelEditsEnabled();
           pt.owner.set(pt.property, value.newCopy(true), cx);
-          return map("property", path, "value", valueWire(pt.owner.get(pt.property), path, 0, key, cx));
+          BValue now = pt.owner.get(pt.property);
+          Map<String, Object> written = map("property", path, "value", valueWire(now, path, 0, key, cx));
+          // Some components undo a change they cannot act on (a driver that may not open its socket,
+          // for example). Report it rather than letting the plan read as a clean success.
+          if (!value.equivalent(now)) written.put("reverted", Boolean.TRUE);
+          return written;
         });
       }
       steps.add(new BaskStreamModelPlans.Step(map("action", action, "ord", ord(c), "properties", edits), () -> {
@@ -383,7 +388,9 @@ final class BaskStreamModelResolver
                 "code", failure instanceof BaskStreamProtocolException ? ((BaskStreamProtocolException)failure).getCode() : "model_change_failed");
           }
         }
-        return map("ord", ord(c), "properties", results, "snapshot", after(c, cx));
+        Map<String, Object> done = map("ord", ord(c), "properties", results, "snapshot", after(c, cx));
+        for (Object result : results) if (Boolean.TRUE.equals(((Map<?, ?>)result).get("reverted"))) done.put("reverted", Boolean.TRUE);
+        return done;
       }));
     }
 
