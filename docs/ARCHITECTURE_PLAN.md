@@ -1,6 +1,6 @@
 # baskStream architecture plan
 
-Status: Phase 0 done 2026-09-24; Phase 1 done 2026-09-25 (source and static checks; not yet built or run on a station). Later phases are proposals.
+Status: Phase 0 done 2026-09-24. Phase 1 done 2026-09-25 and smoke-tested on a station. Phase 2 done 2026-09-25 in source (type-checked; station test pending). Later phases are proposals.
 
 ## Why
 
@@ -87,6 +87,15 @@ The cost class was left out until Phase 3, where the resource budgets will use i
 - Revalidation also covers alarm and model subscriptions, and drops a subscription when its permission check throws.
 
 Exit: tests with a restricted user show no data from unreadable objects in any response.
+
+**Done 2026-09-25 (source, type-checked against N4.15.1.16 and 4.15.3.28; station test pending):**
+
+- **2a:** `BaskStreamAuthorizer` holds every access check. Related objects are redacted, resolved browse targets are checked, and remote or imported sources are never treated as local (F01, F17).
+- **2b:** protected services; no creating or copying of protected services or `program:` components; admin write to clone anything holding passwords; `confirm_required`.
+- **2c:** revalidation covers alarm and model subscriptions. Points are dropped after two failed checks in a row.
+- **2d:** `reverted: true` when a component undoes an edit. The permission limit is documented, and whether to request `NETWORK_COMMUNICATION` is decision 5.
+- **2e:** history reads use the public `BIHistory` and `HistorySpaceConnection` API. There are no `com.tridium` imports left.
+- `tests/typecheck.py` compiles all sources against an installed SDK, without building the module.
 
 ### Phase 3: event pipeline and resource budgets
 

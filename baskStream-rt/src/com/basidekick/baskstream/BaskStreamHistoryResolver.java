@@ -7,6 +7,7 @@ import java.util.Map;
 
 import javax.baja.history.BHistoryRecord;
 import javax.baja.history.BHistoryConfig;
+import javax.baja.history.BHistoryService;
 import javax.baja.history.BIHistory;
 import javax.baja.history.BTrendRecord;
 import javax.baja.history.HistorySpaceConnection;
@@ -21,8 +22,8 @@ import javax.baja.sys.Clock;
 import javax.baja.sys.Context;
 import javax.baja.sys.Cursor;
 import javax.baja.sys.Property;
+import javax.baja.sys.Sys;
 
-import com.tridium.history.BHistory;
 
 final class BaskStreamHistoryResolver
 {
@@ -90,14 +91,14 @@ final class BaskStreamHistoryResolver
       }
 
       BObject object = target.get();
-      if (!(object instanceof BHistory))
+      if (!(object instanceof BIHistory))
       {
         throw new BaskStreamProtocolException("invalid_point", "Resolved target is not a Niagara history.");
       }
-      ensureDirectHistoryAllowed((BHistory) object);
+      ensureDirectHistoryAllowed((BIHistory) object);
 
       List<Object> histories = new ArrayList<Object>(1);
-      histories.add(describeSingleHistory((BHistory) object, null, context));
+      histories.add(describeSingleHistory((BIHistory) object, null, context));
       return histories;
     }
     catch (BaskStreamProtocolException e)
@@ -128,9 +129,9 @@ final class BaskStreamHistoryResolver
       {
         continue;
       }
-      if (history instanceof BHistory)
+      if (history != null)
       {
-        histories.add(describeSingleHistory((BHistory) history, historyExts[i], context));
+        histories.add(describeSingleHistory(history, historyExts[i], context));
       }
       else
       {
@@ -154,14 +155,14 @@ final class BaskStreamHistoryResolver
       }
 
       BObject object = target.get();
-      if (!(object instanceof BHistory))
+      if (!(object instanceof BIHistory))
       {
         throw new BaskStreamProtocolException("invalid_point", "Resolved target is not a Niagara history.");
       }
-      ensureDirectHistoryAllowed((BHistory) object);
+      ensureDirectHistoryAllowed((BIHistory) object);
 
       List<Object> histories = new ArrayList<Object>(1);
-      histories.add(readSingleHistory((BHistory) object, null, start, end, limit, context));
+      histories.add(readSingleHistory((BIHistory) object, null, start, end, limit, context));
       return histories;
     }
     catch (BaskStreamProtocolException e)
@@ -193,7 +194,7 @@ final class BaskStreamHistoryResolver
     List<Object> histories = new ArrayList<Object>(historyExts.length);
     for (int i = 0; i < historyExts.length; i++)
     {
-      BHistory history = historyExts[i].getHistory() instanceof BHistory ? (BHistory) historyExts[i].getHistory() : null;
+      BIHistory history = historyExts[i].getHistory();
       if (history == null || !authorizer.canReadHistory(history, context))
       {
         continue;
@@ -209,7 +210,7 @@ final class BaskStreamHistoryResolver
     return histories;
   }
 
-  private void ensureDirectHistoryAllowed(BHistory history) throws BaskStreamProtocolException
+  private void ensureDirectHistoryAllowed(BIHistory history) throws BaskStreamProtocolException
   {
     if (BaskStreamAccessPolicy.isDefaultWideOpen(service))
     {
@@ -231,7 +232,7 @@ final class BaskStreamHistoryResolver
         "History source is outside the allowedPathPatterns policy.");
   }
 
-  private Map<String, Object> readSingleHistory(BHistory history, BHistoryExt historyExt, long start, long end, int limit,
+  private Map<String, Object> readSingleHistory(BIHistory history, BHistoryExt historyExt, long start, long end, int limit,
       Context context) throws BaskStreamProtocolException
   {
     Map<String, Object> wire = describeSingleHistory(history, historyExt, context);
@@ -241,10 +242,12 @@ final class BaskStreamHistoryResolver
     BAbsTime endTime = BAbsTime.make(end);
 
     boolean truncated = false;
+    HistorySpaceConnection connection = null;
     Cursor<BHistoryRecord> cursor = null;
     try
     {
-      cursor = history.timeQueryCursor(startTime, endTime, false, context);
+      connection = openConnection(context);
+      cursor = connection.timeQuery(history, startTime, endTime).cursor();
       int count = 0;
       while (cursor.next())
       {
@@ -264,6 +267,10 @@ final class BaskStreamHistoryResolver
       {
         cursor.close();
       }
+      if (connection != null)
+      {
+        connection.close();
+      }
     }
 
     wire.put("records", records);
@@ -274,12 +281,12 @@ final class BaskStreamHistoryResolver
     return wire;
   }
 
-  private Map<String, Object> describeSingleHistory(BHistory history, BHistoryExt historyExt, Context context)
+  private Map<String, Object> describeSingleHistory(BIHistory history, BHistoryExt historyExt, Context context)
   {
     Map<String, Object> wire = new LinkedHashMap<String, Object>();
     wire.put("historyOrd", history.getNavOrd() == null ? history.getOrdInSpace().toString() : history.getNavOrd().toString());
     wire.put("historyId", history.getId() == null ? null : history.getId().toString());
-    wire.put("display", history.getDisplayName(context));
+    wire.put("display", history.getNavDisplayName(context));
     wire.put("recordType", history.getRecordType().toString());
     wire.put("sourceOrd", historyExt == null || historyExt.getSourceOrd() == null ? null : historyExt.getSourceOrd().toString());
     wire.put("extension", historyExt == null ? null : extensionSummary(historyExt, context));
@@ -323,19 +330,19 @@ final class BaskStreamHistoryResolver
     wire.put("config", summary);
   }
 
-  private void appendHistorySummary(Map<String, Object> wire, BHistory history, Context context)
+  private void appendHistorySummary(Map<String, Object> wire, BIHistory history, Context context)
   {
     HistorySpaceConnection connection = null;
     try
     {
-      connection = history.getHistorySpace().getConnection(context);
+      connection = openConnection(context);
+      BAbsTime first = connection.getFirstTimestamp(history);
+      BAbsTime last = connection.getLastTimestamp(history);
+      BHistoryRecord lastRecord = connection.getLastRecord(history);
       wire.put("totalCount", Long.valueOf(connection.getRecordCount(history)));
-      wire.put("firstTimestamp", connection.getFirstTimestamp(history) == null ? null
-          : Long.valueOf(connection.getFirstTimestamp(history).getMillis()));
-      wire.put("lastTimestamp", connection.getLastTimestamp(history) == null ? null
-          : Long.valueOf(connection.getLastTimestamp(history).getMillis()));
-      wire.put("lastRecord", connection.getLastRecord(history) == null ? null
-          : toWire(connection.getLastRecord(history), context));
+      wire.put("firstTimestamp", first == null ? null : Long.valueOf(first.getMillis()));
+      wire.put("lastTimestamp", last == null ? null : Long.valueOf(last.getMillis()));
+      wire.put("lastRecord", lastRecord == null ? null : toWire(lastRecord, context));
     }
     catch (Exception e)
     {
@@ -348,6 +355,13 @@ final class BaskStreamHistoryResolver
         connection.close();
       }
     }
+  }
+
+  /** A connection to the station's history database: the public route to history records. */
+  private static HistorySpaceConnection openConnection(Context context)
+  {
+    BHistoryService historyService = (BHistoryService) Sys.getService(BHistoryService.TYPE);
+    return historyService.getDatabase().getConnection(context);
   }
 
   private Map<String, Object> toWire(BHistoryRecord record, Context context)
