@@ -83,6 +83,20 @@ integrations/grafana/            Grafana integration implementation and product 
 tools/baskstream-test.html       Lower-level standalone test harness
 tools/baskstream-test-snippet.js
                                  Browser-console station-page test snippet
+spec/baskstream-protocol.json    Machine-readable protocol spec: operations, request schemas, errors
+spec/render_error_table.py       Regenerates the error-code table in docs/THIRD_PARTY_API.md
+tests/                           Local regression and contract checks (no Niagara build or station)
+docs/ARCHITECTURE_PLAN.md        Architecture phases and live-test findings
+```
+
+Run the local checks from the repository root:
+
+```bash
+python3 tests/protocol_contract.py
+python3 tests/protocol_regression.py
+python3 tests/transport_regression.py
+python3 tests/model_plan_regression.py
+python3 tests/model_adapter_regression.py
 ```
 
 Build artifacts, generated jars, screenshots, local editor settings, and macOS AppleDouble sidecar files are intentionally ignored.

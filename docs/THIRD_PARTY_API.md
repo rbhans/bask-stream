@@ -71,7 +71,9 @@ Response:
   "id": "caps-1",
   "capabilities": {
     "apiVersion": "1.6",
-    "operations": ["browse", "read", "subscribe", "replace_subscriptions", "write", "read_alarms", "ack_alarm", "clear_alarm", "read_tags", "write_tags", "write_relations"],
+    "operations": ["ping", "capabilities", "browse", "describe", "search", "read", "subscribe", "unsubscribe", "replace_subscriptions", "renew_subscriptions", "release_subscriptions", "subscription_status", "write", "describe_write", "read_history", "describe_history", "read_alarms", "ack_alarm", "ack_alarms", "clear_alarm", "clear_alarms", "subscribe_alarms", "unsubscribe_alarms", "read_schedule", "subscribe_model", "unsubscribe_model", "read_tags", "write_tags", "write_relations", "describe_component_types", "describe_component", "preview_model_changes", "apply_model_changes", "model_plan_status", "cancel_model_plan", "create_components", "update_component_properties", "rename_component", "move_components", "delete_components", "create_hierarchy", "configure_hierarchy"],
+    "writesEnabled": true,
+    "modelEditing": { "enabled": false, "maxChanges": 100, "previewRequired": true, "atomic": false },
     "limits": {
       "maxConnectionsPerUser": 0,
       "maxMessageBytes": 1048576,
@@ -470,6 +472,26 @@ Response:
 
 The older `subscribe` and `unsubscribe` operations remain useful for simple clients and long-lived manual point watches. They are connection-scoped and are removed automatically when the WebSocket closes.
 
+### `subscription_status`
+
+Reports this connection's subscriptions: counts by kind, pending COV work, the limits in force, and a summary of each subscription group. Pass `includePoints: true` to list each group's points.
+
+```json
+{ "op": "subscription_status", "id": "5b", "includePoints": false }
+```
+
+Response:
+
+```json
+{
+  "op": "subscription_status_result",
+  "id": "5b",
+  "session": { "id": "...", "user": "operator", "pointSubscriptions": 42, "directPointSubscriptions": 2, "alarmSubscriptions": 1, "modelSubscriptions": 0, "subscriptionGroups": 1, "pendingCovPoints": 0, "pendingCovSourceEvents": 0 },
+  "limits": { "maxSubscriptionsPerClient": 500, "subscriptionLeaseSec": 300, "covBatchWindowMillis": 100 },
+  "groups": []
+}
+```
+
 ### `write`
 
 Writes to Niagara writable points.
@@ -646,7 +668,7 @@ Acknowledges one or more alarm records by UUID through Niagara `BAlarmService.ac
 }
 ```
 
-Batch form:
+Batch form uses `ack_alarms` with `uuids`:
 
 ```json
 {
@@ -741,6 +763,20 @@ Alarm modes:
 - `both`: push both the changed event and the refreshed snapshot.
 
 For large stations, use `event`, keep a client-side alarm map keyed by `uuid`, and call `read_alarms` only for initial load or resync.
+
+### `unsubscribe_alarms`
+
+Removes alarm subscriptions. With no `source`, `scope`, `limit` or `mode`, it removes every alarm subscription on the connection. With any of those fields, it removes the subscriptions whose filter matches. If `mode` is omitted from a filtered request, matching subscriptions are removed in every mode.
+
+```json
+{ "op": "unsubscribe_alarms", "id": "11", "scope": "all" }
+```
+
+Response (sent only when the request has an `id`):
+
+```json
+{ "op": "alarms_unsubscribed", "id": "11", "remaining": 0 }
+```
 
 ### `subscribe_model` and `unsubscribe_model`
 
@@ -897,6 +933,71 @@ Adds or removes direct relations between components — this is how Haystack ref
 Response `relations_written` echoes per-operation results (including a `removed` count for removals) and the target's post-write relation list.
 
 Tag and relation writes on subscribed model branches surface to other clients as `model_cov` hints (`facets_changed`, `relation_added`, `relation_removed`), so apps that maintain a cached model can refresh affected nodes.
+
+## Error Codes
+
+Failures arrive in two ways. A **request** error fails the whole request with an `error` message carrying `code` and `message`. An **entry** error appears inside a batch result (per point, alarm, tag target and so on) with `ok: false`, while the other entries still succeed. Clients should branch on `code`, never on `message`. This table is generated from `spec/baskstream-protocol.json`.
+
+| Code | Scope | Meaning |
+| --- | --- | --- |
+| `alarm_failed` | request | AlarmService unavailable or alarm database/read failure; also a per-uuid entry for unexpected ack/clear failures. |
+| `auth_required` | request | No authenticated Niagara user at the WebSocket handshake; the socket is closed (1008), no frame is sent. |
+| `bad_reference` | request | Model @ref does not identify an earlier create/clone, or a ref is duplicated. |
+| `bad_request` | request | Malformed request or field (type, range, missing field, MessagePack decoding); also per-item in write/tag results. |
+| `browse_failed` | request | Unexpected failure resolving a browse/describe target. |
+| `children_present` | request | Deleting a component with children requires recursive=true. |
+| `cycle` | request | Cannot move a component into its own subtree. |
+| `forbidden_action` | entry | User cannot invoke the write action slot on the point; also request-level for model invoke without invoke+admin-write. |
+| `forbidden_alarm` | entry | Missing operator write (ack) or admin write (force-clear) on the alarm class. |
+| `forbidden_component` | request | Model target outside allowedPathPatterns, unreadable, or lacking admin write. |
+| `forbidden_point` | request | Target outside allowedPathPatterns or not readable/invokable/admin-writable; also per-item in read/subscribe/write/tag/alarm results. |
+| `frozen_slot` | request | Only dynamic child components/properties can be moved, renamed, deleted or removed. |
+| `group_not_found` | request | Subscription group does not exist. |
+| `history_failed` | request | History lookup/query failed or the point has no readable history extensions. |
+| `idempotency_conflict` | request | Plan already submitted with another key, or the key belongs to another plan. |
+| `illegal_parent` | request | Niagara rejected this parent/child type combination. |
+| `implied_tag` | entry | Tag is implied by a tag dictionary and cannot be removed. |
+| `internal_error` | request | Unhandled server exception while processing the request. |
+| `invalid_action` | request | Model invoke names an action slot that does not exist. |
+| `invalid_alarm` | entry | Alarm record not found or not readable. |
+| `invalid_component` | request | Model ORD does not resolve to a component/struct, or configure_hierarchy target is not hierarchy:Hierarchy. |
+| `invalid_link` | request | Niagara link check failed, or delete_link slot does not hold a link. |
+| `invalid_name` | request | Not a valid Niagara slot name (1-128 chars). |
+| `invalid_point` | request | Blank/unsupported ORD scheme, unresolvable target or wrong target kind; also per-item in read/subscribe/write/tag results. |
+| `invalid_property` | request | Property path does not exist, crosses a scalar, is empty, or addresses a link/relation. |
+| `invalid_slot` | request | Named slot does not exist. |
+| `invalid_type` | request | Unknown, abstract, incompatible, link/relation or unrepresentable type for a model value/component. |
+| `invalid_value` | request | Encoded value was not understood by the type's decoder (would be stored as null). |
+| `model_busy` | request | Another model plan is currently applying. |
+| `model_change_failed` | entry | Non-protocol exception during a model apply step; outcome unknown_or_partial. |
+| `model_edits_disabled` | request | modelEditsEnabled is false on the service; also a step result if flipped mid-apply. |
+| `model_limit` | request | Model size bounds exceeded (slots, branch, snapshot, nesting, preview size, dependencies). |
+| `name_conflict` | request | Slot name already exists (collision=fail) or no suffix could be allocated. |
+| `not_writable` | entry | Target is not a Niagara writable point or its type is unsupported. |
+| `plan_closed` | request | Plan is not in preview state (cannot apply or cancel). |
+| `plan_conflict` | request | Overlapping property or structural edits in one plan; use separate previews. |
+| `plan_dependency` | request | Change depends on a branch moved/renamed/deleted/created earlier in the same plan. |
+| `plan_limit` | request | Plan ledger is full (32 plans). |
+| `plan_mismatch` | request | planHash does not match the stored plan. |
+| `plan_not_found` | request | Plan unknown, expired, or owned by another user. |
+| `protected_component` | request | The baskStream service and its descendants cannot be edited remotely. |
+| `read_failed` | entry | Point snapshot could not be produced or the target is no longer available. |
+| `readonly` | request | Property is read-only. |
+| `relation_failed` | entry | Unexpected failure adding/removing a relation. |
+| `relation_not_found` | entry | No matching direct relation to remove. |
+| `relation_rejected` | entry | Niagara rejected the relation add. |
+| `schedule_failed` | request | Unexpected failure resolving/reading a schedule. |
+| `search_failed` | request | Unexpected failure resolving the search root. |
+| `stale_plan` | request | Principal, target, property, slot or branch changed since preview; also a per-step apply result. |
+| `subscription_limit` | request | maxSubscriptionsPerClient or group limit reached; per-point entry in subscribe/replace_subscriptions. |
+| `tag_failed` | entry | Unexpected failure setting/removing a tag. |
+| `tag_not_found` | entry | No direct tag with this id to remove. |
+| `unknown_type` | request | describe_component_types baseType not found. |
+| `unsupported_action` | entry | Write action unsupported by the point; also request-level for an unknown model action. |
+| `unsupported_op` | request | Operation name is not in the protocol. |
+| `write_cancelled` | entry | Session closed or thread interrupted before the write invocation. |
+| `write_failed` | entry | Unexpected runtime failure writing a point, or enum point without an enum range. |
+| `writes_disabled` | request | Service disabled or writesEnabled is false; also per-item if flipped mid-batch. |
 
 ## Node Metadata
 

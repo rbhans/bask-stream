@@ -1,0 +1,2725 @@
+{
+  "protocol": "baskStream",
+  "apiVersion": "1.6",
+  "encoding": "msgpack",
+  "transport": {
+    "path": "/stream",
+    "health": "/stream/health"
+  },
+  "operations": {
+    "ping": {
+      "summary": "Liveness check.",
+      "gate": "none",
+      "reply": "pong",
+      "request": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "response": {
+        "keys": []
+      }
+    },
+    "capabilities": {
+      "summary": "Server version, operation list, limits, schemas, session counts and policy.",
+      "gate": "none",
+      "reply": "capabilities_result",
+      "request": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "capabilities"
+        ]
+      }
+    },
+    "browse": {
+      "summary": "Return a station tree node (slot:/ or hierarchy:) and children down to depth.",
+      "gate": "none",
+      "reply": "browse_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "base": {
+            "type": "string",
+            "default": "slot:/",
+            "description": "slot:/ or hierarchy: ORD; blank/absent = slot:/ (invalid_point for other schemes)."
+          },
+          "depth": {
+            "type": "number",
+            "default": 1,
+            "minimum": 0,
+            "maximum": 4,
+            "description": "Tree depth; out-of-range values are clamped to 0-4, not rejected."
+          },
+          "metadata": {
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "full",
+                  "none",
+                  "true",
+                  "false",
+                  "include",
+                  "omit"
+                ]
+              },
+              {
+                "type": "boolean"
+              }
+            ],
+            "default": "none",
+            "description": "Metadata mode. Strings are trimmed and case-insensitive (true/include = full, false/omit = none; blank = default); boolean true = full, false = none. Anything else is bad_request."
+          },
+          "includeMetadata": {
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "full",
+                  "none",
+                  "true",
+                  "false",
+                  "include",
+                  "omit"
+                ]
+              },
+              {
+                "type": "boolean"
+              }
+            ],
+            "default": "none",
+            "description": "Alias for 'metadata', read only when the 'metadata' key is absent."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "depth",
+          "metadata",
+          "node"
+        ]
+      }
+    },
+    "describe": {
+      "summary": "Return one node (no children) with metadata by default.",
+      "gate": "none",
+      "reply": "describe_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "ord": {
+            "type": "string",
+            "description": "slot:/ or hierarchy: ORD; blank/absent falls back to base, then slot:/."
+          },
+          "base": {
+            "type": "string",
+            "description": "Fallback when ord is blank/absent."
+          },
+          "metadata": {
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "full",
+                  "none",
+                  "true",
+                  "false",
+                  "include",
+                  "omit"
+                ]
+              },
+              {
+                "type": "boolean"
+              }
+            ],
+            "default": "full",
+            "description": "Metadata mode. Strings are trimmed and case-insensitive (true/include = full, false/omit = none; blank = default); boolean true = full, false = none. Anything else is bad_request."
+          },
+          "includeMetadata": {
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "full",
+                  "none",
+                  "true",
+                  "false",
+                  "include",
+                  "omit"
+                ]
+              },
+              {
+                "type": "boolean"
+              }
+            ],
+            "default": "full",
+            "description": "Alias for 'metadata', read only when the 'metadata' key is absent."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "metadata",
+          "node"
+        ]
+      }
+    },
+    "search": {
+      "summary": "Bounded depth-first search of the tree with text/kind/feature/operation filters.",
+      "gate": "none",
+      "reply": "search_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "base": {
+            "type": "string",
+            "default": "slot:/",
+            "description": "slot:/ or hierarchy: ORD; blank/absent = slot:/."
+          },
+          "depth": {
+            "type": "number",
+            "default": 32,
+            "minimum": 0,
+            "maximum": 64,
+            "description": "Search depth; negative -> 0, capped at 64. Ignored when the maxDepth key is present."
+          },
+          "maxDepth": {
+            "type": "number",
+            "default": 32,
+            "minimum": 0,
+            "maximum": 64,
+            "description": "Alias for depth; wins when present."
+          },
+          "metadata": {
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "full",
+                  "none",
+                  "true",
+                  "false",
+                  "include",
+                  "omit"
+                ]
+              },
+              {
+                "type": "boolean"
+              }
+            ],
+            "default": "none",
+            "description": "Metadata mode. Strings are trimmed and case-insensitive (true/include = full, false/omit = none; blank = default); boolean true = full, false = none. Anything else is bad_request."
+          },
+          "includeMetadata": {
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "full",
+                  "none",
+                  "true",
+                  "false",
+                  "include",
+                  "omit"
+                ]
+              },
+              {
+                "type": "boolean"
+              }
+            ],
+            "default": "none",
+            "description": "Alias for 'metadata', read only when the 'metadata' key is absent."
+          },
+          "query": {
+            "type": "string",
+            "description": "Case-insensitive substring matched against ord, slotPath, name, display, description, typeSpec."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Case-insensitive exact match on node kind."
+          },
+          "features": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Node must have all of these features (case-insensitive)."
+          },
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Node must support all of these operations (case-insensitive)."
+          },
+          "writable": {
+            "type": "boolean",
+            "description": "Match only nodes with this writable value."
+          },
+          "limit": {
+            "type": "number",
+            "default": 500,
+            "minimum": 1,
+            "maximum": 5000,
+            "description": "Max matches; <=0 = default, capped at 5000."
+          },
+          "maxVisited": {
+            "type": "number",
+            "default": 50000,
+            "minimum": 1,
+            "maximum": 200000,
+            "description": "Max nodes visited; <=0 = default, capped at 200000."
+          },
+          "timeoutMillis": {
+            "type": "number",
+            "default": 5000,
+            "minimum": 1,
+            "maximum": 30000,
+            "description": "Search time budget; <=0 = default, capped at 30000."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "result"
+        ]
+      }
+    },
+    "read": {
+      "summary": "Batch point snapshot read; per-point error entries for failures.",
+      "gate": "none",
+      "reply": "read_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "slot:/ point ORDs. Max count is the service maxPointSnapshotPoints (capabilities.limits.maxPointSnapshotPoints); more is bad_request."
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "point",
+                "ok",
+                "display",
+                "type",
+                "valueType",
+                "value",
+                "displayValue",
+                "status",
+                "timestamp",
+                "facets",
+                "enumOrdinal",
+                "enumTag",
+                "enumDisplay",
+                "enumOptions"
+              ],
+              "description": "Snapshot field."
+            },
+            "description": "Trim successful snapshots to these fields (trimmed; blank or unsupported -> bad_request). Absent = all fields."
+          }
+        },
+        "required": [
+          "points"
+        ]
+      },
+      "response": {
+        "keys": [
+          "points"
+        ]
+      }
+    },
+    "subscribe": {
+      "summary": "Add connection-scoped direct point subscriptions and return current snapshots; changes arrive as cov.",
+      "gate": "none",
+      "reply": "subscribed",
+      "request": {
+        "type": "object",
+        "properties": {
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "description": "slot:/ point ORDs."
+          }
+        },
+        "required": [
+          "points"
+        ]
+      },
+      "response": {
+        "keys": [
+          "points"
+        ]
+      }
+    },
+    "unsubscribe": {
+      "summary": "Remove direct point subscriptions (points still referenced by a group stay live). No reply on success.",
+      "gate": "none",
+      "reply": null,
+      "request": {
+        "type": "object",
+        "properties": {
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "slot:/ point ORDs."
+          }
+        },
+        "required": [
+          "points"
+        ]
+      },
+      "response": {
+        "keys": []
+      }
+    },
+    "replace_subscriptions": {
+      "summary": "Set a named view group's point list, diffing server-side; empty points releases the group.",
+      "gate": "none",
+      "reply": "subscriptions_replaced",
+      "request": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Subscription group name (trimmed, non-blank)."
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "description": "Desired slot:/ point ORDs (duplicates collapsed)."
+          },
+          "leaseSec": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 86400,
+            "description": "Group lease in seconds (truncated to int); 0 = no expiry. Default is the service subscriptionLeaseSec."
+          }
+        },
+        "required": [
+          "group",
+          "points"
+        ]
+      },
+      "response": {
+        "keys": [
+          "group",
+          "points",
+          "added",
+          "removed",
+          "leaseSec",
+          "leaseExpiresAt",
+          "pointSubscriptions",
+          "subscriptionGroups"
+        ]
+      }
+    },
+    "renew_subscriptions": {
+      "summary": "Reset a group's lease.",
+      "gate": "none",
+      "reply": "subscriptions_renewed",
+      "request": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Subscription group name (trimmed, non-blank)."
+          },
+          "leaseSec": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 86400,
+            "description": "Group lease in seconds (truncated to int); 0 = no expiry. Default is the service subscriptionLeaseSec."
+          }
+        },
+        "required": [
+          "group"
+        ]
+      },
+      "response": {
+        "keys": [
+          "group",
+          "pointCount",
+          "leaseSec",
+          "leaseExpiresAt"
+        ]
+      }
+    },
+    "release_subscriptions": {
+      "summary": "Drop a subscription group and release its unreferenced points.",
+      "gate": "none",
+      "reply": "subscriptions_released",
+      "request": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Subscription group name (trimmed, non-blank)."
+          }
+        },
+        "required": [
+          "group"
+        ]
+      },
+      "response": {
+        "keys": [
+          "group",
+          "removed",
+          "pointSubscriptions",
+          "subscriptionGroups"
+        ]
+      }
+    },
+    "subscription_status": {
+      "summary": "Session subscription counts, limits and group summaries.",
+      "gate": "none",
+      "reply": "subscription_status_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "includePoints": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include each group's point list (non-boolean -> bad_request)."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "session",
+          "limits",
+          "groups"
+        ]
+      }
+    },
+    "write": {
+      "summary": "Invoke writable-point actions (set/override/auto/emergency); per-point results after the settle delay.",
+      "gate": "writes",
+      "reply": "write_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "point": {
+                  "type": "string",
+                  "description": "slot:/ ORD of a Niagara writable point."
+                },
+                "ord": {
+                  "type": "string",
+                  "description": "Alias for point, used when point is absent or blank."
+                },
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "set",
+                    "override",
+                    "auto",
+                    "emergency_override",
+                    "emergency_auto"
+                  ],
+                  "default": "set",
+                  "description": "Write action. Trimmed, lowercased and '-' mapped to '_' before matching; other values give a per-point unsupported_action. set = fallback; override = level 8 (optional duration); auto = release level 8; emergency_override = level 1; emergency_auto = release level 1."
+                },
+                "value": {
+                  "oneOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ],
+                  "description": "Required except for auto/emergency_auto. Numeric points: number or numeric string. Boolean points: boolean or true/false/active/inactive/on/off/1/0 string. String points: any value (stringified). Enum points: ordinal number, or tag/display/ordinal string."
+                },
+                "durationMillis": {
+                  "type": "number",
+                  "description": "Override duration in ms (checked first)."
+                },
+                "durationMs": {
+                  "type": "number",
+                  "description": "Override duration in ms (used when durationMillis is absent)."
+                },
+                "durationSec": {
+                  "type": "number",
+                  "description": "Override duration in seconds (used when the ms fields are absent)."
+                },
+                "duration": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "description": "Niagara relative-time string, or number of ms; used last."
+                }
+              },
+              "required": []
+            },
+            "maxItems": 1000,
+            "description": "Batch of write objects (non-objects -> bad_request). When absent, the request itself is the single write spec."
+          },
+          "point": {
+            "type": "string",
+            "description": "slot:/ ORD of a Niagara writable point."
+          },
+          "ord": {
+            "type": "string",
+            "description": "Alias for point, used when point is absent or blank."
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "set",
+              "override",
+              "auto",
+              "emergency_override",
+              "emergency_auto"
+            ],
+            "default": "set",
+            "description": "Write action. Trimmed, lowercased and '-' mapped to '_' before matching; other values give a per-point unsupported_action. set = fallback; override = level 8 (optional duration); auto = release level 8; emergency_override = level 1; emergency_auto = release level 1."
+          },
+          "value": {
+            "oneOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              }
+            ],
+            "description": "Required except for auto/emergency_auto. Numeric points: number or numeric string. Boolean points: boolean or true/false/active/inactive/on/off/1/0 string. String points: any value (stringified). Enum points: ordinal number, or tag/display/ordinal string."
+          },
+          "durationMillis": {
+            "type": "number",
+            "description": "Override duration in ms (checked first)."
+          },
+          "durationMs": {
+            "type": "number",
+            "description": "Override duration in ms (used when durationMillis is absent)."
+          },
+          "durationSec": {
+            "type": "number",
+            "description": "Override duration in seconds (used when the ms fields are absent)."
+          },
+          "duration": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "description": "Niagara relative-time string, or number of ms; used last."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "points"
+        ]
+      }
+    },
+    "describe_write": {
+      "summary": "Describe write capabilities, active level and priority array for points.",
+      "gate": "none",
+      "reply": "write_description",
+      "request": {
+        "type": "object",
+        "properties": {
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "description": "slot:/ point ORDs; used when this is an array."
+          },
+          "point": {
+            "type": "string",
+            "description": "Single point ORD when points is not an array."
+          },
+          "ord": {
+            "type": "string",
+            "description": "Alias for point."
+          }
+        },
+        "required": [],
+        "anyOf": [
+          {
+            "required": [
+              "points"
+            ]
+          },
+          {
+            "required": [
+              "point"
+            ]
+          },
+          {
+            "required": [
+              "ord"
+            ]
+          }
+        ]
+      },
+      "response": {
+        "keys": [
+          "points"
+        ]
+      }
+    },
+    "read_history": {
+      "summary": "Read history records for a point's history extensions or a history: ORD.",
+      "gate": "none",
+      "reply": "history_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "ord": {
+            "type": "string",
+            "minLength": 1,
+            "description": "slot:/ point ORD or history: ORD."
+          },
+          "start": {
+            "type": "number",
+            "description": "Epoch ms; default end - 86400000 (24 h). Must be <= end."
+          },
+          "end": {
+            "type": "number",
+            "description": "Epoch ms; default now."
+          },
+          "limit": {
+            "type": "number",
+            "default": 500,
+            "minimum": 1,
+            "maximum": 5000,
+            "description": "Max records per history; <=0 = default, capped at 5000."
+          }
+        },
+        "required": [
+          "ord"
+        ]
+      },
+      "response": {
+        "keys": [
+          "history"
+        ]
+      }
+    },
+    "describe_history": {
+      "summary": "Describe histories attached to a point or a history: ORD without records.",
+      "gate": "none",
+      "reply": "history_description",
+      "request": {
+        "type": "object",
+        "properties": {
+          "ord": {
+            "type": "string",
+            "description": "slot:/ point ORD or history: ORD."
+          },
+          "source": {
+            "type": "string",
+            "description": "Fallback when ord is blank/absent."
+          }
+        },
+        "required": [],
+        "anyOf": [
+          {
+            "required": [
+              "ord"
+            ]
+          },
+          {
+            "required": [
+              "source"
+            ]
+          }
+        ]
+      },
+      "response": {
+        "keys": [
+          "history"
+        ]
+      }
+    },
+    "read_alarms": {
+      "summary": "Bounded alarm snapshot filtered by alarm-class read permission.",
+      "gate": "none",
+      "reply": "alarms_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "slot:/ ORD source filter (invalid_point otherwise). Required in practice when allowedPathPatterns is not wide open (forbidden_point)."
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "open",
+              "ack_pending",
+              "all"
+            ],
+            "default": "open",
+            "description": "Alarm set (trimmed, case-insensitive)."
+          },
+          "limit": {
+            "type": "number",
+            "default": 500,
+            "minimum": 1,
+            "maximum": 5000,
+            "description": "Max records; <=0 uses the default, values above 5000 are capped."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "alarms"
+        ]
+      }
+    },
+    "ack_alarm": {
+      "summary": "Acknowledge alarm records (operator write on the alarm class); per-uuid results.",
+      "gate": "writes",
+      "reply": "alarm_action_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "uuid": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Alarm UUID strings."
+              }
+            ],
+            "description": "Alarm UUID string or array of UUID strings (non-blank)."
+          },
+          "uuids": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Alarm UUID strings."
+              }
+            ],
+            "description": "Same as uuid; takes precedence when the key is present."
+          },
+          "source": {
+            "type": "string",
+            "description": "Optional slot:/ ORD the alarm source must match (forbidden_point entry otherwise)."
+          }
+        },
+        "required": [],
+        "anyOf": [
+          {
+            "required": [
+              "uuid"
+            ]
+          },
+          {
+            "required": [
+              "uuids"
+            ]
+          }
+        ]
+      },
+      "response": {
+        "keys": [
+          "alarms"
+        ]
+      }
+    },
+    "ack_alarms": {
+      "summary": "Alias of ack_alarm (batch form).",
+      "gate": "writes",
+      "reply": "alarm_action_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "uuid": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Alarm UUID strings."
+              }
+            ],
+            "description": "Alarm UUID string or array of UUID strings (non-blank)."
+          },
+          "uuids": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Alarm UUID strings."
+              }
+            ],
+            "description": "Same as uuid; takes precedence when the key is present."
+          },
+          "source": {
+            "type": "string",
+            "description": "Optional slot:/ ORD the alarm source must match (forbidden_point entry otherwise)."
+          }
+        },
+        "required": [],
+        "anyOf": [
+          {
+            "required": [
+              "uuid"
+            ]
+          },
+          {
+            "required": [
+              "uuids"
+            ]
+          }
+        ]
+      },
+      "response": {
+        "keys": [
+          "alarms"
+        ]
+      }
+    },
+    "clear_alarm": {
+      "summary": "Force-clear alarm records (admin write on the alarm class); per-uuid results.",
+      "gate": "writes",
+      "reply": "alarm_action_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "uuid": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Alarm UUID strings."
+              }
+            ],
+            "description": "Alarm UUID string or array of UUID strings (non-blank)."
+          },
+          "uuids": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Alarm UUID strings."
+              }
+            ],
+            "description": "Same as uuid; takes precedence when the key is present."
+          },
+          "source": {
+            "type": "string",
+            "description": "Optional slot:/ ORD the alarm source must match (forbidden_point entry otherwise)."
+          }
+        },
+        "required": [],
+        "anyOf": [
+          {
+            "required": [
+              "uuid"
+            ]
+          },
+          {
+            "required": [
+              "uuids"
+            ]
+          }
+        ]
+      },
+      "response": {
+        "keys": [
+          "alarms"
+        ]
+      }
+    },
+    "clear_alarms": {
+      "summary": "Alias of clear_alarm (batch form).",
+      "gate": "writes",
+      "reply": "alarm_action_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "uuid": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Alarm UUID strings."
+              }
+            ],
+            "description": "Alarm UUID string or array of UUID strings (non-blank)."
+          },
+          "uuids": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Alarm UUID strings."
+              }
+            ],
+            "description": "Same as uuid; takes precedence when the key is present."
+          },
+          "source": {
+            "type": "string",
+            "description": "Optional slot:/ ORD the alarm source must match (forbidden_point entry otherwise)."
+          }
+        },
+        "required": [],
+        "anyOf": [
+          {
+            "required": [
+              "uuid"
+            ]
+          },
+          {
+            "required": [
+              "uuids"
+            ]
+          }
+        ]
+      },
+      "response": {
+        "keys": [
+          "alarms"
+        ]
+      }
+    },
+    "subscribe_alarms": {
+      "summary": "Subscribe to live alarm events (alarm_cov) and return the initial snapshot.",
+      "gate": "none",
+      "reply": "alarms_subscribed",
+      "request": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "slot:/ ORD source filter (invalid_point otherwise). Required in practice when allowedPathPatterns is not wide open (forbidden_point)."
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "open",
+              "ack_pending",
+              "all"
+            ],
+            "default": "open",
+            "description": "Alarm set (trimmed, case-insensitive)."
+          },
+          "limit": {
+            "type": "number",
+            "default": 500,
+            "minimum": 1,
+            "maximum": 5000,
+            "description": "Max records; <=0 uses the default, values above 5000 are capped."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "event",
+              "snapshot",
+              "both"
+            ],
+            "default": "event",
+            "description": "Push mode (trimmed, case-insensitive, '-' -> '_')."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "mode",
+          "alarms"
+        ]
+      }
+    },
+    "unsubscribe_alarms": {
+      "summary": "Remove alarm subscriptions: none of source/scope/limit/mode present = all; no mode = all modes of that filter. Replies only when id is given.",
+      "gate": "none",
+      "reply": "alarms_unsubscribed",
+      "request": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "slot:/ ORD source filter (invalid_point otherwise). Required in practice when allowedPathPatterns is not wide open (forbidden_point)."
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "open",
+              "ack_pending",
+              "all"
+            ],
+            "default": "open",
+            "description": "Alarm set (trimmed, case-insensitive)."
+          },
+          "limit": {
+            "type": "number",
+            "default": 500,
+            "minimum": 1,
+            "maximum": 5000,
+            "description": "Max records; <=0 uses the default, values above 5000 are capped."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "event",
+              "snapshot",
+              "both"
+            ],
+            "default": "event",
+            "description": "When absent/blank, removes every mode for the filter."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "remaining"
+        ]
+      }
+    },
+    "read_schedule": {
+      "summary": "Read a schedule's effective value, next event and tree at a time.",
+      "gate": "none",
+      "reply": "schedule_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "ord": {
+            "type": "string",
+            "description": "slot:/ schedule ORD."
+          },
+          "source": {
+            "type": "string",
+            "description": "Fallback when ord is blank/absent."
+          },
+          "at": {
+            "type": "number",
+            "description": "Epoch ms evaluation time; default now."
+          }
+        },
+        "required": [],
+        "anyOf": [
+          {
+            "required": [
+              "ord"
+            ]
+          },
+          {
+            "required": [
+              "source"
+            ]
+          }
+        ]
+      },
+      "response": {
+        "keys": [
+          "schedule"
+        ]
+      }
+    },
+    "subscribe_model": {
+      "summary": "Subscribe to structural component events (model_cov hints) for branches down to depth.",
+      "gate": "none",
+      "reply": "model_subscribed",
+      "request": {
+        "type": "object",
+        "properties": {
+          "base": {
+            "type": "string",
+            "default": "slot:/",
+            "description": "slot:/ component ORD; default slot:/ when neither base nor a non-empty bases is given."
+          },
+          "bases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "description": "slot:/ component ORDs; takes precedence over base when non-empty."
+          },
+          "depth": {
+            "type": "number",
+            "default": 1,
+            "minimum": 0,
+            "maximum": 4,
+            "description": "Tree depth; out-of-range values are clamped to 0-4, not rejected."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "bases",
+          "depth",
+          "added",
+          "count",
+          "mode",
+          "note"
+        ]
+      }
+    },
+    "unsubscribe_model": {
+      "summary": "Remove model subscriptions for branches, or all when neither base nor bases is present. Replies only when id is given.",
+      "gate": "none",
+      "reply": "model_unsubscribed",
+      "request": {
+        "type": "object",
+        "properties": {
+          "base": {
+            "type": "string",
+            "description": "slot:/ component ORD whose branch is unsubscribed."
+          },
+          "bases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "description": "slot:/ component ORDs; takes precedence over base when non-empty."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "count"
+        ]
+      }
+    },
+    "read_tags": {
+      "summary": "Read direct and implied tags (and relations) of components.",
+      "gate": "none",
+      "reply": "tags_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "ords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "description": "slot:/ component ORDs; used when this is an array."
+          },
+          "ord": {
+            "type": "string",
+            "description": "Single ORD when ords is not an array."
+          },
+          "dictionary": {
+            "type": "string",
+            "description": "Only tags/relations in this dictionary (trailing ':' ignored)."
+          },
+          "includeRelations": {
+            "type": "boolean",
+            "default": true,
+            "description": "Only literal false omits relations."
+          }
+        },
+        "required": [],
+        "anyOf": [
+          {
+            "required": [
+              "ords"
+            ]
+          },
+          {
+            "required": [
+              "ord"
+            ]
+          }
+        ]
+      },
+      "response": {
+        "keys": [
+          "targets"
+        ]
+      }
+    },
+    "write_tags": {
+      "summary": "Set/remove direct tags on components; per-target and per-op results.",
+      "gate": "writes",
+      "reply": "tags_written",
+      "request": {
+        "type": "object",
+        "properties": {
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ord": {
+                  "type": "string",
+                  "description": "slot:/ target component ORD (admin write required)."
+                },
+                "point": {
+                  "type": "string",
+                  "description": "Alias for ord when ord is blank/absent."
+                },
+                "set": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "Qualified tag name, e.g. hs:site (required via id or name)."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "Alias for id when id is absent or blank."
+                      },
+                      "value": {
+                        "type": [
+                          "null",
+                          "boolean",
+                          "number",
+                          "string"
+                        ],
+                        "description": "Absent/null = marker. Without valueType: boolean -> Boolean, number -> Double, string -> String."
+                      },
+                      "valueType": {
+                        "type": "string",
+                        "enum": [
+                          "marker",
+                          "string",
+                          "boolean",
+                          "bool",
+                          "double",
+                          "number",
+                          "long",
+                          "int",
+                          "integer"
+                        ],
+                        "description": "Force the tag value type (case-insensitive)."
+                      }
+                    },
+                    "required": []
+                  },
+                  "description": "Tags to add/update."
+                },
+                "remove": {
+                  "type": "array",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "Qualified tag name."
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "Alias for id."
+                          }
+                        },
+                        "required": []
+                      }
+                    ],
+                    "description": "Qualified tag name, or an object with id/name."
+                  },
+                  "description": "Direct tags to remove. set + remove must total 1-100 per target."
+                }
+              },
+              "required": []
+            },
+            "maxItems": 100,
+            "description": "Batch of target objects. When absent, the request itself is the single target."
+          },
+          "ord": {
+            "type": "string",
+            "description": "slot:/ target component ORD (admin write required)."
+          },
+          "point": {
+            "type": "string",
+            "description": "Alias for ord when ord is blank/absent."
+          },
+          "set": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Qualified tag name, e.g. hs:site (required via id or name)."
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Alias for id when id is absent or blank."
+                },
+                "value": {
+                  "type": [
+                    "null",
+                    "boolean",
+                    "number",
+                    "string"
+                  ],
+                  "description": "Absent/null = marker. Without valueType: boolean -> Boolean, number -> Double, string -> String."
+                },
+                "valueType": {
+                  "type": "string",
+                  "enum": [
+                    "marker",
+                    "string",
+                    "boolean",
+                    "bool",
+                    "double",
+                    "number",
+                    "long",
+                    "int",
+                    "integer"
+                  ],
+                  "description": "Force the tag value type (case-insensitive)."
+                }
+              },
+              "required": []
+            },
+            "description": "Tags to add/update."
+          },
+          "remove": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "Qualified tag name."
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "Alias for id."
+                    }
+                  },
+                  "required": []
+                }
+              ],
+              "description": "Qualified tag name, or an object with id/name."
+            },
+            "description": "Direct tags to remove. set + remove must total 1-100 per target."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "targets"
+        ]
+      }
+    },
+    "write_relations": {
+      "summary": "Add/remove direct relations on components; per-target and per-op results.",
+      "gate": "writes",
+      "reply": "relations_written",
+      "request": {
+        "type": "object",
+        "properties": {
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ord": {
+                  "type": "string",
+                  "description": "slot:/ target component ORD (admin write required)."
+                },
+                "point": {
+                  "type": "string",
+                  "description": "Alias for ord when ord is blank/absent."
+                },
+                "add": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "Qualified relation name."
+                      },
+                      "endpoint": {
+                        "type": "string",
+                        "description": "slot:/ ORD of the readable endpoint component."
+                      },
+                      "inbound": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "true reverses the relation direction."
+                      }
+                    },
+                    "required": []
+                  },
+                  "description": "Relations to add."
+                },
+                "remove": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "Qualified relation name."
+                      },
+                      "endpoint": {
+                        "type": "string",
+                        "description": "Optional endpoint ORD filter."
+                      },
+                      "direction": {
+                        "type": "string",
+                        "enum": [
+                          "in",
+                          "inbound",
+                          "out",
+                          "outbound"
+                        ],
+                        "description": "Optional direction filter (case-insensitive)."
+                      }
+                    },
+                    "required": []
+                  },
+                  "description": "Direct relations to remove. add + remove must total 1-100 per target."
+                }
+              },
+              "required": []
+            },
+            "maxItems": 100,
+            "description": "Batch of target objects. When absent, the request itself is the single target."
+          },
+          "ord": {
+            "type": "string",
+            "description": "slot:/ target component ORD (admin write required)."
+          },
+          "point": {
+            "type": "string",
+            "description": "Alias for ord when ord is blank/absent."
+          },
+          "add": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Qualified relation name."
+                },
+                "endpoint": {
+                  "type": "string",
+                  "description": "slot:/ ORD of the readable endpoint component."
+                },
+                "inbound": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "true reverses the relation direction."
+                }
+              },
+              "required": []
+            },
+            "description": "Relations to add."
+          },
+          "remove": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Qualified relation name."
+                },
+                "endpoint": {
+                  "type": "string",
+                  "description": "Optional endpoint ORD filter."
+                },
+                "direction": {
+                  "type": "string",
+                  "enum": [
+                    "in",
+                    "inbound",
+                    "out",
+                    "outbound"
+                  ],
+                  "description": "Optional direction filter (case-insensitive)."
+                }
+              },
+              "required": []
+            },
+            "description": "Direct relations to remove. add + remove must total 1-100 per target."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "targets"
+        ]
+      }
+    },
+    "describe_component_types": {
+      "summary": "Describe one type (with slots) by typeSpec, or page installed types under a base type.",
+      "gate": "none",
+      "reply": "model_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "typeSpec": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Specific type to describe; other fields are then ignored."
+          },
+          "module": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Only types from this module."
+          },
+          "baseType": {
+            "type": "string",
+            "minLength": 1,
+            "default": "baja:Component",
+            "description": "Base type to list subtypes of (unknown_type if not found)."
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 1000000,
+            "description": "Page offset."
+          },
+          "limit": {
+            "type": "integer",
+            "default": 100,
+            "minimum": 1,
+            "maximum": 500,
+            "description": "Page size."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "operation",
+          "result"
+        ]
+      }
+    },
+    "describe_component": {
+      "summary": "Describe a component's slots, typed values, flags, facets, actions and known references.",
+      "gate": "none",
+      "reply": "model_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "ord": {
+            "type": "string",
+            "minLength": 1,
+            "description": "slot:/ ORD inside allowedPathPatterns."
+          }
+        },
+        "required": [
+          "ord"
+        ]
+      },
+      "response": {
+        "keys": [
+          "operation",
+          "result"
+        ]
+      }
+    },
+    "preview_model_changes": {
+      "summary": "Ungated: validate 1-100 ordered changes and store a plan (id, hash, diff, expiry); no station edits.",
+      "gate": "none",
+      "reply": "model_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One ordered change. Fields per action (see docs/MODEL_EDITING_API.md 'Change actions'): create: parent, name, typeSpec [ref, properties, flags, facets, collision]; clone: source, parent, name [ref, properties, flags, facets, collision]; update: ord, properties (1-100); rename: ord [name, collision]; move: ord, parent [name, collision]; delete: ord [recursive]; create_hierarchy: parent, name [ref, properties, flags, facets, collision] (typeSpec fixed to hierarchy:Hierarchy); configure_hierarchy: ord of a hierarchy:Hierarchy, properties; add_slot: ord, slot, value (typed) [flags, facets]; remove_slot: ord, slot; set_slot_metadata: ord, slot [flags, facets]; reorder: ord, slots (every dynamic property once); create_link: source, sourceSlot, target, targetSlot, name [collision]; delete_link: ord, slot; invoke: ord, slot [parameter (typed)]. Missing required per-action fields -> bad_request.",
+              "properties": {
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "create",
+                    "update",
+                    "rename",
+                    "move",
+                    "delete",
+                    "clone",
+                    "create_hierarchy",
+                    "configure_hierarchy",
+                    "add_slot",
+                    "remove_slot",
+                    "set_slot_metadata",
+                    "reorder",
+                    "create_link",
+                    "delete_link",
+                    "invoke"
+                  ],
+                  "description": "Change action."
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Ordered changes; see docs/MODEL_EDITING_API.md."
+          }
+        },
+        "required": [
+          "changes"
+        ]
+      },
+      "response": {
+        "keys": [
+          "operation",
+          "result"
+        ]
+      }
+    },
+    "apply_model_changes": {
+      "summary": "Apply a previewed plan once after revalidation (needs writesEnabled and modelEditsEnabled).",
+      "gate": "modelEdits",
+      "reply": "model_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "planId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Plan id from the preview result."
+          },
+          "planHash": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Plan hash from the preview result (plan_mismatch otherwise)."
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Client key; resubmitting the same plan+key returns the recorded outcome."
+          }
+        },
+        "required": [
+          "planId",
+          "planHash",
+          "idempotencyKey"
+        ]
+      },
+      "response": {
+        "keys": [
+          "operation",
+          "result"
+        ]
+      }
+    },
+    "model_plan_status": {
+      "summary": "Retrieve the caller's retained plan preview or outcome.",
+      "gate": "none",
+      "reply": "model_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "planId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Plan id."
+          }
+        },
+        "required": [
+          "planId"
+        ]
+      },
+      "response": {
+        "keys": [
+          "operation",
+          "result"
+        ]
+      }
+    },
+    "cancel_model_plan": {
+      "summary": "Discard an unapplied preview (does not undo writes).",
+      "gate": "none",
+      "reply": "model_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "planId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Plan id."
+          }
+        },
+        "required": [
+          "planId"
+        ]
+      },
+      "response": {
+        "keys": [
+          "operation",
+          "result"
+        ]
+      }
+    },
+    "create_components": {
+      "summary": "Ungated preview: compiles to 'create' changes and returns a plan; apply with apply_model_changes.",
+      "gate": "none",
+      "reply": "model_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Change objects using the 'create' action fields; any 'action' is overwritten with 'create' and op/id are dropped."
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Batch form. Must be an array of objects (bad_request otherwise). When absent, the request's own fields form a single change."
+          },
+          "parent": {
+            "type": "string",
+            "minLength": 1,
+            "description": "slot:/ ORD (or @ref) of the parent/destination component."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-zA-Z_$][a-zA-Z0-9_$]*$",
+            "maxLength": 128,
+            "description": "New slot name (escaped Niagara slot name, 1-128 chars; invalid_name otherwise)."
+          },
+          "typeSpec": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Concrete installed component type spec (invalid_type for abstract/interface/non-component)."
+          },
+          "ref": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-zA-Z_$][a-zA-Z0-9_$]*$",
+            "maxLength": 128,
+            "description": "Plan-local identifier for this created component; later changes may use '@<ref>'. Must be a valid slot name; duplicate refs are bad_reference."
+          },
+          "properties": {
+            "type": "object",
+            "description": "Property path (e.g. 'a/b', max 16 segments) -> typed value.",
+            "additionalProperties": {
+              "type": "object",
+              "description": "Typed Baja value: {typeSpec?, encoded} for simple types or {typeSpec?, properties:{path: typedValue}} for complex types. Exactly one of encoded/properties; no other keys (bad_request). typeSpec may be omitted when the declared property type is concrete. Nesting limited to 16 levels (model_limit).",
+              "properties": {
+                "typeSpec": {
+                  "type": "string",
+                  "description": "Concrete Niagara type spec, e.g. baja:Boolean."
+                },
+                "encoded": {
+                  "type": "string",
+                  "description": "Niagara encoded text for a simple value."
+                },
+                "properties": {
+                  "type": "object",
+                  "description": "Nested property path -> typed value."
+                }
+              },
+              "additionalProperties": false,
+              "oneOf": [
+                {
+                  "required": [
+                    "encoded"
+                  ]
+                },
+                {
+                  "required": [
+                    "properties"
+                  ]
+                }
+              ]
+            }
+          },
+          "flags": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 2147483647,
+            "description": "Niagara slot flags bitmask."
+          },
+          "facets": {
+            "type": "string",
+            "description": "Niagara encoded BFacets string (value is stringified)."
+          },
+          "collision": {
+            "type": "string",
+            "enum": [
+              "fail",
+              "suffix"
+            ],
+            "description": "Name collision policy. Absent behaves as 'fail' (name_conflict); 'suffix' picks Name2, Name3, ... at preview."
+          }
+        },
+        "required": [],
+        "anyOf": [
+          {
+            "required": [
+              "changes"
+            ]
+          },
+          {
+            "required": [
+              "parent",
+              "name",
+              "typeSpec"
+            ]
+          }
+        ]
+      },
+      "response": {
+        "keys": [
+          "operation",
+          "result"
+        ]
+      }
+    },
+    "update_component_properties": {
+      "summary": "Ungated preview: compiles to 'update' changes and returns a plan; apply with apply_model_changes.",
+      "gate": "none",
+      "reply": "model_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Change objects using the 'update' action fields; any 'action' is overwritten with 'update' and op/id are dropped."
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Batch form. Must be an array of objects (bad_request otherwise). When absent, the request's own fields form a single change."
+          },
+          "ord": {
+            "type": "string",
+            "minLength": 1,
+            "description": "slot:/ ORD of the target component (or @ref of an earlier create/clone in the same plan). Must be inside allowedPathPatterns and admin-writable."
+          },
+          "properties": {
+            "type": "object",
+            "description": "Property path (e.g. 'a/b', max 16 segments) -> typed value.",
+            "additionalProperties": {
+              "type": "object",
+              "description": "Typed Baja value: {typeSpec?, encoded} for simple types or {typeSpec?, properties:{path: typedValue}} for complex types. Exactly one of encoded/properties; no other keys (bad_request). typeSpec may be omitted when the declared property type is concrete. Nesting limited to 16 levels (model_limit).",
+              "properties": {
+                "typeSpec": {
+                  "type": "string",
+                  "description": "Concrete Niagara type spec, e.g. baja:Boolean."
+                },
+                "encoded": {
+                  "type": "string",
+                  "description": "Niagara encoded text for a simple value."
+                },
+                "properties": {
+                  "type": "object",
+                  "description": "Nested property path -> typed value."
+                }
+              },
+              "additionalProperties": false,
+              "oneOf": [
+                {
+                  "required": [
+                    "encoded"
+                  ]
+                },
+                {
+                  "required": [
+                    "properties"
+                  ]
+                }
+              ]
+            },
+            "minProperties": 1,
+            "maxProperties": 100
+          }
+        },
+        "required": [],
+        "anyOf": [
+          {
+            "required": [
+              "changes"
+            ]
+          },
+          {
+            "required": [
+              "ord",
+              "properties"
+            ]
+          }
+        ]
+      },
+      "response": {
+        "keys": [
+          "operation",
+          "result"
+        ]
+      }
+    },
+    "rename_component": {
+      "summary": "Ungated preview: compiles to 'rename' changes and returns a plan; apply with apply_model_changes.",
+      "gate": "none",
+      "reply": "model_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Change objects using the 'rename' action fields; any 'action' is overwritten with 'rename' and op/id are dropped."
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Batch form. Must be an array of objects (bad_request otherwise). When absent, the request's own fields form a single change."
+          },
+          "ord": {
+            "type": "string",
+            "minLength": 1,
+            "description": "slot:/ ORD of the target component (or @ref of an earlier create/clone in the same plan). Must be inside allowedPathPatterns and admin-writable."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-zA-Z_$][a-zA-Z0-9_$]*$",
+            "maxLength": 128,
+            "description": "New slot name. Absent reuses the current name, which is a name_conflict unless collision is 'suffix'."
+          },
+          "collision": {
+            "type": "string",
+            "enum": [
+              "fail",
+              "suffix"
+            ],
+            "description": "Name collision policy. Absent behaves as 'fail' (name_conflict); 'suffix' picks Name2, Name3, ... at preview."
+          }
+        },
+        "required": [],
+        "anyOf": [
+          {
+            "required": [
+              "changes"
+            ]
+          },
+          {
+            "required": [
+              "ord"
+            ]
+          }
+        ]
+      },
+      "response": {
+        "keys": [
+          "operation",
+          "result"
+        ]
+      }
+    },
+    "move_components": {
+      "summary": "Ungated preview: compiles to 'move' changes and returns a plan; apply with apply_model_changes.",
+      "gate": "none",
+      "reply": "model_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Change objects using the 'move' action fields; any 'action' is overwritten with 'move' and op/id are dropped."
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Batch form. Must be an array of objects (bad_request otherwise). When absent, the request's own fields form a single change."
+          },
+          "ord": {
+            "type": "string",
+            "minLength": 1,
+            "description": "slot:/ ORD of the target component (or @ref of an earlier create/clone in the same plan). Must be inside allowedPathPatterns and admin-writable."
+          },
+          "parent": {
+            "type": "string",
+            "minLength": 1,
+            "description": "slot:/ ORD (or @ref) of the parent/destination component."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-zA-Z_$][a-zA-Z0-9_$]*$",
+            "maxLength": 128,
+            "description": "Slot name at the destination; default is the current name."
+          },
+          "collision": {
+            "type": "string",
+            "enum": [
+              "fail",
+              "suffix"
+            ],
+            "description": "Name collision policy. Absent behaves as 'fail' (name_conflict); 'suffix' picks Name2, Name3, ... at preview."
+          }
+        },
+        "required": [],
+        "anyOf": [
+          {
+            "required": [
+              "changes"
+            ]
+          },
+          {
+            "required": [
+              "ord",
+              "parent"
+            ]
+          }
+        ]
+      },
+      "response": {
+        "keys": [
+          "operation",
+          "result"
+        ]
+      }
+    },
+    "delete_components": {
+      "summary": "Ungated preview: compiles to 'delete' changes and returns a plan; apply with apply_model_changes.",
+      "gate": "none",
+      "reply": "model_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Change objects using the 'delete' action fields; any 'action' is overwritten with 'delete' and op/id are dropped."
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Batch form. Must be an array of objects (bad_request otherwise). When absent, the request's own fields form a single change."
+          },
+          "ord": {
+            "type": "string",
+            "minLength": 1,
+            "description": "slot:/ ORD of the target component (or @ref of an earlier create/clone in the same plan). Must be inside allowedPathPatterns and admin-writable."
+          },
+          "recursive": {
+            "type": "boolean",
+            "default": false,
+            "description": "delete only: must be true to delete a component that has child components (children_present)."
+          }
+        },
+        "required": [],
+        "anyOf": [
+          {
+            "required": [
+              "changes"
+            ]
+          },
+          {
+            "required": [
+              "ord"
+            ]
+          }
+        ]
+      },
+      "response": {
+        "keys": [
+          "operation",
+          "result"
+        ]
+      }
+    },
+    "create_hierarchy": {
+      "summary": "Ungated preview: compiles to 'create_hierarchy' (typeSpec fixed to hierarchy:Hierarchy) and returns a plan.",
+      "gate": "none",
+      "reply": "model_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Change objects using the 'create_hierarchy' action fields; any 'action' is overwritten with 'create_hierarchy' and op/id are dropped."
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Batch form. Must be an array of objects (bad_request otherwise). When absent, the request's own fields form a single change."
+          },
+          "parent": {
+            "type": "string",
+            "minLength": 1,
+            "description": "slot:/ ORD (or @ref) of the parent/destination component."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-zA-Z_$][a-zA-Z0-9_$]*$",
+            "maxLength": 128,
+            "description": "New slot name (escaped Niagara slot name, 1-128 chars; invalid_name otherwise)."
+          },
+          "ref": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-zA-Z_$][a-zA-Z0-9_$]*$",
+            "maxLength": 128,
+            "description": "Plan-local identifier for this created component; later changes may use '@<ref>'. Must be a valid slot name; duplicate refs are bad_reference."
+          },
+          "properties": {
+            "type": "object",
+            "description": "Property path (e.g. 'a/b', max 16 segments) -> typed value.",
+            "additionalProperties": {
+              "type": "object",
+              "description": "Typed Baja value: {typeSpec?, encoded} for simple types or {typeSpec?, properties:{path: typedValue}} for complex types. Exactly one of encoded/properties; no other keys (bad_request). typeSpec may be omitted when the declared property type is concrete. Nesting limited to 16 levels (model_limit).",
+              "properties": {
+                "typeSpec": {
+                  "type": "string",
+                  "description": "Concrete Niagara type spec, e.g. baja:Boolean."
+                },
+                "encoded": {
+                  "type": "string",
+                  "description": "Niagara encoded text for a simple value."
+                },
+                "properties": {
+                  "type": "object",
+                  "description": "Nested property path -> typed value."
+                }
+              },
+              "additionalProperties": false,
+              "oneOf": [
+                {
+                  "required": [
+                    "encoded"
+                  ]
+                },
+                {
+                  "required": [
+                    "properties"
+                  ]
+                }
+              ]
+            }
+          },
+          "flags": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 2147483647,
+            "description": "Niagara slot flags bitmask."
+          },
+          "facets": {
+            "type": "string",
+            "description": "Niagara encoded BFacets string (value is stringified)."
+          },
+          "collision": {
+            "type": "string",
+            "enum": [
+              "fail",
+              "suffix"
+            ],
+            "description": "Name collision policy. Absent behaves as 'fail' (name_conflict); 'suffix' picks Name2, Name3, ... at preview."
+          }
+        },
+        "required": [],
+        "anyOf": [
+          {
+            "required": [
+              "changes"
+            ]
+          },
+          {
+            "required": [
+              "parent",
+              "name"
+            ]
+          }
+        ]
+      },
+      "response": {
+        "keys": [
+          "operation",
+          "result"
+        ]
+      }
+    },
+    "configure_hierarchy": {
+      "summary": "Ungated preview: compiles to 'configure_hierarchy' property edits on a hierarchy:Hierarchy and returns a plan.",
+      "gate": "none",
+      "reply": "model_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Change objects using the 'configure_hierarchy' action fields; any 'action' is overwritten with 'configure_hierarchy' and op/id are dropped."
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Batch form. Must be an array of objects (bad_request otherwise). When absent, the request's own fields form a single change."
+          },
+          "ord": {
+            "type": "string",
+            "minLength": 1,
+            "description": "slot:/ ORD of the target component (or @ref of an earlier create/clone in the same plan). Must be inside allowedPathPatterns and admin-writable."
+          },
+          "properties": {
+            "type": "object",
+            "description": "Property path (e.g. 'a/b', max 16 segments) -> typed value.",
+            "additionalProperties": {
+              "type": "object",
+              "description": "Typed Baja value: {typeSpec?, encoded} for simple types or {typeSpec?, properties:{path: typedValue}} for complex types. Exactly one of encoded/properties; no other keys (bad_request). typeSpec may be omitted when the declared property type is concrete. Nesting limited to 16 levels (model_limit).",
+              "properties": {
+                "typeSpec": {
+                  "type": "string",
+                  "description": "Concrete Niagara type spec, e.g. baja:Boolean."
+                },
+                "encoded": {
+                  "type": "string",
+                  "description": "Niagara encoded text for a simple value."
+                },
+                "properties": {
+                  "type": "object",
+                  "description": "Nested property path -> typed value."
+                }
+              },
+              "additionalProperties": false,
+              "oneOf": [
+                {
+                  "required": [
+                    "encoded"
+                  ]
+                },
+                {
+                  "required": [
+                    "properties"
+                  ]
+                }
+              ]
+            },
+            "minProperties": 1,
+            "maxProperties": 100
+          }
+        },
+        "required": [],
+        "anyOf": [
+          {
+            "required": [
+              "changes"
+            ]
+          },
+          {
+            "required": [
+              "ord",
+              "properties"
+            ]
+          }
+        ]
+      },
+      "response": {
+        "keys": [
+          "operation",
+          "result"
+        ]
+      }
+    }
+  },
+  "notices": {
+    "cov": {
+      "summary": "Point value changes for subscribed points (direct or group), batched when covBatchWindowMillis > 0; points holds snapshots or per-point error entries.",
+      "keys": [
+        "sequence",
+        "timestamp",
+        "batched",
+        "sourceEvents",
+        "points"
+      ]
+    },
+    "alarm_cov": {
+      "summary": "Alarm event per matching alarm subscription. inScope when a record is present; refreshRecommended (event null) when not; alarms when mode is snapshot/both or no record.",
+      "keys": [
+        "sequence",
+        "timestamp",
+        "source",
+        "scope",
+        "limit",
+        "mode",
+        "event",
+        "inScope",
+        "refreshRecommended",
+        "alarms"
+      ]
+    },
+    "model_cov": {
+      "summary": "Model change hint. Component events carry eventId/event/slot/source (+valueType/value when not sensitive); after a model plan applies, event='model_plan_applied' with affected bases.",
+      "keys": [
+        "sequence",
+        "timestamp",
+        "eventId",
+        "event",
+        "slot",
+        "source",
+        "valueType",
+        "value",
+        "bases",
+        "refreshRecommended"
+      ]
+    },
+    "subscriptions_revoked": {
+      "summary": "Revalidation dropped subscribed points the user can no longer read; reason is 'authorization_revoked'.",
+      "keys": [
+        "points",
+        "reason"
+      ]
+    },
+    "session_revoked": {
+      "summary": "Sent before the server closes the socket (1008) because the user left the station.",
+      "keys": [
+        "reason"
+      ]
+    },
+    "error": {
+      "summary": "Error frame. Reply to any failed request (id echoed when given); also sent unsolicited (no id) when an alarm subscription fails its policy check during alarm event delivery.",
+      "keys": [
+        "code",
+        "message"
+      ]
+    }
+  },
+  "errors": {
+    "alarm_failed": {
+      "meaning": "AlarmService unavailable or alarm database/read failure; also a per-uuid entry for unexpected ack/clear failures.",
+      "scope": "request"
+    },
+    "auth_required": {
+      "meaning": "No authenticated Niagara user at the WebSocket handshake; the socket is closed (1008), no frame is sent.",
+      "scope": "request"
+    },
+    "bad_reference": {
+      "meaning": "Model @ref does not identify an earlier create/clone, or a ref is duplicated.",
+      "scope": "request"
+    },
+    "bad_request": {
+      "meaning": "Malformed request or field (type, range, missing field, MessagePack decoding); also per-item in write/tag results.",
+      "scope": "request"
+    },
+    "browse_failed": {
+      "meaning": "Unexpected failure resolving a browse/describe target.",
+      "scope": "request"
+    },
+    "children_present": {
+      "meaning": "Deleting a component with children requires recursive=true.",
+      "scope": "request"
+    },
+    "cycle": {
+      "meaning": "Cannot move a component into its own subtree.",
+      "scope": "request"
+    },
+    "forbidden_action": {
+      "meaning": "User cannot invoke the write action slot on the point; also request-level for model invoke without invoke+admin-write.",
+      "scope": "entry"
+    },
+    "forbidden_alarm": {
+      "meaning": "Missing operator write (ack) or admin write (force-clear) on the alarm class.",
+      "scope": "entry"
+    },
+    "forbidden_component": {
+      "meaning": "Model target outside allowedPathPatterns, unreadable, or lacking admin write.",
+      "scope": "request"
+    },
+    "forbidden_point": {
+      "meaning": "Target outside allowedPathPatterns or not readable/invokable/admin-writable; also per-item in read/subscribe/write/tag/alarm results.",
+      "scope": "request"
+    },
+    "frozen_slot": {
+      "meaning": "Only dynamic child components/properties can be moved, renamed, deleted or removed.",
+      "scope": "request"
+    },
+    "group_not_found": {
+      "meaning": "Subscription group does not exist.",
+      "scope": "request"
+    },
+    "history_failed": {
+      "meaning": "History lookup/query failed or the point has no readable history extensions.",
+      "scope": "request"
+    },
+    "idempotency_conflict": {
+      "meaning": "Plan already submitted with another key, or the key belongs to another plan.",
+      "scope": "request"
+    },
+    "illegal_parent": {
+      "meaning": "Niagara rejected this parent/child type combination.",
+      "scope": "request"
+    },
+    "implied_tag": {
+      "meaning": "Tag is implied by a tag dictionary and cannot be removed.",
+      "scope": "entry"
+    },
+    "internal_error": {
+      "meaning": "Unhandled server exception while processing the request.",
+      "scope": "request"
+    },
+    "invalid_action": {
+      "meaning": "Model invoke names an action slot that does not exist.",
+      "scope": "request"
+    },
+    "invalid_alarm": {
+      "meaning": "Alarm record not found or not readable.",
+      "scope": "entry"
+    },
+    "invalid_component": {
+      "meaning": "Model ORD does not resolve to a component/struct, or configure_hierarchy target is not hierarchy:Hierarchy.",
+      "scope": "request"
+    },
+    "invalid_link": {
+      "meaning": "Niagara link check failed, or delete_link slot does not hold a link.",
+      "scope": "request"
+    },
+    "invalid_name": {
+      "meaning": "Not a valid Niagara slot name (1-128 chars).",
+      "scope": "request"
+    },
+    "invalid_point": {
+      "meaning": "Blank/unsupported ORD scheme, unresolvable target or wrong target kind; also per-item in read/subscribe/write/tag results.",
+      "scope": "request"
+    },
+    "invalid_property": {
+      "meaning": "Property path does not exist, crosses a scalar, is empty, or addresses a link/relation.",
+      "scope": "request"
+    },
+    "invalid_slot": {
+      "meaning": "Named slot does not exist.",
+      "scope": "request"
+    },
+    "invalid_type": {
+      "meaning": "Unknown, abstract, incompatible, link/relation or unrepresentable type for a model value/component.",
+      "scope": "request"
+    },
+    "invalid_value": {
+      "meaning": "Encoded value was not understood by the type's decoder (would be stored as null).",
+      "scope": "request"
+    },
+    "model_busy": {
+      "meaning": "Another model plan is currently applying.",
+      "scope": "request"
+    },
+    "model_change_failed": {
+      "meaning": "Non-protocol exception during a model apply step; outcome unknown_or_partial.",
+      "scope": "entry"
+    },
+    "model_edits_disabled": {
+      "meaning": "modelEditsEnabled is false on the service; also a step result if flipped mid-apply.",
+      "scope": "request"
+    },
+    "model_limit": {
+      "meaning": "Model size bounds exceeded (slots, branch, snapshot, nesting, preview size, dependencies).",
+      "scope": "request"
+    },
+    "name_conflict": {
+      "meaning": "Slot name already exists (collision=fail) or no suffix could be allocated.",
+      "scope": "request"
+    },
+    "not_writable": {
+      "meaning": "Target is not a Niagara writable point or its type is unsupported.",
+      "scope": "entry"
+    },
+    "plan_closed": {
+      "meaning": "Plan is not in preview state (cannot apply or cancel).",
+      "scope": "request"
+    },
+    "plan_conflict": {
+      "meaning": "Overlapping property or structural edits in one plan; use separate previews.",
+      "scope": "request"
+    },
+    "plan_dependency": {
+      "meaning": "Change depends on a branch moved/renamed/deleted/created earlier in the same plan.",
+      "scope": "request"
+    },
+    "plan_limit": {
+      "meaning": "Plan ledger is full (32 plans).",
+      "scope": "request"
+    },
+    "plan_mismatch": {
+      "meaning": "planHash does not match the stored plan.",
+      "scope": "request"
+    },
+    "plan_not_found": {
+      "meaning": "Plan unknown, expired, or owned by another user.",
+      "scope": "request"
+    },
+    "protected_component": {
+      "meaning": "The baskStream service and its descendants cannot be edited remotely.",
+      "scope": "request"
+    },
+    "read_failed": {
+      "meaning": "Point snapshot could not be produced or the target is no longer available.",
+      "scope": "entry"
+    },
+    "readonly": {
+      "meaning": "Property is read-only.",
+      "scope": "request"
+    },
+    "relation_failed": {
+      "meaning": "Unexpected failure adding/removing a relation.",
+      "scope": "entry"
+    },
+    "relation_not_found": {
+      "meaning": "No matching direct relation to remove.",
+      "scope": "entry"
+    },
+    "relation_rejected": {
+      "meaning": "Niagara rejected the relation add.",
+      "scope": "entry"
+    },
+    "schedule_failed": {
+      "meaning": "Unexpected failure resolving/reading a schedule.",
+      "scope": "request"
+    },
+    "search_failed": {
+      "meaning": "Unexpected failure resolving the search root.",
+      "scope": "request"
+    },
+    "stale_plan": {
+      "meaning": "Principal, target, property, slot or branch changed since preview; also a per-step apply result.",
+      "scope": "request"
+    },
+    "subscription_limit": {
+      "meaning": "maxSubscriptionsPerClient or group limit reached; per-point entry in subscribe/replace_subscriptions.",
+      "scope": "request"
+    },
+    "tag_failed": {
+      "meaning": "Unexpected failure setting/removing a tag.",
+      "scope": "entry"
+    },
+    "tag_not_found": {
+      "meaning": "No direct tag with this id to remove.",
+      "scope": "entry"
+    },
+    "unknown_type": {
+      "meaning": "describe_component_types baseType not found.",
+      "scope": "request"
+    },
+    "unsupported_action": {
+      "meaning": "Write action unsupported by the point; also request-level for an unknown model action.",
+      "scope": "entry"
+    },
+    "unsupported_op": {
+      "meaning": "Operation name is not in the protocol.",
+      "scope": "request"
+    },
+    "write_cancelled": {
+      "meaning": "Session closed or thread interrupted before the write invocation.",
+      "scope": "entry"
+    },
+    "write_failed": {
+      "meaning": "Unexpected runtime failure writing a point, or enum point without an enum range.",
+      "scope": "entry"
+    },
+    "writes_disabled": {
+      "meaning": "Service disabled or writesEnabled is false; also per-item if flipped mid-batch.",
+      "scope": "request"
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # baskStream architecture plan
 
-Status: proposal, 2026-09-24. Nothing here is implemented yet except Phase 0.
+Status: Phase 0 done 2026-09-24; Phase 1 done 2026-09-25 (source and static checks; not yet built or run on a station). Later phases are proposals.
 
 ## Why
 
@@ -54,6 +54,28 @@ This phase is low risk and makes everything after it testable.
 - Add a contract test: the registry, the spec and the docs must list the same operations.
 
 Exit: all current operations work unchanged, and the contract test passes.
+
+**Done 2026-09-25.** What was built:
+
+- `BaskStreamOperations` holds the 42 operations and their gates (`NONE`, `WRITES`, `MODEL_EDITS`).
+- Dispatch looks up the operation, applies the writes gate, and calls the handler bound in `BaskStreamClientSession.bindHandlers()`. The session refuses to start if the handlers and the table differ.
+- `capabilities.operations` comes from the table. Wire behaviour is unchanged: the same 7 operations are writes-gated, and `modelEditsEnabled` is still enforced by the plan engine.
+- `spec/baskstream-protocol.json`: request JSON Schemas (valid against 2020-12), reply names, response keys, server notices and 58 error codes.
+- `spec/render_error_table.py` generates the error table in `THIRD_PARTY_API.md`.
+- `tests/protocol_contract.py` checks table, handlers, spec gates, source error codes and docs against each other. It was mutation-tested: an ungated write, a missing handler, a new error code and doc drift each fail it.
+
+The cost class was left out until Phase 3, where the resource budgets will use it.
+
+**Protocol decisions to settle before the next API version** (proposals; all additive, so existing clients keep working):
+
+1. **Point timestamps:** keep `timestamp` (read time) and add `changeTime` when the point exposes it.
+2. **Status:** keep the `status` string and add `statusFlags` (array of flag names) and `activeLevel` for writable points.
+3. **Schedule times:** add structured `{hour, minute}` and ISO dates alongside the current locale strings.
+4. **Non-finite history values:** send `null` with `valueFlag: "nan" | "+inf" | "-inf"`. Enum histories gain `ordinal`.
+5. **Cancelling:** a `cancel` operation taking a request `id`, honoured between batch entries and by long reads.
+6. **Continuation:** history, alarm and search results return an opaque `next` token when `truncated`.
+7. **Back-pressure:** a `slow_consumer` notice before the server closes a session whose outbound queue is filling, plus a `resync_required` notice after COV coalescing drops events.
+8. **Fresh reads and discovery:** `read` with `fresh: true` subscribes briefly and waits for the first poll. `discover_devices` and `discover_points` wrap driver discovery (see the commissioning findings).
 
 ### Phase 2: central Authorizer
 

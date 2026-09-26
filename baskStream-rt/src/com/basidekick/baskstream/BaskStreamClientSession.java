@@ -75,6 +75,7 @@ final class BaskStreamClientSession
   private ScheduledFuture<?> leaseSweepFuture;
   private long leaseSweepAt;
   private ScheduledFuture<?> revalidateFuture;
+  private final Map<String, RequestHandler> handlers = bindHandlers();
 
   BaskStreamClientSession(BaskStreamWebSocketRuntime runtime, BaskStreamJettyWebSocketConnection connection, BUser user, Context context)
   {
@@ -191,6 +192,63 @@ final class BaskStreamClientSession
     }
   }
 
+  private interface RequestHandler
+  {
+    void handle(String id, String op, Map<String, Object> request) throws Exception;
+  }
+
+  /**
+   * Binds every operation in {@link BaskStreamOperations} to its handler. Gates are not
+   * applied here: dispatch reads them from the operation table.
+   */
+  private Map<String, RequestHandler> bindHandlers()
+  {
+    Map<String, RequestHandler> bound = new java.util.HashMap<String, RequestHandler>();
+    bound.put("ping", (id, op, request) -> sendPong(id));
+    bound.put("capabilities", (id, op, request) -> handleCapabilities(id));
+    bound.put("browse", (id, op, request) -> handleBrowse(id, request));
+    bound.put("describe", (id, op, request) -> handleDescribe(id, request));
+    bound.put("search", (id, op, request) -> handleSearch(id, request));
+    bound.put("read", (id, op, request) -> handleRead(id, request));
+    bound.put("subscribe", (id, op, request) -> handleSubscribe(id, request));
+    bound.put("unsubscribe", (id, op, request) -> handleUnsubscribe(request));
+    bound.put("replace_subscriptions", (id, op, request) -> handleReplaceSubscriptions(id, request));
+    bound.put("renew_subscriptions", (id, op, request) -> handleRenewSubscriptions(id, request));
+    bound.put("release_subscriptions", (id, op, request) -> handleReleaseSubscriptions(id, request));
+    bound.put("subscription_status", (id, op, request) -> handleSubscriptionStatus(id, request));
+    bound.put("write", (id, op, request) -> handleWrite(id, request));
+    bound.put("describe_write", (id, op, request) -> handleDescribeWrite(id, request));
+    bound.put("read_history", (id, op, request) -> handleReadHistory(id, request));
+    bound.put("describe_history", (id, op, request) -> handleDescribeHistory(id, request));
+    bound.put("read_alarms", (id, op, request) -> handleReadAlarms(id, request));
+    bound.put("ack_alarm", (id, op, request) -> handleAckAlarms(id, request));
+    bound.put("ack_alarms", (id, op, request) -> handleAckAlarms(id, request));
+    bound.put("clear_alarm", (id, op, request) -> handleClearAlarms(id, request));
+    bound.put("clear_alarms", (id, op, request) -> handleClearAlarms(id, request));
+    bound.put("subscribe_alarms", (id, op, request) -> handleSubscribeAlarms(id, request));
+    bound.put("unsubscribe_alarms", (id, op, request) -> handleUnsubscribeAlarms(id, request));
+    bound.put("read_schedule", (id, op, request) -> handleReadSchedule(id, request));
+    bound.put("subscribe_model", (id, op, request) -> handleSubscribeModel(id, request));
+    bound.put("unsubscribe_model", (id, op, request) -> handleUnsubscribeModel(id, request));
+    bound.put("read_tags", (id, op, request) -> handleReadTags(id, request));
+    bound.put("write_tags", (id, op, request) -> handleWriteTags(id, request));
+    bound.put("write_relations", (id, op, request) -> handleWriteRelations(id, request));
+    for (String model : new String[] {
+        "describe_component_types", "describe_component", "preview_model_changes", "apply_model_changes",
+        "model_plan_status", "cancel_model_plan", "create_components", "update_component_properties",
+        "rename_component", "move_components", "delete_components", "create_hierarchy", "configure_hierarchy" })
+    {
+      bound.put(model, this::handleModelOperation);
+    }
+
+    if (!bound.keySet().equals(new java.util.HashSet<String>(BaskStreamOperations.names())))
+    {
+      throw new IllegalStateException("baskStream handlers do not match the operation table: handlers="
+          + new java.util.TreeSet<String>(bound.keySet()) + " operations=" + BaskStreamOperations.names());
+    }
+    return bound;
+  }
+
   private void processFrame(byte[] payload)
   {
     if (closed.get())
@@ -206,126 +264,18 @@ final class BaskStreamClientSession
       String op = runtime.getCodec().requireString(request, "op");
       id = runtime.getCodec().optionalString(request, "id");
 
-      if ("write".equals(op) || "write_tags".equals(op) || "write_relations".equals(op)
-          || "ack_alarm".equals(op) || "ack_alarms".equals(op) || "clear_alarm".equals(op) || "clear_alarms".equals(op))
-        runtime.getService().requireWritesEnabled();
-
-      if (isModelOperation(op))
-      {
-        handleModelOperation(id, op, request);
-      }
-      else if ("ping".equals(op))
-      {
-        sendPong(id);
-      }
-      else if ("capabilities".equals(op))
-      {
-        handleCapabilities(id);
-      }
-      else if ("read".equals(op))
-      {
-        handleRead(id, request);
-      }
-      else if ("write".equals(op))
-      {
-        handleWrite(id, request);
-      }
-      else if ("subscribe".equals(op))
-      {
-        handleSubscribe(id, request);
-      }
-      else if ("unsubscribe".equals(op))
-      {
-        handleUnsubscribe(request);
-      }
-      else if ("replace_subscriptions".equals(op))
-      {
-        handleReplaceSubscriptions(id, request);
-      }
-      else if ("renew_subscriptions".equals(op))
-      {
-        handleRenewSubscriptions(id, request);
-      }
-      else if ("release_subscriptions".equals(op))
-      {
-        handleReleaseSubscriptions(id, request);
-      }
-      else if ("subscription_status".equals(op))
-      {
-        handleSubscriptionStatus(id, request);
-      }
-      else if ("browse".equals(op))
-      {
-        handleBrowse(id, request);
-      }
-      else if ("describe".equals(op))
-      {
-        handleDescribe(id, request);
-      }
-      else if ("search".equals(op))
-      {
-        handleSearch(id, request);
-      }
-      else if ("describe_write".equals(op))
-      {
-        handleDescribeWrite(id, request);
-      }
-      else if ("read_history".equals(op))
-      {
-        handleReadHistory(id, request);
-      }
-      else if ("describe_history".equals(op))
-      {
-        handleDescribeHistory(id, request);
-      }
-      else if ("read_alarms".equals(op))
-      {
-        handleReadAlarms(id, request);
-      }
-      else if ("ack_alarm".equals(op) || "ack_alarms".equals(op))
-      {
-        handleAckAlarms(id, request);
-      }
-      else if ("clear_alarm".equals(op) || "clear_alarms".equals(op))
-      {
-        handleClearAlarms(id, request);
-      }
-      else if ("subscribe_alarms".equals(op))
-      {
-        handleSubscribeAlarms(id, request);
-      }
-      else if ("unsubscribe_alarms".equals(op))
-      {
-        handleUnsubscribeAlarms(id, request);
-      }
-      else if ("subscribe_model".equals(op))
-      {
-        handleSubscribeModel(id, request);
-      }
-      else if ("unsubscribe_model".equals(op))
-      {
-        handleUnsubscribeModel(id, request);
-      }
-      else if ("read_schedule".equals(op))
-      {
-        handleReadSchedule(id, request);
-      }
-      else if ("read_tags".equals(op))
-      {
-        handleReadTags(id, request);
-      }
-      else if ("write_tags".equals(op))
-      {
-        handleWriteTags(id, request);
-      }
-      else if ("write_relations".equals(op))
-      {
-        handleWriteRelations(id, request);
-      }
-      else
+      BaskStreamOperations.Operation operation = BaskStreamOperations.get(op);
+      RequestHandler handler = operation == null ? null : handlers.get(op);
+      if (handler == null)
       {
         sendError(id, "unsupported_op", "Unsupported operation: " + op);
+        return;
       }
+      if (operation.gate == BaskStreamOperations.Gate.WRITES)
+      {
+        runtime.getService().requireWritesEnabled();
+      }
+      handler.handle(id, op, request);
     }
     catch (BaskStreamProtocolException e)
     {
@@ -407,39 +357,7 @@ final class BaskStreamClientSession
     capabilities.put("transport", "websocket-msgpack");
     capabilities.put("serverTime", Long.valueOf(Clock.millis()));
     capabilities.put("authenticatedUser", user.getUsername());
-    capabilities.put("operations", listOf(
-        "ping",
-        "capabilities",
-        "browse",
-        "describe",
-        "search",
-        "read",
-        "subscribe",
-        "unsubscribe",
-        "replace_subscriptions",
-        "renew_subscriptions",
-        "release_subscriptions",
-        "subscription_status",
-        "write",
-        "describe_write",
-        "read_history",
-        "describe_history",
-        "read_alarms",
-        "ack_alarm",
-        "ack_alarms",
-        "clear_alarm",
-        "clear_alarms",
-        "subscribe_alarms",
-        "unsubscribe_alarms",
-        "read_schedule",
-        "subscribe_model",
-        "unsubscribe_model",
-        "read_tags",
-        "write_tags",
-        "write_relations",
-        "describe_component_types", "describe_component", "preview_model_changes", "apply_model_changes",
-        "model_plan_status", "cancel_model_plan", "create_components", "update_component_properties",
-        "rename_component", "move_components", "delete_components", "create_hierarchy", "configure_hierarchy"));
+    capabilities.put("operations", BaskStreamOperations.names());
     capabilities.put("writesEnabled", runtime.getService().writesAllowed());
     capabilities.put("modelEditing", BaskStreamModelPlans.map("enabled", runtime.getService().modelEditsAllowed(),
         "actions", java.util.Arrays.asList(BaskStreamModelResolver.ACTIONS), "maxChanges", BaskStreamModelResolver.MAX_CHANGES,
@@ -1215,14 +1133,6 @@ final class BaskStreamClientSession
     summary.put("display", component.getDisplayName(context));
     summary.put("typeSpec", component.getType().toString());
     return summary;
-  }
-
-  private boolean isModelOperation(String op)
-  {
-    return java.util.Arrays.asList("describe_component_types", "describe_component", "preview_model_changes",
-        "apply_model_changes", "model_plan_status", "cancel_model_plan", "create_components",
-        "update_component_properties", "rename_component", "move_components", "delete_components",
-        "create_hierarchy", "configure_hierarchy").contains(op);
   }
 
   private void handleModelOperation(String id, String op, Map<String, Object> request) throws Exception
