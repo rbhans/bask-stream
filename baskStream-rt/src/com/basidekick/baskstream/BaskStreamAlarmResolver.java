@@ -8,7 +8,6 @@ import java.util.Map;
 
 import javax.baja.alarm.AlarmSpaceConnection;
 import javax.baja.alarm.BAckState;
-import javax.baja.alarm.BAlarmClass;
 import javax.baja.alarm.BAlarmRecord;
 import javax.baja.alarm.BAlarmService;
 import javax.baja.alarm.BSourceState;
@@ -27,10 +26,12 @@ final class BaskStreamAlarmResolver
   private static final int MAX_LIMIT = 5000;
 
   private final BBaskStreamService service;
+  private final BaskStreamAuthorizer authorizer;
 
   BaskStreamAlarmResolver(BBaskStreamService service)
   {
     this.service = service;
+    this.authorizer = new BaskStreamAuthorizer(service);
   }
 
   AlarmSubscriptionSpec normalizeSubscription(String sourceOrd, String scope, Object limitValue)
@@ -79,7 +80,7 @@ final class BaskStreamAlarmResolver
           {
             continue;
           }
-          if (!alarmClassPermissions(alarmService, record, context, classPermissions).hasOperatorRead())
+          if (!authorizer.alarmPermissions(alarmService, record, context, classPermissions).hasOperatorRead())
           {
             continue;
           }
@@ -137,34 +138,9 @@ final class BaskStreamAlarmResolver
     }
   }
 
-  /**
-   * Alarm records are visible only when the user can read the record's alarm class,
-   * which is how Niagara scopes alarm visibility.
-   */
   boolean canView(BAlarmRecord record, Context context)
   {
-    BAlarmService alarmService = BAlarmService.getService();
-    return alarmService != null
-        && alarmClassPermissions(alarmService, record, context, null).hasOperatorRead();
-  }
-
-  private static BPermissions alarmClassPermissions(BAlarmService alarmService, BAlarmRecord record, Context context,
-      Map<String, BPermissions> cache)
-  {
-    String className = record.getAlarmClass();
-    String key = className == null ? "" : className;
-    BPermissions permissions = cache == null ? null : cache.get(key);
-    if (permissions == null)
-    {
-      // lookupAlarmClass returns the default alarm class for unknown names.
-      BAlarmClass alarmClass = alarmService.lookupAlarmClass(className);
-      permissions = alarmClass == null ? BPermissions.none : alarmClass.getPermissions(context);
-      if (cache != null)
-      {
-        cache.put(key, permissions);
-      }
-    }
-    return permissions;
+    return authorizer.canViewAlarm(record, context);
   }
 
   Map<String, Object> result(AlarmSubscriptionSpec spec, List<Object> alarms)
@@ -197,7 +173,7 @@ final class BaskStreamAlarmResolver
       try
       {
         BAlarmRecord record = resolveAlarmRecord(alarmService, uuid, context);
-        BPermissions permissions = alarmClassPermissions(alarmService, record, context, null);
+        BPermissions permissions = authorizer.alarmPermissions(alarmService, record, context, null);
         if (!permissions.hasOperatorRead())
         {
           // Report unreadable records the same way as missing ones.
@@ -503,13 +479,7 @@ final class BaskStreamAlarmResolver
 
   private static String normalizeSlotOrd(String ord)
   {
-    if (ord == null)
-    {
-      return null;
-    }
-
-    int index = ord.indexOf("slot:/");
-    return index >= 0 ? ord.substring(index) : ord;
+    return BaskStreamAccessPolicy.localSlotOrd(ord);
   }
 
   private String normalizeSource(String sourceOrd) throws BaskStreamProtocolException

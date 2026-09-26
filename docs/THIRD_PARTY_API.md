@@ -1209,6 +1209,19 @@ These changes keep `apiVersion` at `1.6` and add no new fields. Clients that con
 - `write` checks invoke permission for each action slot. New per-point code: `forbidden_action`.
 - Model editing rejects link and relation values in `add_slot`, `update`, and nested values. Use `create_link`/`delete_link` and `write_relations` instead.
 
+### Redacted related objects (2026-09-25)
+
+Metadata about objects related to the requested node is now checked against the same rules as the node itself: the user's Niagara read permission and `allowedPathPatterns`. When a related object fails that check, the response keeps its place but hides what it is:
+
+- `parent`, `ancestors` entries, `driver.network`, `driver.device`, `driver.pointDeviceExt`, `driver.proxyExt`, history extension summaries and alarm sources become `{ "redacted": true }`.
+- A history extension whose history the user cannot read keeps its summary but gains `historyRedacted: true` and omits `historyOrd`/`historyId`.
+- A relation whose endpoint the user cannot read (in `browse`/`describe` metadata and in `read_tags`) keeps `id` and `direction`, gains `endpointRedacted: true` and omits the endpoint.
+- A hierarchy node bound to a component the user cannot read gains `bindingRedacted: true` and omits `entityOrd`, `targetOrd` and `targetSlotPath`.
+- Navigation children without an ORD are omitted, because they cannot be permission-checked.
+- `browse`/`describe` also check where an ORD actually resolves, not only its text. Alarm and history sources on other stations are never treated as local paths.
+
+Clients should tolerate `redacted` entries anywhere they read related-object summaries.
+
 ### API 1.5 changes
 
 `apiVersion` advanced from `1.4` to `1.5`. The changes are additive:

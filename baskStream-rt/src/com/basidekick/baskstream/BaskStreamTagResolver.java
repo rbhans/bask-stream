@@ -43,10 +43,12 @@ final class BaskStreamTagResolver
   private static final int MAX_TAGS_ON_WIRE = 500;
 
   private final BBaskStreamService service;
+  private final BaskStreamAuthorizer authorizer;
 
   BaskStreamTagResolver(BBaskStreamService service)
   {
     this.service = service;
+    this.authorizer = new BaskStreamAuthorizer(service);
   }
 
   int getMaxTargetsPerRequest()
@@ -72,7 +74,7 @@ final class BaskStreamTagResolver
         entry.put("tags", tagsToWire(component, dictionary));
         if (includeRelations)
         {
-          entry.put("relations", relationsToWire(component, dictionary));
+          entry.put("relations", relationsToWire(component, dictionary, context));
         }
         results.add(entry);
       }
@@ -276,7 +278,7 @@ final class BaskStreamTagResolver
 
     Map<String, Object> entry = baseEntry(ord, component, context);
     entry.put("results", opResults);
-    entry.put("relations", relationsToWire(component, null));
+    entry.put("relations", relationsToWire(component, null, context));
     return entry;
   }
 
@@ -481,7 +483,7 @@ final class BaskStreamTagResolver
     return out;
   }
 
-  private List<Object> relationsToWire(BComponent component, String dictionary)
+  private List<Object> relationsToWire(BComponent component, String dictionary, Context context)
   {
     List<Object> out = new ArrayList<Object>();
     try
@@ -504,7 +506,15 @@ final class BaskStreamTagResolver
         wire.put("dictionary", relation.getId().hasDictionary() ? relation.getId().getDictionary() : null);
         wire.put("name", relation.getId().getName());
         wire.put("direction", relation.isInbound() ? "in" : "out");
-        wire.put("endpointOrd", relation.getEndpointOrd() == null ? null : relation.getEndpointOrd().toString());
+        Object endpoint = relation.getEndpoint();
+        if (endpoint instanceof BObject && !authorizer.canRead((BObject) endpoint, context))
+        {
+          wire.put("endpointRedacted", Boolean.TRUE);
+        }
+        else
+        {
+          wire.put("endpointOrd", relation.getEndpointOrd() == null ? null : relation.getEndpointOrd().toString());
+        }
         wire.put("source", directIds == null ? "unknown" : directIds.contains(relationKey(relation)) ? "direct" : "implied");
         out.add(wire);
       }

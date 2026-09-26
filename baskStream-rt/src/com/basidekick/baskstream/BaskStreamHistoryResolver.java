@@ -12,6 +12,7 @@ import javax.baja.history.BTrendRecord;
 import javax.baja.history.HistorySpaceConnection;
 import javax.baja.history.ext.BHistoryExt;
 import javax.baja.naming.BOrd;
+import javax.baja.naming.BOrdList;
 import javax.baja.naming.OrdTarget;
 import javax.baja.status.BStatus;
 import javax.baja.sys.BAbsTime;
@@ -30,10 +31,12 @@ final class BaskStreamHistoryResolver
   private static final int MAX_LIMIT = 5000;
 
   private final BBaskStreamService service;
+  private final BaskStreamAuthorizer authorizer;
 
   BaskStreamHistoryResolver(BBaskStreamService service)
   {
     this.service = service;
+    this.authorizer = new BaskStreamAuthorizer(service);
   }
 
   Map<String, Object> readHistory(String ord, Object startValue, Object endValue, Object limitValue, Context context)
@@ -121,7 +124,7 @@ final class BaskStreamHistoryResolver
     for (int i = 0; i < historyExts.length; i++)
     {
       BIHistory history = historyExts[i].getHistory();
-      if (history != null && !canReadHistory(history, context))
+      if (history != null && !authorizer.canReadHistory(history, context))
       {
         continue;
       }
@@ -191,7 +194,7 @@ final class BaskStreamHistoryResolver
     for (int i = 0; i < historyExts.length; i++)
     {
       BHistory history = historyExts[i].getHistory() instanceof BHistory ? (BHistory) historyExts[i].getHistory() : null;
-      if (history == null || !canReadHistory(history, context))
+      if (history == null || !authorizer.canReadHistory(history, context))
       {
         continue;
       }
@@ -206,14 +209,6 @@ final class BaskStreamHistoryResolver
     return histories;
   }
 
-  /**
-   * Histories carry their own categories, so reading a point does not imply reading its history.
-   */
-  private static boolean canReadHistory(BIHistory history, Context context)
-  {
-    return history.getPermissions(context).hasOperatorRead();
-  }
-
   private void ensureDirectHistoryAllowed(BHistory history) throws BaskStreamProtocolException
   {
     if (BaskStreamAccessPolicy.isDefaultWideOpen(service))
@@ -221,14 +216,19 @@ final class BaskStreamHistoryResolver
       return;
     }
 
+    // An imported history's source is on another station, so it never matches a local path.
     BHistoryConfig config = history.getConfig();
-    String source = config == null || config.getSource() == null ? null : config.getSource().toString();
-    String slotOrd = BaskStreamAccessPolicy.extractSlotOrd(source);
-    if (slotOrd == null || !slotOrd.startsWith("slot:/") || !BaskStreamAccessPolicy.isAllowed(service, slotOrd))
+    BOrdList sources = config == null ? null : config.getSource();
+    for (int i = 0; sources != null && i < sources.size(); i++)
     {
-      throw new BaskStreamProtocolException("forbidden_point",
-          "History source is outside the allowedPathPatterns policy.");
+      String slotOrd = sources.get(i) == null ? null : BaskStreamAccessPolicy.localSlotOrd(sources.get(i).toString());
+      if (slotOrd != null && BaskStreamAccessPolicy.isAllowed(service, slotOrd))
+      {
+        return;
+      }
     }
+    throw new BaskStreamProtocolException("forbidden_point",
+        "History source is outside the allowedPathPatterns policy.");
   }
 
   private Map<String, Object> readSingleHistory(BHistory history, BHistoryExt historyExt, long start, long end, int limit,
