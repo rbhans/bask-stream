@@ -15,6 +15,7 @@ import javax.baja.naming.OrdTarget;
 import javax.baja.registry.TypeInfo;
 import javax.baja.security.AuditEvent;
 import javax.baja.security.Auditor;
+import javax.baja.security.BPassword;
 import javax.baja.sys.Action;
 import javax.baja.sys.BComponent;
 import javax.baja.sys.BComplex;
@@ -288,6 +289,9 @@ final class BaskStreamModelResolver
       {
         BComponent source = component(required(change, "source"), false);
         verifyTree(source, cx, false, new int[]{0});
+        // A copy keeps the stored passwords; a reader must not be able to re-point them.
+        if (holdsPassword(source, 0, new int[]{0}) && !target(ord(source), cx, false).getPermissionsForTarget().hasAdminWrite())
+          throw error("forbidden_component", "Copying components that hold passwords requires admin write on the source.");
         BValue baseline = source.newCopy(true);
         checks.add(() -> { verifyTree(source, cx, false, new int[]{0}); if (!baseline.equivalent(source)) throw error("stale_plan", "Clone source changed."); });
         CopyHints hints = new CopyHints(); hints.cx = cx; hints.keepHandles = false; hints.swizzleHandles = true;
@@ -299,6 +303,8 @@ final class BaskStreamModelResolver
         value = newComponent(type);
       }
       final BComponent created = value;
+      if (containsProtected(created, 0))
+        throw error("protected_component", "Protected services and program components cannot be created or copied remotely; use Workbench.");
       if (change.containsKey("properties")) setDetached(created, object(change.get("properties"), "properties"), cx, 0);
       final int flags = integer(change, "flags", 0, 0, Integer.MAX_VALUE);
       final BFacets facets = facets(change.get("facets"));
@@ -386,6 +392,11 @@ final class BaskStreamModelResolver
       String slotName = required(change, "slot"); name(slotName);
       Action action = c.getAction(slotName);
       if (action == null) throw error("invalid_action", "No such action.");
+      if (withinProtected(c))
+        throw error("protected_component", "Actions on protected services must be invoked in Workbench.");
+      final boolean confirmRequired = Flags.isConfirmRequired(c, action);
+      if (confirmRequired && !Boolean.TRUE.equals(change.get("confirm")))
+        throw error("confirm_required", "Niagara marks '" + slotName + "' as needing confirmation; resend this change with confirm: true.");
       String actionOrd = child(ord(c), slotName);
       if (!futureOrds.containsKey(c)) requireInvoke(actionOrd, cx);
       BValue parameter = action.getParameterType() == null ? null : change.containsKey("parameter")
@@ -395,7 +406,8 @@ final class BaskStreamModelResolver
       checks.add(() -> { if (c.getAction(slotName) != action) throw error("stale_plan", "Action changed since preview."); });
       steps.add(new BaskStreamModelPlans.Step(map("action", "invoke", "ord", ord(c), "slot", slotName,
           "parameter", valueWire(argument, slotName, 0), "parameterHash", fingerprint(argument, 0, new int[]{0}),
-          "effectPreview", "Invocation only; vendor action side effects cannot be simulated", "async", Flags.isAsync(c, action)), () -> {
+          "effectPreview", "Invocation only; vendor action side effects cannot be simulated", "async", Flags.isAsync(c, action),
+          "confirmRequired", confirmRequired), () -> {
         guard(c, true); requireInvoke(actionOrd, cx);
         if (c.getAction(slotName) != action) throw error("stale_plan", "Action changed before apply.");
         service.requireModelEditsEnabled();
@@ -636,9 +648,61 @@ final class BaskStreamModelResolver
       BComponent component = t.getComponent();
       if (component == service || (component != null && component.isDescendentOf(service)))
         throw error("protected_component", "Edit the baskStream service in Workbench; it cannot change its own write controls remotely.");
+      if (component != null && withinProtected(component))
+        throw error("protected_component", "Security, identity, remote-access, platform and audit services must be changed in Workbench.");
     }
     return t;
   }
+  /**
+   * Services that decide who can reach the station and what they may do, plus audit and code
+   * execution. Model editing leaves them to Workbench. Types not installed on a station are skipped.
+   */
+  private static final String[] PROTECTED_TYPES = { "baja:UserService", "baja:RoleService",
+      "baja:AuthenticationService", "baja:CategoryService", "nss:SecurityService",
+      "platform:PlatformServiceContainer", "fox:FoxService", "web:WebService",
+      "history:AuditHistoryService", "program:ProgramService" };
+
+  private boolean protectedType(BComponent c)
+  {
+    if (c instanceof BBaskStreamService || c.getType().is(service.getType())) return true;
+    for (String spec : PROTECTED_TYPES)
+    {
+      Type guarded;
+      try { guarded = Sys.getType(spec); }
+      catch (Exception notInstalled) { continue; }
+      if (guarded != null && c.getType().is(guarded)) return true;
+    }
+    return false;
+  }
+
+  /** True when the component or anything above it is a protected service. */
+  private boolean withinProtected(BComponent c)
+  {
+    for (BComponent x = c; x != null; x = x.getParentComponent()) if (protectedType(x)) return true;
+    return false;
+  }
+
+  /** True when a new or copied component, or anything inside it, is protected or can carry program code. */
+  private boolean containsProtected(BComponent c, int depth) throws Exception
+  {
+    if (protectedType(c) || c.getType().toString().startsWith("program:")) return true;
+    if (depth >= 32) throw error("model_limit", "Branch exceeds model bounds.");
+    for (BComponent child : c.getChildComponents()) if (containsProtected(child, depth + 1)) return true;
+    return false;
+  }
+
+  private static boolean holdsPassword(BComplex c, int depth, int[] count) throws Exception
+  {
+    if (++count[0] > MAX_TREE_VALUES || depth > 32) throw error("model_limit", "Branch exceeds model bounds.");
+    for (Property p : c.getPropertiesArray())
+    {
+      BValue value = c.get(p);
+      if (value instanceof BPassword) return true;
+      if (value instanceof BComplex && holdsPassword((BComplex)value, depth + 1, count)) return true;
+    }
+    return false;
+  }
+
   private BComplex complex(String ord, Context cx, boolean write) throws Exception
   {
     BObject object = target(ord, cx, write).get();

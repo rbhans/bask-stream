@@ -12,6 +12,17 @@ The default is true to preserve existing integrations. `modelEditsEnabled` is a 
 
 Client-side controls do not replace user approval or Niagara permission checks. All model edits require admin-write access; actions additionally require invoke permission. The station's `allowedPathPatterns` is checked for targets, parent/destination paths, new paths, and relevant link endpoints. An arbitrary Niagara action can affect objects beyond its target; this path policy is not a sandbox for vendor action implementations.
 
+### Protected objects
+
+Some parts of a station decide who can reach it and what they may do. Model editing leaves these to Workbench and returns `protected_component`:
+
+- **Protected services:** User, Role, Authentication, Category and Security services, Platform services, Fox and Web services, the Audit History service, the Program service and the baskStream service itself. Nothing inside them can be updated, deleted, moved, renamed or given new slots, and none of their actions can be invoked.
+- **Protected creations:** no create or clone may produce a protected service, a second baskStream service, or any `program:` component (these can carry executable code).
+- **Password copies:** a clone keeps the source's stored passwords, so cloning anything that holds a password needs admin write on the source, not only read (`forbidden_component`).
+- **Confirm-required actions:** an `invoke` of an action Niagara marks confirm-required fails with `confirm_required` unless the change includes `confirm: true`. The preview reports `confirmRequired`, and the plan hash covers it.
+
+Service types that are not installed on a station are skipped.
+
 ## Operations
 
 All new request/response operations return `{op:"model_result", id, operation, result}`. Existing response formats are unchanged.
@@ -32,7 +43,7 @@ The requested convenience operations also exist: `create_components`, `update_co
 | `action` | Fields |
 | --- | --- |
 | `create` | `parent`, `name`, `typeSpec`; optional `ref`, `properties`, `flags`, `facets`, `collision` |
-| `clone` | `source`, `parent`, `name`; optional creation fields |
+| `clone` | `source`, `parent`, `name`; optional creation fields. Needs admin write on the source when the copy would hold passwords |
 | `update` | `ord`, `properties` |
 | `rename` | `ord`, `name`; optional `collision` |
 | `move` | `ord`, `parent`; optional `name`, `collision` |
@@ -45,7 +56,7 @@ The requested convenience operations also exist: `create_components`, `update_co
 | `reorder` | `ord`, `slots` listing every dynamic property exactly once |
 | `create_link` | `source`, `sourceSlot`, `target`, `targetSlot`, `name`; optional `collision` |
 | `delete_link` | `ord` of the target component, `slot` containing the link |
-| `invoke` | `ord`, `slot` naming an action; optional typed `parameter` |
+| `invoke` | `ord`, `slot` naming an action; optional typed `parameter`; `confirm: true` when Niagara marks the action confirm-required |
 
 Use returned type specifications, never Java class names. There is no component-type allowlist. Abstract/interface types and illegal parent/child combinations are rejected. Generic actions make driver discovery, polling and other module-specific behavior accessible when exposed as Niagara actions. Async action results say `submitted`, not `completed`; read back the module's status afterward.
 

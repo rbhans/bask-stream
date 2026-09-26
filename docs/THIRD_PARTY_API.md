@@ -946,6 +946,7 @@ Failures arrive in two ways. A **request** error fails the whole request with an
 | `bad_request` | request | Malformed request or field (type, range, missing field, MessagePack decoding); also per-item in write/tag results. |
 | `browse_failed` | request | Unexpected failure resolving a browse/describe target. |
 | `children_present` | request | Deleting a component with children requires recursive=true. |
+| `confirm_required` | request | The model plan invokes an action Niagara marks confirm-required; resend the change with confirm: true. |
 | `cycle` | request | Cannot move a component into its own subtree. |
 | `forbidden_action` | entry | User cannot invoke the write action slot on the point; also request-level for model invoke without invoke+admin-write. |
 | `forbidden_alarm` | entry | Missing operator write (ack) or admin write (force-clear) on the alarm class. |

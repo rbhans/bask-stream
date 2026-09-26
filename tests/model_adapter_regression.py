@@ -98,6 +98,20 @@ class ModelAdapterRegression {
     BValue newSettings=nested.newCopy(true);dest.set(dest.getProperty("settings"),newSettings,cx);
     reject("stale_plan",()->apply(model,cx,nestedEdit));
     reject("plan_conflict",()->preview(model,cx,m("action","update","ord","slot:/Test/Destination","properties",m("settings/internal",value("a"))),m("action","set_slot_metadata","ord","slot:/Test/Destination","slot","settings","flags",0)));
+    BComponent users=new BComponent();users.type=Sys.getType("baja:UserService");services.add("UserService",users,null);
+    reject("protected_component",()->preview(model,cx,m("action","create","parent","slot:/Services/UserService","name","Eve","typeSpec","baja:Folder")));
+    reject("protected_component",()->preview(model,cx,m("action","create","parent","slot:/Test","name","Users2","typeSpec","baja:UserService")));
+    reject("protected_component",()->preview(model,cx,m("action","create","parent","slot:/Test","name","Code","typeSpec","program:Program")));
+    reject("protected_component",()->preview(model,cx,m("action","clone","source","slot:/Services/baskStream","parent","slot:/Test","name","Stream2")));
+    Action restart=new Action();restart.name="restart";restart.flags=4096;dest.actions.put("restart",restart);
+    reject("confirm_required",()->preview(model,cx,m("action","invoke","ord","slot:/Test/Destination","slot","restart")));
+    check(apply(model,cx,preview(model,cx,m("action","invoke","ord","slot:/Test/Destination","slot","restart","confirm",true))).get("state").equals("applied"));
+    BComponent vault=new BComponent();test.add("Vault",vault,null);vault.add("password",new BPassword("s3cret"),null);
+    Sys.adminDenied.add("slot:/Test/Vault");
+    reject("forbidden_component",()->preview(model,cx,m("action","clone","source","slot:/Test/Vault","parent","slot:/Test","name","VaultCopy")));
+    Sys.adminDenied.clear();
+    check("preview".equals(preview(model,cx,m("action","clone","source","slot:/Test/Vault","parent","slot:/Test","name","VaultCopy")).get("state")));
+    System.out.println("PASS: protected services, program types, service copies, confirm-required actions, password copies");
     System.out.println("PASS: actual resolver with API doubles: all 15 actions, refs, master gate, deduplication, naming, stale values, redaction, fresh permissions, nested read permissions, scope, service protection, deletion, cycles and move identity");
   }
 }
@@ -152,6 +166,7 @@ class BComponent extends BComplex {
   Knob[] getKnobs(){return new Knob[0];}RelationKnob[] getRelationKnobs(){return new RelationKnob[0];}
 }
 class BBaskStreamService extends BComponent {
+  {type=new Type("baskStream:BaskStreamService");}
   boolean writes=true;boolean writesAllowed(){return writes;}boolean modelEditsAllowed(){return writes;}
   void requireModelEditsEnabled()throws Exception{if(!writes)throw BaskStreamModelPlans.error("writes_disabled","off");}
   int getMaxMessageBytesValue(){return 1048576;}void audit(String e,String detail){Sys.events.add(e+detail);}
@@ -167,18 +182,19 @@ class Type {
 }
 class TypeInfo {Type type;TypeInfo(Type t){type=t;}String getTypeSpec(){return type.spec;}String getModuleName(){return type.spec.split(":")[0];}boolean isAbstract(){return false;}boolean isInterface(){return false;}boolean is(Type t){return type.is(t);}TypeInfo getSuperType(){return null;}String getRuntimeProfile(){return "rt";} }
 class Registry {TypeInfo getType(String s){return new TypeInfo(Sys.getType(s));}TypeInfo[] getTypes(TypeInfo t){return new TypeInfo[0];}}
-class Sys {static BComponent root;static Set<String> denied=new HashSet<>(),readDenied=new HashSet<>();static List<String> events=new ArrayList<>();static Type getType(String s){return new Type(s);}static Registry getRegistry(){return new Registry();}static Auditor getAuditor(){return e->{};} }
+class Sys {static BComponent root;static Set<String> denied=new HashSet<>(),readDenied=new HashSet<>(),adminDenied=new HashSet<>();static List<String> events=new ArrayList<>();static Type getType(String s){return new Type(s);}static Registry getRegistry(){return new Registry();}static Auditor getAuditor(){return e->{};} }
 class BOrd {
   String path;BOrd(String p){path=p;}static BOrd make(String p){return new BOrd(p);}public String toString(){return path;}
   OrdTarget resolve(BComponent base,Context cx)throws Exception{BValue v=Sys.root;BComplex owner=null;Property p=null;for(String s:path.substring(6).split("/")){if(s.isEmpty())continue;owner=(BComplex)v;p=owner.getProperty(s);v=owner.getAction(s)!=null?new BSimple():owner.get(s);if(v==null)throw new Exception("missing "+path);}return new OrdTarget(path,v,owner,p);}
 }
-class OrdTarget {String path;BObject value;BComplex owner;Property p;OrdTarget(String s,BValue v,BComplex o,Property prop){path=s;value=v;owner=o;p=prop;}BObject get(){return value;}boolean canRead(){return !Sys.readDenied.contains(path);}boolean canWrite(){return !Sys.denied.contains(path);}boolean canInvoke(){return true;}Permissions getPermissionsForTarget(){return new Permissions();}BComponent getComponent(){if(value instanceof BComponent)return (BComponent)value;BComplex c=owner;while(c!=null&&!(c instanceof BComponent))c=c.parent;return (BComponent)c;} }
-class Permissions {boolean hasAdminWrite(){return true;}}
-class Flags {static boolean isReadonly(BComplex c,Slot p){return (p.flags&1)!=0;}static boolean isTransient(BComplex c,Slot p){return false;}static boolean isAsync(BComponent c,Action a){return false;}}
+class OrdTarget {String path;BObject value;BComplex owner;Property p;OrdTarget(String s,BValue v,BComplex o,Property prop){path=s;value=v;owner=o;p=prop;}BObject get(){return value;}boolean canRead(){return !Sys.readDenied.contains(path);}boolean canWrite(){return !Sys.denied.contains(path);}boolean canInvoke(){return true;}Permissions getPermissionsForTarget(){Permissions p=new Permissions();p.admin=!Sys.adminDenied.contains(path);return p;}BComponent getComponent(){if(value instanceof BComponent)return (BComponent)value;BComplex c=owner;while(c!=null&&!(c instanceof BComponent))c=c.parent;return (BComponent)c;} }
+class Permissions {boolean admin=true;boolean hasAdminWrite(){return admin;}}
+class Flags {static boolean isReadonly(BComplex c,Slot p){return (p.flags&1)!=0;}static boolean isTransient(BComplex c,Slot p){return false;}static boolean isAsync(BComponent c,Action a){return false;}static boolean isConfirmRequired(BComplex c,Slot s){return (s.flags&4096)!=0;}}
 class CopyHints {Context cx;boolean keepHandles,swizzleHandles;}
 interface IPropertyValidator {void validateSet(BComplex c,Property p,BValue v,Context cx);}
 class LinkCheck {boolean isValid(){return true;}String getInvalidReason(){return "invalid";}}
 class BLink extends BComplex {static final Type TYPE=new Type("baja:Link");}
+class BPassword extends BSimple {BPassword(String v){super(v);} }
 class BRelation extends BComplex {static final Type TYPE=new Type("baja:Relation");}
 interface Knob {BComponent getTargetComponent();String getSourceSlotName();String getTargetSlotName();}
 interface RelationKnob {BComponent getRelationComponent();String getRelationId();}

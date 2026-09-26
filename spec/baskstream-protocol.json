@@ -2513,6 +2513,10 @@
       "meaning": "Deleting a component with children requires recursive=true.",
       "scope": "request"
     },
+    "confirm_required": {
+      "meaning": "The model plan invokes an action Niagara marks confirm-required; resend the change with confirm: true.",
+      "scope": "request"
+    },
     "cycle": {
       "meaning": "Cannot move a component into its own subtree.",
       "scope": "request"
