@@ -152,6 +152,13 @@ What needs fixing (Phase 2–3 unless noted):
 7. **Sessions expire overnight.** Clients (SDK, CLI) need automatic re-login using a stored credential.
 8. **Model edits are not saved to disk.** Changes live in memory until the station saves. Offer a gated `save_station` step, or document that Workbench save or the auto-save interval is required.
 
+9. **Loading `program:` types hung the session worker (found 2026-09-26, fixed in source).**
+   - **Symptom:** on the Phase 2 build, a `preview_model_changes` that creates `program:Program` never replied, and neither did anything after it on that connection. Then every create, update or invoke preview hung too.
+   - **Cause:** `Sys.getType` for `program:` types never returned when called from the session worker. The Phase 2b protected-service check looked up every protected type name, including `program:ProgramService`, for each ordinary edit.
+   - **Fix:** the check now walks the component's own, already-loaded superclass chain and compares names. Requested and client-supplied type names are refused by name before any `Sys.getType`: `protectedSpec` for creates, and `requireLoadable` in `describe_component_types` and typed values.
+   - **Verification:** the stand-in `Sys.getType` throws for protected names and `program:` types, and all tests pass. Station check pending on the next build.
+   - **Operational note:** workers that were already stuck stay stuck until the station restarts. A per-request watchdog is part of Phase 3.
+
 Environment notes: when the simulator ran on the Mac and the station in a Parallels VM, BACnet needed the adapter set in Workbench (see 1). We also added inbound and outbound Windows firewall rules for UDP 47808; it is not confirmed whether they were needed.
 
 ## Housekeeping to fold in along the way

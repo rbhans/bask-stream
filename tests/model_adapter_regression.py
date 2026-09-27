@@ -98,7 +98,7 @@ class ModelAdapterRegression {
     BValue newSettings=nested.newCopy(true);dest.set(dest.getProperty("settings"),newSettings,cx);
     reject("stale_plan",()->apply(model,cx,nestedEdit));
     reject("plan_conflict",()->preview(model,cx,m("action","update","ord","slot:/Test/Destination","properties",m("settings/internal",value("a"))),m("action","set_slot_metadata","ord","slot:/Test/Destination","slot","settings","flags",0)));
-    BComponent users=new BComponent();users.type=Sys.getType("baja:UserService");services.add("UserService",users,null);
+    Sys.allowProtectedLookup=true;BComponent users=new BComponent();users.type=Sys.getType("baja:UserService");Sys.allowProtectedLookup=false;services.add("UserService",users,null);
     reject("protected_component",()->preview(model,cx,m("action","create","parent","slot:/Services/UserService","name","Eve","typeSpec","baja:Folder")));
     reject("protected_component",()->preview(model,cx,m("action","create","parent","slot:/Test","name","Users2","typeSpec","baja:UserService")));
     reject("protected_component",()->preview(model,cx,m("action","create","parent","slot:/Test","name","Code","typeSpec","program:Program")));
@@ -116,7 +116,9 @@ class ModelAdapterRegression {
     check(undone.toString().contains("reverted=true"));
     Map<String,Object> kept=apply(model,cx,preview(model,cx,m("action","update","ord","slot:/Test/Port","properties",m("label",value("b")))));
     check(!kept.toString().contains("reverted"));
-    System.out.println("PASS: reverted values are reported");
+    reject("invalid_type",()->model.types(m("typeSpec","program:Program"),cx));
+    reject("invalid_type",()->preview(model,cx,m("action","add_slot","ord","slot:/Test/Destination","slot","p","value",m("typeSpec","program:Robot","properties",m()))));
+    System.out.println("PASS: reverted values are reported; program type names refused before loading");
     System.out.println("PASS: protected services, program types, service copies, confirm-required actions, password copies");
     System.out.println("PASS: actual resolver with API doubles: all 15 actions, refs, master gate, deduplication, naming, stale values, redaction, fresh permissions, nested read permissions, scope, service protection, deletion, cycles and move identity");
   }
@@ -181,14 +183,14 @@ class Slot {String name;int flags;BFacets facets=BFacets.DEFAULT;boolean isPrope
 class Property extends Slot {Type type;Property(String n,Type t){name=n;type=t;}Type getType(){return type;} }
 class Action extends Slot {Type getParameterType(){return null;}Type getReturnType(){return null;}BValue getParameterDefault(){return null;} }
 class Type {
-  String spec;Type(String s){spec=s;}boolean isAbstract(){return false;}boolean isInterface(){return false;}
+  String spec;Type sup;Type(String s){spec=s;}Type getSuperType(){return sup;}boolean isAbstract(){return false;}boolean isInterface(){return false;}
   boolean is(Type t){return spec.equals(t.spec)||t.spec.equals("baja:Complex")&&!spec.equals("baja:String")||t.spec.equals("baja:Component")&&!spec.equals("baja:String");}
-  BObject getInstance(){if(spec.equals("baja:String"))return new BSimple();BComponent c=new BComponent();c.type=this;return c;}
+  BObject getInstance(){if(spec.startsWith("program:"))throw new IllegalStateException("instantiated "+spec);if(spec.equals("baja:String"))return new BSimple();BComponent c=new BComponent();c.type=this;return c;}
   TypeInfo getTypeInfo(){return new TypeInfo(this);}public String toString(){return spec;}
 }
 class TypeInfo {Type type;TypeInfo(Type t){type=t;}String getTypeSpec(){return type.spec;}String getModuleName(){return type.spec.split(":")[0];}boolean isAbstract(){return false;}boolean isInterface(){return false;}boolean is(Type t){return type.is(t);}TypeInfo getSuperType(){return null;}String getRuntimeProfile(){return "rt";} }
 class Registry {TypeInfo getType(String s){return new TypeInfo(Sys.getType(s));}TypeInfo[] getTypes(TypeInfo t){return new TypeInfo[0];}}
-class Sys {static BComponent root;static Set<String> denied=new HashSet<>(),readDenied=new HashSet<>(),adminDenied=new HashSet<>();static List<String> events=new ArrayList<>();static Type getType(String s){return new Type(s);}static Registry getRegistry(){return new Registry();}static Auditor getAuditor(){return e->{};} }
+class Sys {static BComponent root;static Set<String> denied=new HashSet<>(),readDenied=new HashSet<>(),adminDenied=new HashSet<>();static List<String> events=new ArrayList<>();static Type getType(String s){if(s.startsWith("program:")||s.equals("baja:UserService")&&!allowProtectedLookup)throw new IllegalStateException("looked up "+s);return new Type(s);}static boolean allowProtectedLookup;static Registry getRegistry(){return new Registry();}static Auditor getAuditor(){return e->{};} }
 class BOrd {
   String path;BOrd(String p){path=p;}static BOrd make(String p){return new BOrd(p);}public String toString(){return path;}
   OrdTarget resolve(BComponent base,Context cx)throws Exception{BValue v=Sys.root;BComplex owner=null;Property p=null;for(String s:path.substring(6).split("/")){if(s.isEmpty())continue;owner=(BComplex)v;p=owner.getProperty(s);v=owner.getAction(s)!=null?new BSimple():owner.get(s);if(v==null)throw new Exception("missing "+path);}return new OrdTarget(path,v,owner,p);}

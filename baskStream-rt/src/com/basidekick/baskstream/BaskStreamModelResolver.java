@@ -57,6 +57,7 @@ final class BaskStreamModelResolver
     String requested = optional(request, "typeSpec");
     if (requested != null)
     {
+      requireLoadable(requested);
       Type type = Sys.getType(requested);
       Map<String, Object> result = typeInfo(type.getTypeInfo(), cx);
       if (!type.isAbstract() && !type.isInterface() && type.is(BComplex.TYPE))
@@ -289,6 +290,8 @@ final class BaskStreamModelResolver
       {
         BComponent source = component(required(change, "source"), false);
         verifyTree(source, cx, false, new int[]{0});
+        if (containsProtected(source, 0))
+          throw error("protected_component", "Protected services and program components cannot be created or copied remotely; use Workbench.");
         // A copy keeps the stored passwords; a reader must not be able to re-point them.
         if (holdsPassword(source, 0, new int[]{0}) && !target(ord(source), cx, false).getPermissionsForTarget().hasAdminWrite())
           throw error("forbidden_component", "Copying components that hold passwords requires admin write on the source.");
@@ -669,17 +672,42 @@ final class BaskStreamModelResolver
       "platform:PlatformServiceContainer", "fox:FoxService", "web:WebService",
       "history:AuditHistoryService", "program:ProgramService" };
 
-  private boolean protectedType(BComponent c)
+  /**
+   * Walks the type's own (already loaded) superclass chain and compares names. It never calls
+   * Sys.getType for the protected names: on a live station, loading program-module types from
+   * the session worker never returned.
+   */
+  private boolean protectedType(Type type)
   {
-    if (c instanceof BBaskStreamService || c.getType().is(service.getType())) return true;
-    for (String spec : PROTECTED_TYPES)
+    for (Type t = type; t != null; t = t.getSuperType())
     {
-      Type guarded;
-      try { guarded = Sys.getType(spec); }
-      catch (Exception notInstalled) { continue; }
-      if (guarded != null && c.getType().is(guarded)) return true;
+      String spec = t.toString();
+      if (spec.equals(service.getType().toString()) || Arrays.asList(PROTECTED_TYPES).contains(spec)) return true;
     }
     return false;
+  }
+
+  /** Client-supplied type names are checked before Sys.getType, which never returned for program types. */
+  private static void requireLoadable(String spec) throws Exception
+  {
+    if (spec.startsWith("program:"))
+      throw error("invalid_type", "program: types cannot be loaded through baskStream; use Workbench.");
+  }
+
+  /** Name-only check for a requested type, made before anything is loaded or created. */
+  private static boolean protectedSpec(String spec)
+  {
+    return spec.startsWith("program:") || spec.startsWith("baskStream:") || Arrays.asList(PROTECTED_TYPES).contains(spec);
+  }
+
+  private boolean protectedType(BComponent c)
+  {
+    return c instanceof BBaskStreamService || protectedType(c.getType());
+  }
+
+  private static boolean programType(Type type)
+  {
+    return type.toString().startsWith("program:");
   }
 
   /** True when the component or anything above it is a protected service. */
@@ -692,7 +720,7 @@ final class BaskStreamModelResolver
   /** True when a new or copied component, or anything inside it, is protected or can carry program code. */
   private boolean containsProtected(BComponent c, int depth) throws Exception
   {
-    if (protectedType(c) || c.getType().toString().startsWith("program:")) return true;
+    if (protectedType(c) || programType(c.getType())) return true;
     if (depth >= 32) throw error("model_limit", "Branch exceeds model bounds.");
     for (BComponent child : c.getChildComponents()) if (containsProtected(child, depth + 1)) return true;
     return false;
@@ -772,8 +800,13 @@ final class BaskStreamModelResolver
 
   private BComponent newComponent(String spec) throws Exception
   {
+    // Decide from the name first: on a live station, loading or instantiating program types never returned.
+    if (protectedSpec(spec))
+      throw error("protected_component", "Protected services and program components cannot be created or copied remotely; use Workbench.");
     Type type = Sys.getType(spec);
     if (type.isAbstract() || type.isInterface() || !type.is(BComponent.TYPE)) throw error("invalid_type", "Type must be a concrete installed component.");
+    if (protectedType(type) || programType(type))
+      throw error("protected_component", "Protected services and program components cannot be created or copied remotely; use Workbench.");
     return (BComponent)type.getInstance();
   }
   private void legalAdd(BComponent parent, String name, BComponent value, int flags, BFacets facets, Context cx) throws Exception
@@ -790,6 +823,7 @@ final class BaskStreamModelResolver
     if (wire.containsKey("encoded") == wire.containsKey("properties")) throw error("bad_request", "Supply exactly one of encoded or properties.");
     for (String key : wire.keySet()) if (!Arrays.asList("encoded", "properties", "typeSpec").contains(key)) throw error("bad_request", "Unknown typed value field: " + key);
     String spec = optional(wire, "typeSpec");
+    if (spec != null) requireLoadable(spec);
     Type type = spec == null ? expected : Sys.getType(spec);
     if (type == null) throw error("invalid_type", spec == null ? "Value needs a typeSpec." : "Unknown typeSpec: " + spec);
     if (type.isAbstract() || type.isInterface())
