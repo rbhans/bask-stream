@@ -162,7 +162,7 @@ class BComponent extends BComplex {
   BComponent getParentComponent(){return parent instanceof BComponent?(BComponent)parent:null;}
   Property getPropertyInParent(){return parent==null?null:parent.getProperty(name);}
   BComponent[] getChildComponents(){return values.values().stream().filter(v->v instanceof BComponent).toArray(BComponent[]::new);}
-  boolean isDescendentOf(BComponent c){for(BComplex p=parent;p!=null;p=p.parent)if(p==c)return true;return false;}
+  boolean isDescendentOf(BComponent c){int n=0;for(BComplex p=parent;p!=null&&n++<64;p=p.parent)if(p==c)return true;return false;}
   BOrd getSlotPathOrd(){return new BOrd(parent==null?"slot:/":parent instanceof BComponent?((BComponent)parent).getSlotPathOrd().path.replaceAll("/$","")+"/"+name:"slot:/"+name);}
   Object getHandle(){return handle;}BOrd getHandleOrd(){return new BOrd("h:"+handle);}
   boolean isChildLegal(BComponent c){return true;}boolean isParentLegal(BComponent c){return true;}

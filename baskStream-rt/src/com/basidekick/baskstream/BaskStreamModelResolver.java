@@ -679,10 +679,14 @@ final class BaskStreamModelResolver
    */
   private boolean protectedType(Type type)
   {
-    for (Type t = type; t != null; t = t.getSuperType())
+    Type t = type;
+    for (int depth = 0; t != null && depth < 64; depth++)
     {
       String spec = t.toString();
       if (spec.equals(service.getType().toString()) || Arrays.asList(PROTECTED_TYPES).contains(spec)) return true;
+      Type next = t.getSuperType();
+      if (next == t) break;
+      t = next;
     }
     return false;
   }
@@ -713,7 +717,16 @@ final class BaskStreamModelResolver
   /** True when the component or anything above it is a protected service. */
   private boolean withinProtected(BComponent c)
   {
-    for (BComponent x = c; x != null; x = x.getParentComponent()) if (protectedType(x)) return true;
+    // Bounded, and uses getParent() like browse: on the live station the unbounded
+    // getParentComponent() walk from ordinary components never finished.
+    BComplex x = c;
+    for (int depth = 0; x != null && depth < 64; depth++)
+    {
+      if (x instanceof BComponent && protectedType((BComponent)x)) return true;
+      BComplex parent = x.getParent();
+      if (parent == x) break;
+      x = parent;
+    }
     return false;
   }
 
