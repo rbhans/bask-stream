@@ -53,7 +53,8 @@ class WebSocketAdapter {
  public void onWebSocketError(Throwable t){}
  Session getSession(){return session;} Remote getRemote(){return remote;}
 }
-class ServletUpgradeRequest {}
+class ServletUpgradeRequest {Object getUserPrincipal(){return null;}Object getLocale(){return null;}}
+interface BaskStreamTransport {void send(byte[] b) throws java.io.IOException;void closeTransport(int c,String r);}
 class Service {
  final Logger LOG=Logger.getLogger("test");
  int getHeartbeatIntervalSecValue(){return 30;} void audit(String a,String b){}
@@ -61,7 +62,7 @@ class Service {
 class BaskStreamWebSocketRuntime {
  final Service service=new Service(); final BaskStreamClientSession client=new BaskStreamClientSession();
  Service getService(){return service;} boolean onOpen(BaskStreamClientSession c){return true;}
- BaskStreamClientSession buildSession(Object c,Object r) throws BaskStreamProtocolException {return client;}
+ BaskStreamClientSession buildSession(Object c,Object p,Object l) throws BaskStreamProtocolException {return client;}
 }
 class BaskStreamClientSession {
  boolean closed; String getUsername(){return "test";} String getSessionId(){return "test";}

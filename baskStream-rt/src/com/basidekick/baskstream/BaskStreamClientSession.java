@@ -47,7 +47,7 @@ final class BaskStreamClientSession
   static final long REQUEST_TIMEOUT_MILLIS = 10L * 60L * 1000L;
 
   private final BaskStreamWebSocketRuntime runtime;
-  private final BaskStreamJettyWebSocketConnection connection;
+  private final BaskStreamTransport connection;
   private final BUser user;
   private final Context context;
   private final String sessionId;
@@ -91,7 +91,7 @@ final class BaskStreamClientSession
   // Points whose authorization check failed on the last revalidation sweep. Worker thread only.
   private final Set<String> unresolvedAtRevalidation = new java.util.HashSet<String>();
 
-  BaskStreamClientSession(BaskStreamWebSocketRuntime runtime, BaskStreamJettyWebSocketConnection connection, BUser user, Context context)
+  BaskStreamClientSession(BaskStreamWebSocketRuntime runtime, BaskStreamTransport connection, BUser user, Context context)
   {
     this.runtime = runtime;
     this.connection = connection;

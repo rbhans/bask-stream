@@ -676,7 +676,7 @@ public final class BBaskStreamService extends BWebServlet
     {
       if (isWebSocketUpgrade(op))
       {
-        current.handleUpgrade(op.getRequest(), op.getResponse());
+        current.getTransport().handleUpgrade(op.getRequest(), op.getResponse());
         return;
       }
 
