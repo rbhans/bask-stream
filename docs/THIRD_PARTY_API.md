@@ -33,6 +33,8 @@ Responses echo `id` when the operation is request/response based. Push frames su
 These unsolicited frames have no `id`. Clients should tolerate (and may act on) them; unknown ops can be safely ignored.
 
 - `subscriptions_revoked` — emitted when periodic revalidation (`revalidateIntervalSec` above `0`) finds that the connected user can no longer see one or more active subscriptions: a permission or category change, a narrowed `allowedPathPatterns`, or a subscribed component that was deleted. Shape: `{ "op": "subscriptions_revoked", "points": ["slot:/..."], "alarmSubscriptions": ["<source>|<scope>|<limit>|<mode>"], "modelSubscriptions": ["slot:/..."], "reason": "authorization_revoked" }`. The listed subscriptions have already been dropped server-side; a client that still needs them must subscribe again (and will be re-checked). A point whose check fails because it cannot be resolved is dropped only after failing two sweeps in a row, so a brief glitch does not remove it. `alarmSubscriptions` and `modelSubscriptions` were added on 2026-09-25; older clients can ignore them.
+- `resync_required` — the session's event backlog overflowed (a client that reads too slowly, or a burst of changes), so queued events were dropped. Shape: `{ "op": "resync_required", "reason": "event_backlog", "droppedEvents": 1000, "timestamp": ... }`. Re-read whatever the client shows (`read`, `read_alarms`, `browse`); COV continues normally afterwards. Added 2026-09-28.
+- `request_timeout` — a request has been running for more than 10 minutes. Shape: `{ "op": "request_timeout", "requestOp": "write", "elapsedMillis": 600000 }`. The server closes the session (close code `1011`) right after. Split very large batches. Added 2026-09-28.
 - `session_revoked` — emitted just before the server closes the socket (close code `1008`) because the connected user is no longer present in the station. Shape: `{ "op": "session_revoked", "reason": "<text>" }`. Clients should re-authenticate before reconnecting.
 
 ## Supported Operations
@@ -987,6 +989,7 @@ Failures arrive in two ways. A **request** error fails the whole request with an
 | `relation_failed` | entry | Unexpected failure adding/removing a relation. |
 | `relation_not_found` | entry | No matching direct relation to remove. |
 | `relation_rejected` | entry | Niagara rejected the relation add. |
+| `response_too_large` | request | The reply would exceed the 8 MiB outbound limit; request less (smaller depth, limit, time range or field list). The session stays open. |
 | `schedule_failed` | request | Unexpected failure resolving/reading a schedule. |
 | `search_failed` | request | Unexpected failure resolving the search root. |
 | `stale_plan` | request | Principal, target, property, slot or branch changed since preview; also a per-step apply result. |
@@ -1209,6 +1212,17 @@ These changes keep `apiVersion` at `1.6` and add no new fields. Clients that con
 - Histories reached through a point (`slot:/` ORD) are omitted when the user cannot read the history itself.
 - `write` checks invoke permission for each action slot. New per-point code: `forbidden_action`.
 - Model editing rejects link and relation values in `add_slot`, `update`, and nested values. Use `create_link`/`delete_link` and `write_relations` instead.
+
+### Event delivery and limits (2026-09-28)
+
+These changes are additive, apart from the preview gate:
+
+- Point COV values are read when a batch is sent, not when the change fires, so each point appears once per batch with its latest value. `covBatchWindowMillis: 0` still sends each change promptly (`batched: false`).
+- COV, alarm and model notices are prepared on a per-session queue off Niagara's threads. Their `sequence` numbers are strictly increasing in send order.
+- A reply that would exceed 8 MiB returns a `response_too_large` error for that request instead of closing the session.
+- `read_alarms` and alarm snapshots stop after examining 50,000 records. `truncated: true` then comes with `truncatedReason: "examined_limit"`; a normal limit reports `"limit"`.
+- Model subscriptions follow components through rename and move.
+- Model previews (`preview_model_changes` and the convenience operations) now need `modelEditsEnabled`, like apply. Each user may hold 8 open previews.
 
 ### Redacted related objects (2026-09-25)
 

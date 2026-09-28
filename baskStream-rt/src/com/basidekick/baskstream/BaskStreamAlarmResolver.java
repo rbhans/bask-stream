@@ -24,6 +24,8 @@ final class BaskStreamAlarmResolver
 {
   private static final int DEFAULT_LIMIT = 500;
   private static final int MAX_LIMIT = 5000;
+  // Bounds a filtered read (and snapshot-mode alarm events) on a large alarm database.
+  private static final int MAX_EXAMINED = 50000;
 
   private final BBaskStreamService service;
   private final BaskStreamAuthorizer authorizer;
@@ -64,6 +66,7 @@ final class BaskStreamAlarmResolver
 
     List<Object> alarms = new ArrayList<Object>();
     boolean truncated = false;
+    String truncatedReason = null;
     Map<String, BPermissions> classPermissions = new HashMap<String, BPermissions>();
 
     try (AlarmSpaceConnection connection = alarmService.getAlarmDb().getConnection(context))
@@ -73,8 +76,10 @@ final class BaskStreamAlarmResolver
       {
         cursor = openCursor(connection, spec.scope);
         int count = 0;
+        int examined = 0;
         while (cursor.next())
         {
+          if (++examined > MAX_EXAMINED) { truncated = true; truncatedReason = "examined_limit"; break; }
           BAlarmRecord record = cursor.get();
           if (spec.source != null && !matchesSource(record, spec.source))
           {
@@ -84,7 +89,7 @@ final class BaskStreamAlarmResolver
           {
             continue;
           }
-          if (count >= spec.limit) { truncated = true; break; }
+          if (count >= spec.limit) { truncated = true; truncatedReason = "limit"; break; }
           alarms.add(toWire(record, context));
           count++;
         }
@@ -110,6 +115,10 @@ final class BaskStreamAlarmResolver
 
     Map<String, Object> response = result(spec, alarms);
     response.put("truncated", Boolean.valueOf(truncated));
+    if (truncatedReason != null)
+    {
+      response.put("truncatedReason", truncatedReason);
+    }
     return response;
   }
 

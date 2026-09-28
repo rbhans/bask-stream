@@ -20,8 +20,8 @@ final class BaskStreamOperations
     /** Changes station data. Dispatch requires {@code writesEnabled} before the handler runs. */
     WRITES,
     /**
-     * Applies model plans. The plan engine checks {@code modelEditsEnabled} (which implies
-     * {@code writesEnabled}) before the plan and again before each step, so dispatch does not.
+     * Builds or applies model plans. Dispatch requires {@code modelEditsEnabled} (which implies
+     * {@code writesEnabled}); the plan engine checks again before the plan and before each step.
      */
     MODEL_EDITS
   }
@@ -74,18 +74,19 @@ final class BaskStreamOperations
     add("write_relations", Gate.WRITES);
     add("describe_component_types", Gate.NONE);
     add("describe_component", Gate.NONE);
-    // Previews and the convenience names below only store a plan; nothing changes until apply.
-    add("preview_model_changes", Gate.NONE);
+    // Previews and the convenience names below only store a plan, but they are part of editing,
+    // so they need modelEditsEnabled too; describe and plan status stay available.
+    add("preview_model_changes", Gate.MODEL_EDITS);
     add("apply_model_changes", Gate.MODEL_EDITS);
     add("model_plan_status", Gate.NONE);
     add("cancel_model_plan", Gate.NONE);
-    add("create_components", Gate.NONE);
-    add("update_component_properties", Gate.NONE);
-    add("rename_component", Gate.NONE);
-    add("move_components", Gate.NONE);
-    add("delete_components", Gate.NONE);
-    add("create_hierarchy", Gate.NONE);
-    add("configure_hierarchy", Gate.NONE);
+    add("create_components", Gate.MODEL_EDITS);
+    add("update_component_properties", Gate.MODEL_EDITS);
+    add("rename_component", Gate.MODEL_EDITS);
+    add("move_components", Gate.MODEL_EDITS);
+    add("delete_components", Gate.MODEL_EDITS);
+    add("create_hierarchy", Gate.MODEL_EDITS);
+    add("configure_hierarchy", Gate.MODEL_EDITS);
   }
 
   private static void add(String name, Gate gate)

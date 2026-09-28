@@ -109,6 +109,18 @@ Exit: tests with a restricted user show no data from unreadable objects in any r
 
 Exit: a slow-client and burst test leaves other clients responsive, and metrics return to baseline after disconnect.
 
+**Done 2026-09-28 (source, type-checked; station test pending):**
+
+- `BaskStreamEventLane`: each session's event work runs in order on a two-thread shared pool. Niagara callbacks and the scheduler only hand over work. On backlog overflow, the backlog is dropped and a `resync_required` notice is sent.
+- Point COV marks points changed and reads values at flush time. Alarm events (including snapshot-mode queries) and model notices run on the lane. The model fan-out after an apply is queued per session.
+- COV and alarm sequence numbers are atomic and assigned in send order.
+- Model subscriptions are keyed by component handle, and their read check uses the authorizer instead of re-resolving an ORD.
+- Replies over 8 MiB return `response_too_large` instead of closing the session.
+- Alarm reads stop after examining 50,000 records (`truncatedReason`).
+- Previews need `modelEditsEnabled`, and each user may hold 8 open previews (the oldest is dropped first). A full ledger drops the oldest finished result first.
+- Watchdog: a request running more than 10 minutes sends `request_timeout` and closes the session.
+- Not done: a per-response byte budget that truncates browse or search results; the size error covers the failure case.
+
 ### Phase 4: split the session and isolate the transport
 
 - Split `BaskStreamClientSession` into `SessionLifecycle`, `PointSubscriptions` (direct, groups, leases), `CovBatcher`, `AlarmStream` and `ModelStream`.

@@ -84,6 +84,13 @@ public class ModelPlanRegression {
     check("applied".equals(plans.status("u",(String)running.get("planId"),now()).get("state")));
     check(BaskStreamModelPlans.digest(BaskStreamModelPlans.map("a",1,"b",2)).equals(BaskStreamModelPlans.digest(BaskStreamModelPlans.map("b",2,"a",1))));
     check(!BaskStreamModelPlans.digest(BaskStreamModelPlans.map("a","1")).equals(BaskStreamModelPlans.digest(BaskStreamModelPlans.map("a",1))));
+    BaskStreamModelPlans ledger = new BaskStreamModelPlans(); int[] none={0};
+    Map<String,Object> otherUser=ledger.preview("v",steps(none,1),()->{},audit,now());
+    Map<String,Object> first=ledger.preview("w",steps(none,1),()->{},audit,now());
+    for (int i=0;i<BaskStreamModelPlans.MAX_PREVIEWS_PER_USER;i++) ledger.preview("w",steps(none,1),()->{},audit,now());
+    rejects("plan_not_found",()->ledger.status("w",(String)first.get("planId"),now()));
+    check("preview".equals(ledger.status("v",(String)otherUser.get("planId"),now()).get("state")));
+    System.out.println("PASS: per-user preview cap drops that user's oldest preview only");
     System.out.println("PASS: preview isolation, principal/hash binding, master-off, stale checks, reconnect deduplication, key conflicts, stop-on-failure, cancellation, expiry, audit failure after write, concurrent status/deduplication/apply exclusion, canonical hashing");
   }
 }

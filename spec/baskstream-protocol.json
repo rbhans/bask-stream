@@ -1718,7 +1718,7 @@
     },
     "preview_model_changes": {
       "summary": "Ungated: validate 1-100 ordered changes and store a plan (id, hash, diff, expiry); no station edits.",
-      "gate": "none",
+      "gate": "modelEdits",
       "reply": "model_result",
       "request": {
         "type": "object",
@@ -1858,7 +1858,7 @@
     },
     "create_components": {
       "summary": "Ungated preview: compiles to 'create' changes and returns a plan; apply with apply_model_changes.",
-      "gate": "none",
+      "gate": "modelEdits",
       "reply": "model_result",
       "request": {
         "type": "object",
@@ -1977,7 +1977,7 @@
     },
     "update_component_properties": {
       "summary": "Ungated preview: compiles to 'update' changes and returns a plan; apply with apply_model_changes.",
-      "gate": "none",
+      "gate": "modelEdits",
       "reply": "model_result",
       "request": {
         "type": "object",
@@ -2059,7 +2059,7 @@
     },
     "rename_component": {
       "summary": "Ungated preview: compiles to 'rename' changes and returns a plan; apply with apply_model_changes.",
-      "gate": "none",
+      "gate": "modelEdits",
       "reply": "model_result",
       "request": {
         "type": "object",
@@ -2118,7 +2118,7 @@
     },
     "move_components": {
       "summary": "Ungated preview: compiles to 'move' changes and returns a plan; apply with apply_model_changes.",
-      "gate": "none",
+      "gate": "modelEdits",
       "reply": "model_result",
       "request": {
         "type": "object",
@@ -2183,7 +2183,7 @@
     },
     "delete_components": {
       "summary": "Ungated preview: compiles to 'delete' changes and returns a plan; apply with apply_model_changes.",
-      "gate": "none",
+      "gate": "modelEdits",
       "reply": "model_result",
       "request": {
         "type": "object",
@@ -2232,7 +2232,7 @@
     },
     "create_hierarchy": {
       "summary": "Ungated preview: compiles to 'create_hierarchy' (typeSpec fixed to hierarchy:Hierarchy) and returns a plan.",
-      "gate": "none",
+      "gate": "modelEdits",
       "reply": "model_result",
       "request": {
         "type": "object",
@@ -2345,7 +2345,7 @@
     },
     "configure_hierarchy": {
       "summary": "Ungated preview: compiles to 'configure_hierarchy' property edits on a hierarchy:Hierarchy and returns a plan.",
-      "gate": "none",
+      "gate": "modelEdits",
       "reply": "model_result",
       "request": {
         "type": "object",
@@ -2487,6 +2487,21 @@
       "keys": [
         "code",
         "message"
+      ]
+    },
+    "resync_required": {
+      "summary": "The session's event backlog overflowed and queued events were dropped; re-read what the client shows (read, read_alarms, browse). COV resumes normally.",
+      "keys": [
+        "reason",
+        "droppedEvents",
+        "timestamp"
+      ]
+    },
+    "request_timeout": {
+      "summary": "A request ran longer than 10 minutes; the server closes the session (close code 1011) right after this notice.",
+      "keys": [
+        "requestOp",
+        "elapsedMillis"
       ]
     }
   },
@@ -2678,6 +2693,10 @@
     "relation_rejected": {
       "meaning": "Niagara rejected the relation add.",
       "scope": "entry"
+    },
+    "response_too_large": {
+      "meaning": "The reply would exceed the 8 MiB outbound limit; request less (smaller depth, limit, time range or field list). The session stays open.",
+      "scope": "request"
     },
     "schedule_failed": {
       "meaning": "Unexpected failure resolving/reading a schedule.",

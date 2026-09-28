@@ -49,6 +49,9 @@ final class BaskStreamWebSocketRuntime
   private final BaskStreamModelResolver modelResolver;
   private final BaskStreamSubscriptionManager subscriptions;
   private final ScheduledExecutorService scheduler;
+  // Shared by every session's event lane: snapshots, alarm queries and notices run here, not
+  // on Niagara callback threads or the scheduler.
+  private final java.util.concurrent.ExecutorService eventPool;
   private volatile WebSocketServerFactory socketFactory;
 
   BaskStreamWebSocketRuntime(BBaskStreamService service)
@@ -65,9 +68,21 @@ final class BaskStreamWebSocketRuntime
     this.modelResolver = new BaskStreamModelResolver(service);
     this.subscriptions = new BaskStreamSubscriptionManager(service);
     java.util.concurrent.ScheduledThreadPoolExecutor scheduled =
-        new java.util.concurrent.ScheduledThreadPoolExecutor(1, new BaskStreamThreadFactory());
+        new java.util.concurrent.ScheduledThreadPoolExecutor(1, new BaskStreamThreadFactory("baskStream-websocket-"));
     scheduled.setRemoveOnCancelPolicy(true);
     this.scheduler = scheduled;
+    this.eventPool = java.util.concurrent.Executors.newFixedThreadPool(2, new BaskStreamThreadFactory("baskStream-events-"));
+    // Watchdog: close sessions whose request has run longer than the limit.
+    scheduled.scheduleWithFixedDelay(() -> {
+      try
+      {
+        subscriptions.checkWatchdogs(System.currentTimeMillis());
+      }
+      catch (Throwable e)
+      {
+        service.LOG.log(Level.WARNING, "baskStream watchdog sweep failed", e);
+      }
+    }, 15L, 15L, TimeUnit.SECONDS);
   }
 
   void handleUpgrade(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException
@@ -462,6 +477,11 @@ final class BaskStreamWebSocketRuntime
     subscriptions.refreshMetrics();
   }
 
+  java.util.concurrent.Executor getEventPool()
+  {
+    return eventPool;
+  }
+
   ScheduledFuture<?> schedule(Runnable task, long delayMillis)
   {
     long safeDelay = Math.max(0L, delayMillis);
@@ -509,6 +529,7 @@ final class BaskStreamWebSocketRuntime
   {
     subscriptions.shutdown();
     scheduler.shutdownNow();
+    eventPool.shutdownNow();
     WebSocketServerFactory factory = socketFactory;
     socketFactory = null;
     if (factory != null)
@@ -526,12 +547,18 @@ final class BaskStreamWebSocketRuntime
 
   private static final class BaskStreamThreadFactory implements ThreadFactory
   {
+    private final String prefix;
     private int next;
 
-    @Override
-    public Thread newThread(Runnable task)
+    BaskStreamThreadFactory(String prefix)
     {
-      Thread thread = new Thread(task, "baskStream-websocket-" + (++next));
+      this.prefix = prefix;
+    }
+
+    @Override
+    public synchronized Thread newThread(Runnable task)
+    {
+      Thread thread = new Thread(task, prefix + (++next));
       thread.setDaemon(true);
       return thread;
     }

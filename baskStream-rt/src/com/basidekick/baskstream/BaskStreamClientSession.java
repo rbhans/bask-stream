@@ -38,6 +38,13 @@ final class BaskStreamClientSession
   private static final int MAX_LEASE_SEC = 86400;
   private static final int MAX_POINTS_PER_REQUEST = 1000;
   private static final int MAX_MODEL_BASES_PER_REQUEST = 100;
+  // Replies above this size are replaced by a response_too_large error instead of risking the
+  // transport's 16 MiB queue limit, which would close the whole session.
+  private static final int MAX_OUTBOUND_BYTES = 8 * 1024 * 1024;
+  // Queued event tasks per session before the backlog is dropped for a resync notice.
+  private static final int MAX_QUEUED_EVENTS = 1000;
+  // A request running longer than this closes the session (see checkWatchdog).
+  static final long REQUEST_TIMEOUT_MILLIS = 10L * 60L * 1000L;
 
   private final BaskStreamWebSocketRuntime runtime;
   private final BaskStreamJettyWebSocketConnection connection;
@@ -66,9 +73,14 @@ final class BaskStreamClientSession
   private final ExecutorService worker;
   private final Object subscriptionLock = new Object();
   private final Object covLock = new Object();
-  private final LinkedHashMap<String, Object> pendingCov = new LinkedHashMap<String, Object>();
-  private long covSequence;
-  private long alarmSequence;
+  // Points changed since the last COV flush. Values are read at flush time, so the latest wins.
+  private final LinkedHashSet<String> pendingCov = new LinkedHashSet<String>();
+  private final java.util.concurrent.atomic.AtomicLong covSequence = new java.util.concurrent.atomic.AtomicLong();
+  private final java.util.concurrent.atomic.AtomicLong alarmSequence = new java.util.concurrent.atomic.AtomicLong();
+  private final BaskStreamEventLane events;
+  private final BaskStreamAuthorizer authorizer;
+  private volatile long requestStartedAt;
+  private volatile String requestOp;
   private final java.util.concurrent.atomic.AtomicLong modelSequence = new java.util.concurrent.atomic.AtomicLong();
   private int pendingCovEventCount;
   private ScheduledFuture<?> covFlushFuture;
@@ -87,6 +99,9 @@ final class BaskStreamClientSession
     this.context = context;
     this.userMountedAtStart = user.isMounted();
     this.sessionId = UUID.randomUUID().toString();
+    this.authorizer = new BaskStreamAuthorizer(runtime.getService());
+    this.events = new BaskStreamEventLane(runtime.getEventPool(), MAX_QUEUED_EVENTS,
+        dropped -> () -> sendResync(dropped), runtime.getService().LOG);
     this.worker = new java.util.concurrent.ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
         new java.util.concurrent.ArrayBlockingQueue<Runnable>(32), new ThreadFactory()
     {
@@ -265,6 +280,8 @@ final class BaskStreamClientSession
       Map<String, Object> request = runtime.getCodec().decodeMessage(payload, runtime.getService().getMaxMessageBytesValue());
       String op = runtime.getCodec().requireString(request, "op");
       id = runtime.getCodec().optionalString(request, "id");
+      requestOp = op;
+      requestStartedAt = System.currentTimeMillis();
 
       BaskStreamOperations.Operation operation = BaskStreamOperations.get(op);
       RequestHandler handler = operation == null ? null : handlers.get(op);
@@ -277,6 +294,10 @@ final class BaskStreamClientSession
       {
         runtime.getService().requireWritesEnabled();
       }
+      else if (operation.gate == BaskStreamOperations.Gate.MODEL_EDITS)
+      {
+        runtime.getService().requireModelEditsEnabled();
+      }
       handler.handle(id, op, request);
     }
     catch (BaskStreamProtocolException e)
@@ -288,6 +309,34 @@ final class BaskStreamClientSession
       runtime.getService().LOG.log(Level.WARNING, "baskStream request handling failed for session " + sessionId, e);
       sendError(id, "internal_error", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
     }
+    finally
+    {
+      requestStartedAt = 0L;
+    }
+  }
+
+  /**
+   * Called periodically from the runtime. A request that has run longer than
+   * REQUEST_TIMEOUT_MILLIS closes the session, so a stuck request cannot silently freeze a
+   * client. Java cannot stop a thread that ignores interrupts; the close at least frees the
+   * client and interrupts waits and batches.
+   */
+  void checkWatchdog(long now)
+  {
+    long started = requestStartedAt;
+    if (started == 0L || closed.get() || now - started < REQUEST_TIMEOUT_MILLIS)
+    {
+      return;
+    }
+    String op = requestOp;
+    runtime.getService().audit("request_timeout", "user=" + user.getUsername() + " session=" + sessionId
+        + " op=" + op + " elapsedMillis=" + (now - started));
+    Map<String, Object> notice = baseMessage("request_timeout", null);
+    notice.put("requestOp", op);
+    notice.put("elapsedMillis", Long.valueOf(now - started));
+    send(notice);
+    connection.closeTransport(1011, "Request exceeded the time limit.");
+    close("request timeout");
   }
 
   void close(String reason)
@@ -303,6 +352,7 @@ final class BaskStreamClientSession
     try
     {
       connection.closeTransport(1000, "Session closed.");
+      events.close();
       synchronized (covLock)
       {
         pendingCov.clear();
@@ -1053,12 +1103,12 @@ final class BaskStreamClientSession
 
   private void subscribeModelComponent(BComponent component, int depth) throws BaskStreamProtocolException
   {
-    String key = componentKey(component);
+    String key = modelKey(component);
     if (key == null)
     {
       return;
     }
-    if (!BaskStreamAccessPolicy.isAllowed(runtime.getService(), key) || !canReadModelComponent(component))
+    if (!canReadModelComponent(component))
     {
       return;
     }
@@ -1087,7 +1137,7 @@ final class BaskStreamClientSession
 
   private void unsubscribeModelComponent(BComponent component)
   {
-    String key = componentKey(component);
+    String key = modelKey(component);
     if (key != null)
     {
       modelSubscriptions.remove(key);
@@ -1100,27 +1150,22 @@ final class BaskStreamClientSession
     }
   }
 
+  /** Current slot path, for policy checks and for what clients see. */
   private String componentKey(BComponent component)
   {
     return component == null || component.getSlotPath() == null ? null : component.getSlotPath().toString();
   }
 
+  /** Subscription key: the component's handle, which survives rename and move. */
+  private String modelKey(BComponent component)
+  {
+    return component == null || component.getHandle() == null ? null : String.valueOf(component.getHandle());
+  }
+
   private boolean canReadModelComponent(BComponent component)
   {
-    String key = componentKey(component);
-    if (key == null || !BaskStreamAccessPolicy.isAllowed(runtime.getService(), key))
-    {
-      return false;
-    }
-    try
-    {
-      OrdTarget target = BOrd.make(key).resolve(runtime.getService(), context);
-      return target.canRead();
-    }
-    catch (Exception e)
-    {
-      return false;
-    }
+    // Deleted components have no slot path and fail here, which also prunes them on revalidation.
+    return component != null && component.getSlotPath() != null && authorizer.canRead(component, context);
   }
 
   private Map<String, Object> componentSummary(BComponent component)
@@ -1356,33 +1401,22 @@ final class BaskStreamClientSession
     // No lease sweep here: it takes subscriptionLock, which the worker can hold for a whole
     // batch, and this runs on Niagara's event thread. The lease timer handles expiry.
 
+    // Runs on a Niagara event thread: only note which points changed. The event lane reads
+    // their values when the batch is flushed.
     String slotName = event.getSlotName();
-    List<Object> changes = new ArrayList<Object>();
+    List<String> changed = new ArrayList<String>();
     for (BaskStreamPointResolver.ResolvedPoint point : subscriptions.values())
     {
-      if (point.getComponent() == null || !point.getComponent().equals(event.getSourceComponent()))
+      if (point.getComponent() != null && point.getComponent().equals(event.getSourceComponent())
+          && point.isTriggeredBy(slotName))
       {
-        continue;
-      }
-
-      if (!point.isTriggeredBy(slotName))
-      {
-        continue;
-      }
-
-      try
-      {
-        changes.add(runtime.getResolver().snapshot(point, context).toWire());
-      }
-      catch (BaskStreamProtocolException e)
-      {
-        changes.add(errorEntry(point.getPointOrd(), e.getCode(), e.getMessage()));
+        changed.add(point.getPointOrd());
       }
     }
 
-    if (!changes.isEmpty())
+    if (!changed.isEmpty())
     {
-      queueCovChanges(changes);
+      queueCovChanges(changed);
     }
   }
 
@@ -1392,8 +1426,19 @@ final class BaskStreamClientSession
     {
       return;
     }
+    // Runs on the alarm service's thread: copy the record and let the lane do the work,
+    // including any snapshot-mode alarm database query.
+    BAlarmRecord fired = alarmRecord(event);
+    final BAlarmRecord record = fired == null ? null : (BAlarmRecord) fired.newCopy();
+    events.submit(() -> deliverAlarm(record));
+  }
 
-    BAlarmRecord record = alarmRecord(event);
+  private void deliverAlarm(BAlarmRecord record)
+  {
+    if (closed.get())
+    {
+      return;
+    }
     if (record != null && !runtime.getAlarmResolver().canView(record, context))
     {
       return;
@@ -1409,7 +1454,7 @@ final class BaskStreamClientSession
         }
 
         Map<String, Object> message = baseMessage("alarm_cov", null);
-        message.put("sequence", Long.valueOf(++alarmSequence));
+        message.put("sequence", Long.valueOf(alarmSequence.incrementAndGet()));
         message.put("timestamp", Long.valueOf(Clock.millis()));
         message.put("source", spec.source);
         message.put("scope", spec.scope);
@@ -1446,21 +1491,27 @@ final class BaskStreamClientSession
     {
       return;
     }
+    final BComponent source = event.getSourceComponent();
+    final int eventId = event.getId();
+    final String slot = event.getSlotName();
+    final BValue value = event.getValue();
+    events.submit(() -> deliverModelEvent(source, eventId, slot, value));
+  }
 
-    BComponent source = event.getSourceComponent();
-    if (!canReadModelComponent(source))
+  private void deliverModelEvent(BComponent source, int eventId, String slot, BValue value)
+  {
+    if (closed.get() || !canReadModelComponent(source))
     {
       return;
     }
     Map<String, Object> message = baseMessage("model_cov", null);
     message.put("sequence", Long.valueOf(modelSequence.incrementAndGet()));
     message.put("timestamp", Long.valueOf(Clock.millis()));
-    message.put("eventId", Long.valueOf(event.getId()));
-    message.put("event", modelEventName(event.getId()));
-    message.put("slot", event.getSlotName());
+    message.put("eventId", Long.valueOf(eventId));
+    message.put("event", modelEventName(eventId));
+    message.put("slot", slot);
     message.put("source", componentSummary(source));
-    BValue value = event.getValue();
-    if (value != null && !BaskStreamModelResolver.sensitive(event.getSlotName(), value.getType().toString()))
+    if (value != null && !BaskStreamModelResolver.sensitive(slot, value.getType().toString()))
     {
       message.put("valueType", value.getType().toString());
       message.put("value", value.toString(context));
@@ -1469,7 +1520,14 @@ final class BaskStreamClientSession
     send(message);
   }
 
+  /** Called on the applying session's worker; the matching and sending happen on this session's lane. */
   void modelChanged(Set<String> affected)
+  {
+    if (closed.get()) return;
+    events.submit(() -> deliverModelChanged(affected));
+  }
+
+  private void deliverModelChanged(Set<String> affected)
   {
     if (closed.get()) return;
     Set<String> bases = new LinkedHashSet<String>();
@@ -1542,64 +1600,71 @@ final class BaskStreamClientSession
     return value instanceof BAlarmRecord ? (BAlarmRecord) value : null;
   }
 
-  private void queueCovChanges(List<Object> changes)
+  private void queueCovChanges(List<String> pointOrds)
   {
-    int delayMillis = runtime.getService().getCovBatchWindowMillisValue();
-    if (delayMillis <= 0)
-    {
-      sendCov(changes, false, 1);
-      return;
-    }
-
+    // A zero window still goes through the scheduler and the lane, just without waiting.
+    int delayMillis = Math.max(0, runtime.getService().getCovBatchWindowMillisValue());
     synchronized (covLock)
     {
-      for (Object change : changes)
+      if (closed.get())
       {
-        String key = pointKey(change);
-        if (key == null)
-        {
-          key = "entry-" + pendingCov.size();
-        }
-        if (pendingCov.containsKey(key))
-        {
-          pendingCov.remove(key);
-        }
-        pendingCov.put(key, change);
+        return;
       }
+      pendingCov.addAll(pointOrds);
       pendingCovEventCount++;
       if (covFlushFuture == null || covFlushFuture.isDone())
       {
-        covFlushFuture = runtime.schedule(new Runnable()
-        {
-          @Override
-          public void run()
-          {
-            flushPendingCov();
-          }
-        }, delayMillis);
+        // The scheduler only hands the flush to this session's lane; it never snapshots or sends.
+        covFlushFuture = runtime.schedule(() -> events.submit(this::flushPendingCov), delayMillis);
       }
     }
   }
 
   private void flushPendingCov()
   {
-    List<Object> changes;
+    List<String> pointOrds;
     int sourceEvents;
     synchronized (covLock)
     {
+      covFlushFuture = null;
       if (pendingCov.isEmpty())
       {
-        covFlushFuture = null;
         pendingCovEventCount = 0;
         return;
       }
-      changes = new ArrayList<Object>(pendingCov.values());
+      pointOrds = new ArrayList<String>(pendingCov);
       pendingCov.clear();
       sourceEvents = pendingCovEventCount;
       pendingCovEventCount = 0;
-      covFlushFuture = null;
     }
-    sendCov(changes, true, sourceEvents);
+    List<Object> changes = new ArrayList<Object>(pointOrds.size());
+    for (String pointOrd : pointOrds)
+    {
+      BaskStreamPointResolver.ResolvedPoint point = subscriptions.get(pointOrd);
+      if (point == null)
+      {
+        continue; // Unsubscribed since it changed.
+      }
+      try
+      {
+        changes.add(runtime.getResolver().snapshot(point, context).toWire());
+      }
+      catch (BaskStreamProtocolException e)
+      {
+        changes.add(errorEntry(pointOrd, e.getCode(), e.getMessage()));
+      }
+    }
+    sendCov(changes, runtime.getService().getCovBatchWindowMillisValue() > 0, sourceEvents);
+  }
+
+  /** Sent after the event lane dropped a backlog: the client should re-read what it shows. */
+  private void sendResync(int dropped)
+  {
+    Map<String, Object> notice = baseMessage("resync_required", null);
+    notice.put("reason", "event_backlog");
+    notice.put("droppedEvents", Long.valueOf(dropped));
+    notice.put("timestamp", Long.valueOf(Clock.millis()));
+    send(notice);
   }
 
   private void sendCov(List<Object> changes, boolean batched, int sourceEvents)
@@ -1609,22 +1674,12 @@ final class BaskStreamClientSession
       return;
     }
     Map<String, Object> cov = baseMessage("cov", null);
-    cov.put("sequence", Long.valueOf(++covSequence));
+    cov.put("sequence", Long.valueOf(covSequence.incrementAndGet()));
     cov.put("timestamp", Long.valueOf(Clock.millis()));
     cov.put("batched", Boolean.valueOf(batched));
     cov.put("sourceEvents", Long.valueOf(sourceEvents));
     cov.put("points", changes);
     send(cov);
-  }
-
-  private String pointKey(Object change)
-  {
-    if (!(change instanceof Map))
-    {
-      return null;
-    }
-    Object point = ((Map<?, ?>) change).get("point");
-    return point instanceof String ? (String) point : null;
   }
 
   private int getPendingCovPointCount()
@@ -1886,7 +1941,9 @@ final class BaskStreamClientSession
         {
           modelSubscriptions.remove(entry.getKey());
           modelSubscriber.unsubscribe(entry.getValue(), context);
-          revokedModels.add(entry.getKey());
+          // Report the last known path, which means more to a client than a handle.
+          String path = componentKey(entry.getValue());
+          revokedModels.add(path != null ? path : "handle:" + entry.getKey());
         }
       }
 
@@ -2058,7 +2115,17 @@ final class BaskStreamClientSession
 
     try
     {
-      connection.send(runtime.getCodec().encodeMessage(message));
+      byte[] frame = runtime.getCodec().encodeMessage(message);
+      if (frame.length > MAX_OUTBOUND_BYTES)
+      {
+        Object id = message.get("id");
+        Map<String, Object> error = baseMessage("error", id instanceof String ? (String) id : null);
+        error.put("code", "response_too_large");
+        error.put("message", "The '" + message.get("op") + "' reply would be " + frame.length + " bytes, over the "
+            + MAX_OUTBOUND_BYTES + "-byte limit. Request less: a smaller depth, limit, time range or field list.");
+        frame = runtime.getCodec().encodeMessage(error);
+      }
+      connection.send(frame);
     }
     catch (IOException e)
     {

@@ -15,6 +15,7 @@ final class BaskStreamModelPlans
   static final long PREVIEW_TTL = 5 * 60 * 1000L;
   static final long RESULT_TTL = 30 * 60 * 1000L;
   static final int MAX_PLANS = 32;
+  static final int MAX_PREVIEWS_PER_USER = 8;
   interface Check { void run() throws Exception; }
   interface Work { Map<String, Object> run() throws Exception; }
   interface Audit { void record(String event, String plan, Object detail) throws Exception; }
@@ -42,6 +43,16 @@ final class BaskStreamModelPlans
       Audit audit, long now) throws Exception
   {
     expire(now);
+    // One user cannot fill the ledger: their oldest unapplied preview makes room for the new one.
+    Plan oldestPreview = null;
+    int previews = 0;
+    for (Plan q : plans.values())
+      if (user.equals(q.user) && "preview".equals(q.state)) { previews++; if (oldestPreview == null) oldestPreview = q; }
+    if (previews >= MAX_PREVIEWS_PER_USER) plans.remove(oldestPreview.id);
+    // Then make room by dropping the oldest finished result before refusing anyone.
+    if (plans.size() >= MAX_PLANS)
+      for (Plan q : plans.values())
+        if (!"preview".equals(q.state) && !"applying".equals(q.state)) { plans.remove(q.id); break; }
     if (plans.size() >= MAX_PLANS) throw error("plan_limit", "Plan ledger is full; wait for expiry or cancel previews.");
     Plan p = new Plan();
     p.id = UUID.randomUUID().toString(); p.user = user; p.steps = steps; p.check = check;
