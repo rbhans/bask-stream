@@ -50,7 +50,8 @@ for name in names:
     if name in spec['operations']:
         check(spec['operations'][name].get('gate') == gates[name],
               f'spec gate for {name} is {spec["operations"][name].get("gate")}, table says {gates[name]}')
-check(spec.get('apiVersion') in session, 'spec apiVersion does not appear in the session source')
+check('"' + str(spec.get('apiVersion')) + '"' in java('BaskStreamCapabilities'),
+      'spec apiVersion does not match the version BaskStreamCapabilities reports')
 
 # 4. Error codes: every code raised in source is in the spec, and every spec code exists in source.
 sources = '\n'.join(p.read_text() for p in src.glob('*.java') if not p.name.startswith('._'))

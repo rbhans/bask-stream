@@ -34,10 +34,9 @@ import javax.baja.user.BUser;
 
 final class BaskStreamClientSession
 {
-  private static final int MAX_GROUP_NAME_LENGTH = 128;
-  private static final int MAX_LEASE_SEC = 86400;
-  private static final int MAX_POINTS_PER_REQUEST = 1000;
-  private static final int MAX_MODEL_BASES_PER_REQUEST = 100;
+  static final int MAX_GROUP_NAME_LENGTH = 128;
+  static final int MAX_LEASE_SEC = 86400;
+  static final int MAX_POINTS_PER_REQUEST = 1000;
   // Replies above this size are replaced by a response_too_large error instead of risking the
   // transport's 16 MiB queue limit, which would close the whole session.
   private static final int MAX_OUTBOUND_BYTES = 8 * 1024 * 1024;
@@ -46,50 +45,31 @@ final class BaskStreamClientSession
   // A request running longer than this closes the session (see checkWatchdog).
   static final long REQUEST_TIMEOUT_MILLIS = 10L * 60L * 1000L;
 
-  private final BaskStreamWebSocketRuntime runtime;
+  final BaskStreamWebSocketRuntime runtime;
   private final BaskStreamTransport connection;
-  private final BUser user;
-  private final Context context;
-  private final String sessionId;
+  final BUser user;
+  final Context context;
+  final String sessionId;
   // Baseline mounted state of the authenticated principal. If the principal is a live station
   // component it is mounted here and a later unmount means the user was removed (tear down). If
   // the handshake hands back a detached copy (never mounted), this stays false and we never use
   // the unmount signal — avoiding a false mass-disconnect on every session.
   private final boolean userMountedAtStart;
-  private final Subscriber subscriber;
-  private final Subscriber alarmSubscriber;
-  private final Subscriber modelSubscriber;
-  private final Map<String, BaskStreamPointResolver.ResolvedPoint> subscriptions =
-      new ConcurrentHashMap<String, BaskStreamPointResolver.ResolvedPoint>();
-  private final Set<String> directSubscriptions =
-      Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
-  private final Map<String, SubscriptionGroup> subscriptionGroups =
-      new ConcurrentHashMap<String, SubscriptionGroup>();
-  private final Map<String, BaskStreamAlarmResolver.AlarmSubscriptionSpec> alarmSubscriptions =
-      new ConcurrentHashMap<String, BaskStreamAlarmResolver.AlarmSubscriptionSpec>();
-  private final Map<String, BComponent> modelSubscriptions =
-      new ConcurrentHashMap<String, BComponent>();
-  private final AtomicBoolean closed = new AtomicBoolean(false);
-  private final ExecutorService worker;
-  private final Object subscriptionLock = new Object();
-  private final Object covLock = new Object();
-  // Points changed since the last COV flush. Values are read at flush time, so the latest wins.
-  private final LinkedHashSet<String> pendingCov = new LinkedHashSet<String>();
-  private final java.util.concurrent.atomic.AtomicLong covSequence = new java.util.concurrent.atomic.AtomicLong();
-  private final java.util.concurrent.atomic.AtomicLong alarmSequence = new java.util.concurrent.atomic.AtomicLong();
-  private final BaskStreamEventLane events;
-  private final BaskStreamAuthorizer authorizer;
+  private final BaskStreamAlarmStream alarms;
+  private final BaskStreamModelStream models;
+  final AtomicBoolean closed = new AtomicBoolean(false);
+  final ExecutorService worker;
+  final BaskStreamPointSubscriptions points;
+  final BaskStreamCovBatcher cov;
+  private final BaskStreamRequests requests;
+  private final BaskStreamCapabilities capabilities;
+  private final Object timerLock = new Object();
+  final BaskStreamEventLane events;
+  final BaskStreamAuthorizer authorizer;
   private volatile long requestStartedAt;
   private volatile String requestOp;
-  private final java.util.concurrent.atomic.AtomicLong modelSequence = new java.util.concurrent.atomic.AtomicLong();
-  private int pendingCovEventCount;
-  private ScheduledFuture<?> covFlushFuture;
-  private ScheduledFuture<?> leaseSweepFuture;
-  private long leaseSweepAt;
   private ScheduledFuture<?> revalidateFuture;
   private final Map<String, RequestHandler> handlers = bindHandlers();
-  // Points whose authorization check failed on the last revalidation sweep. Worker thread only.
-  private final Set<String> unresolvedAtRevalidation = new java.util.HashSet<String>();
 
   BaskStreamClientSession(BaskStreamWebSocketRuntime runtime, BaskStreamTransport connection, BUser user, Context context)
   {
@@ -122,30 +102,12 @@ final class BaskStreamClientSession
         releaseSubscriptions();
       }
     };
-    this.subscriber = Subscriber.make(this::onComponentEvent);
-    this.subscriber.setMask(BComponentEventMask.PROPERTY_EVENTS);
-    this.alarmSubscriber = Subscriber.make(this::onAlarmEvent);
-    this.alarmSubscriber.setMask(BComponentEventMask.make(new int[] { BComponentEvent.TOPIC_FIRED }));
-    this.modelSubscriber = Subscriber.make(this::onModelEvent);
-    this.modelSubscriber.setMask(BComponentEventMask.make(new int[] {
-      BComponentEvent.PROPERTY_ADDED,
-      BComponentEvent.PROPERTY_REMOVED,
-      BComponentEvent.PROPERTY_RENAMED,
-      BComponentEvent.PROPERTIES_REORDERED,
-      BComponentEvent.FLAGS_CHANGED,
-      BComponentEvent.FACETS_CHANGED,
-      BComponentEvent.KNOB_ADDED,
-      BComponentEvent.KNOB_REMOVED,
-      BComponentEvent.RECATEGORIZED,
-      BComponentEvent.COMPONENT_PARENTED,
-      BComponentEvent.COMPONENT_UNPARENTED,
-      BComponentEvent.COMPONENT_RENAMED,
-      BComponentEvent.COMPONENT_REORDERED,
-      BComponentEvent.COMPONENT_FLAGS_CHANGED,
-      BComponentEvent.COMPONENT_FACETS_CHANGED,
-      BComponentEvent.RELATION_KNOB_ADDED,
-      BComponentEvent.RELATION_KNOB_REMOVED
-    }));
+    this.points = new BaskStreamPointSubscriptions(this);
+    this.cov = new BaskStreamCovBatcher(this, points.subscriptions);
+    this.requests = new BaskStreamRequests(this);
+    this.capabilities = new BaskStreamCapabilities(this);
+    this.alarms = new BaskStreamAlarmStream(this);
+    this.models = new BaskStreamModelStream(this);
   }
 
   String getUsername()
@@ -160,22 +122,22 @@ final class BaskStreamClientSession
 
   int getSubscriptionCount()
   {
-    return subscriptions.size() + alarmSubscriptions.size() + modelSubscriptions.size();
+    return points.count() + alarms.count() + models.count();
   }
 
   int getPointSubscriptionCount()
   {
-    return subscriptions.size();
+    return points.count();
   }
 
   int getAlarmSubscriptionCount()
   {
-    return alarmSubscriptions.size();
+    return alarms.count();
   }
 
   int getModelSubscriptionCount()
   {
-    return modelSubscriptions.size();
+    return models.count();
   }
 
   void onBinary(final byte[] payload)
@@ -222,40 +184,40 @@ final class BaskStreamClientSession
   {
     Map<String, RequestHandler> bound = new java.util.HashMap<String, RequestHandler>();
     bound.put("ping", (id, op, request) -> sendPong(id));
-    bound.put("capabilities", (id, op, request) -> handleCapabilities(id));
-    bound.put("browse", (id, op, request) -> handleBrowse(id, request));
-    bound.put("describe", (id, op, request) -> handleDescribe(id, request));
-    bound.put("search", (id, op, request) -> handleSearch(id, request));
-    bound.put("read", (id, op, request) -> handleRead(id, request));
-    bound.put("subscribe", (id, op, request) -> handleSubscribe(id, request));
-    bound.put("unsubscribe", (id, op, request) -> handleUnsubscribe(request));
-    bound.put("replace_subscriptions", (id, op, request) -> handleReplaceSubscriptions(id, request));
-    bound.put("renew_subscriptions", (id, op, request) -> handleRenewSubscriptions(id, request));
-    bound.put("release_subscriptions", (id, op, request) -> handleReleaseSubscriptions(id, request));
-    bound.put("subscription_status", (id, op, request) -> handleSubscriptionStatus(id, request));
-    bound.put("write", (id, op, request) -> handleWrite(id, request));
-    bound.put("describe_write", (id, op, request) -> handleDescribeWrite(id, request));
-    bound.put("read_history", (id, op, request) -> handleReadHistory(id, request));
-    bound.put("describe_history", (id, op, request) -> handleDescribeHistory(id, request));
-    bound.put("read_alarms", (id, op, request) -> handleReadAlarms(id, request));
-    bound.put("ack_alarm", (id, op, request) -> handleAckAlarms(id, request));
-    bound.put("ack_alarms", (id, op, request) -> handleAckAlarms(id, request));
-    bound.put("clear_alarm", (id, op, request) -> handleClearAlarms(id, request));
-    bound.put("clear_alarms", (id, op, request) -> handleClearAlarms(id, request));
-    bound.put("subscribe_alarms", (id, op, request) -> handleSubscribeAlarms(id, request));
-    bound.put("unsubscribe_alarms", (id, op, request) -> handleUnsubscribeAlarms(id, request));
-    bound.put("read_schedule", (id, op, request) -> handleReadSchedule(id, request));
-    bound.put("subscribe_model", (id, op, request) -> handleSubscribeModel(id, request));
-    bound.put("unsubscribe_model", (id, op, request) -> handleUnsubscribeModel(id, request));
-    bound.put("read_tags", (id, op, request) -> handleReadTags(id, request));
-    bound.put("write_tags", (id, op, request) -> handleWriteTags(id, request));
-    bound.put("write_relations", (id, op, request) -> handleWriteRelations(id, request));
+    bound.put("capabilities", (id, op, request) -> capabilities.handleCapabilities(id));
+    bound.put("browse", (id, op, request) -> requests.handleBrowse(id, request));
+    bound.put("describe", (id, op, request) -> requests.handleDescribe(id, request));
+    bound.put("search", (id, op, request) -> requests.handleSearch(id, request));
+    bound.put("read", (id, op, request) -> requests.handleRead(id, request));
+    bound.put("subscribe", (id, op, request) -> points.handleSubscribe(id, request));
+    bound.put("unsubscribe", (id, op, request) -> points.handleUnsubscribe(request));
+    bound.put("replace_subscriptions", (id, op, request) -> points.handleReplaceSubscriptions(id, request));
+    bound.put("renew_subscriptions", (id, op, request) -> points.handleRenewSubscriptions(id, request));
+    bound.put("release_subscriptions", (id, op, request) -> points.handleReleaseSubscriptions(id, request));
+    bound.put("subscription_status", (id, op, request) -> points.handleSubscriptionStatus(id, request));
+    bound.put("write", (id, op, request) -> requests.handleWrite(id, request));
+    bound.put("describe_write", (id, op, request) -> requests.handleDescribeWrite(id, request));
+    bound.put("read_history", (id, op, request) -> requests.handleReadHistory(id, request));
+    bound.put("describe_history", (id, op, request) -> requests.handleDescribeHistory(id, request));
+    bound.put("read_alarms", (id, op, request) -> requests.handleReadAlarms(id, request));
+    bound.put("ack_alarm", (id, op, request) -> requests.handleAckAlarms(id, request));
+    bound.put("ack_alarms", (id, op, request) -> requests.handleAckAlarms(id, request));
+    bound.put("clear_alarm", (id, op, request) -> requests.handleClearAlarms(id, request));
+    bound.put("clear_alarms", (id, op, request) -> requests.handleClearAlarms(id, request));
+    bound.put("subscribe_alarms", (id, op, request) -> alarms.handleSubscribeAlarms(id, request));
+    bound.put("unsubscribe_alarms", (id, op, request) -> alarms.handleUnsubscribeAlarms(id, request));
+    bound.put("read_schedule", (id, op, request) -> requests.handleReadSchedule(id, request));
+    bound.put("subscribe_model", (id, op, request) -> models.handleSubscribeModel(id, request));
+    bound.put("unsubscribe_model", (id, op, request) -> models.handleUnsubscribeModel(id, request));
+    bound.put("read_tags", (id, op, request) -> requests.handleReadTags(id, request));
+    bound.put("write_tags", (id, op, request) -> requests.handleWriteTags(id, request));
+    bound.put("write_relations", (id, op, request) -> requests.handleWriteRelations(id, request));
     for (String model : new String[] {
         "describe_component_types", "describe_component", "preview_model_changes", "apply_model_changes",
         "model_plan_status", "cancel_model_plan", "create_components", "update_component_properties",
         "rename_component", "move_components", "delete_components", "create_hierarchy", "configure_hierarchy" })
     {
-      bound.put(model, this::handleModelOperation);
+      bound.put(model, (id, op, request) -> requests.handleModelOperation(id, op, request));
     }
 
     if (!bound.keySet().equals(new java.util.HashSet<String>(BaskStreamOperations.names())))
@@ -272,7 +234,7 @@ final class BaskStreamClientSession
     {
       return;
     }
-    sweepExpiredSubscriptionGroups();
+    points.sweepExpiredSubscriptionGroups();
 
     String id = null;
     try
@@ -353,13 +315,7 @@ final class BaskStreamClientSession
     {
       connection.closeTransport(1000, "Session closed.");
       events.close();
-      synchronized (covLock)
-      {
-        pendingCov.clear();
-        pendingCovEventCount = 0;
-        cancelScheduled(covFlushFuture);
-        covFlushFuture = null;
-      }
+      cov.close();
       // Drop queued requests and interrupt settle waits. The executor's terminated() hook
       // releases subscriptions once the running request, if any, has finished.
       worker.shutdownNow();
@@ -377,21 +333,14 @@ final class BaskStreamClientSession
   {
     try
     {
-      synchronized (subscriptionLock)
+      synchronized (timerLock)
       {
-        cancelScheduled(leaseSweepFuture);
-        leaseSweepFuture = null;
         cancelScheduled(revalidateFuture);
         revalidateFuture = null;
       }
-      directSubscriptions.clear();
-      subscriptionGroups.clear();
-      subscriptions.clear();
-      alarmSubscriptions.clear();
-      modelSubscriptions.clear();
-      subscriber.unsubscribeAll();
-      alarmSubscriber.unsubscribeAll();
-      modelSubscriber.unsubscribeAll();
+      points.release();
+      alarms.release();
+      models.release();
       runtime.onSubscriptionCountChanged();
     }
     catch (RuntimeException e)
@@ -401,663 +350,7 @@ final class BaskStreamClientSession
     }
   }
 
-  private void handleCapabilities(String id)
-  {
-    Map<String, Object> capabilities = new LinkedHashMap<String, Object>();
-    capabilities.put("apiVersion", "1.6");
-    capabilities.put("module", "baskStream");
-    capabilities.put("transport", "websocket-msgpack");
-    capabilities.put("serverTime", Long.valueOf(Clock.millis()));
-    capabilities.put("authenticatedUser", user.getUsername());
-    capabilities.put("operations", BaskStreamOperations.names());
-    capabilities.put("writesEnabled", runtime.getService().writesAllowed());
-    capabilities.put("modelEditing", BaskStreamModelPlans.map("enabled", runtime.getService().modelEditsAllowed(),
-        "actions", java.util.Arrays.asList(BaskStreamModelResolver.ACTIONS), "maxChanges", BaskStreamModelResolver.MAX_CHANGES,
-        "previewRequired", true, "atomic", false, "planTtlMillis", BaskStreamModelPlans.PREVIEW_TTL,
-        "resultTtlMillis", BaskStreamModelPlans.RESULT_TTL, "survivesReconnect", true, "survivesRestart", false));
-
-    Map<String, Object> limits = new LinkedHashMap<String, Object>();
-    limits.put("maxConnections", Long.valueOf(runtime.getService().getMaxConnectionsValue()));
-    limits.put("maxConnectionsPerUser", Long.valueOf(runtime.getService().getMaxConnectionsPerUserValue()));
-    limits.put("maxMessageBytes", Long.valueOf(runtime.getService().getMaxMessageBytesValue()));
-    limits.put("activeConnections", Long.valueOf(runtime.getService().getActiveConnectionsValue()));
-    limits.put("maxSubscriptionsPerClient", Long.valueOf(runtime.getService().getMaxSubscriptionsPerClientValue()));
-    limits.put("maxLivePointsPerStream", Long.valueOf(runtime.getService().getMaxSubscriptionsPerClientValue()));
-    limits.put("maxPointSnapshotPoints", Long.valueOf(runtime.getService().getMaxPointSnapshotPointsValue()));
-    limits.put("totalSubscriptions", Long.valueOf(runtime.getService().getTotalSubscriptionsValue()));
-    limits.put("heartbeatIntervalSec", Long.valueOf(runtime.getService().getHeartbeatIntervalSecValue()));
-    limits.put("subscriptionLeaseSec", Long.valueOf(runtime.getService().getSubscriptionLeaseSecValue()));
-    limits.put("maxSubscriptionLeaseSec", Long.valueOf(MAX_LEASE_SEC));
-    limits.put("covBatchWindowMillis", Long.valueOf(runtime.getService().getCovBatchWindowMillisValue()));
-    limits.put("defaultBrowseDepth", Long.valueOf(BaskStreamBrowseResolver.DEFAULT_DEPTH));
-    limits.put("maxBrowseDepth", Long.valueOf(BaskStreamBrowseResolver.MAX_DEPTH));
-    limits.put("defaultSearchDepth", Long.valueOf(BaskStreamBrowseResolver.DEFAULT_SEARCH_DEPTH));
-    limits.put("maxSearchDepth", Long.valueOf(BaskStreamBrowseResolver.MAX_SEARCH_DEPTH));
-    limits.put("defaultSearchLimit", Long.valueOf(BaskStreamBrowseResolver.DEFAULT_SEARCH_LIMIT));
-    limits.put("maxSearchLimit", Long.valueOf(BaskStreamBrowseResolver.MAX_SEARCH_LIMIT));
-    limits.put("defaultSearchMaxVisited", Long.valueOf(BaskStreamBrowseResolver.DEFAULT_SEARCH_MAX_VISITED));
-    limits.put("maxSearchMaxVisited", Long.valueOf(BaskStreamBrowseResolver.MAX_SEARCH_MAX_VISITED));
-    limits.put("defaultSearchTimeoutMillis", Long.valueOf(BaskStreamBrowseResolver.DEFAULT_SEARCH_TIMEOUT_MILLIS));
-    limits.put("maxSearchTimeoutMillis", Long.valueOf(BaskStreamBrowseResolver.MAX_SEARCH_TIMEOUT_MILLIS));
-    capabilities.put("limits", limits);
-
-    Map<String, Object> session = new LinkedHashMap<String, Object>();
-    session.put("id", sessionId);
-    session.put("pointSubscriptions", Long.valueOf(getPointSubscriptionCount()));
-    session.put("directPointSubscriptions", Long.valueOf(directSubscriptions.size()));
-    session.put("subscriptionGroups", Long.valueOf(subscriptionGroups.size()));
-    session.put("alarmSubscriptions", Long.valueOf(getAlarmSubscriptionCount()));
-    session.put("modelSubscriptions", Long.valueOf(getModelSubscriptionCount()));
-    capabilities.put("session", session);
-
-    Map<String, Object> schemas = new LinkedHashMap<String, Object>();
-    schemas.put("nodeMetadata", "2");
-    schemas.put("pointSnapshot", "2");
-    schemas.put("history", "2");
-    schemas.put("alarm", "1");
-    schemas.put("modelEvents", "1");
-    schemas.put("subscriptionGroups", "1");
-    schemas.put("cov", "2");
-    schemas.put("tags", "1");
-    capabilities.put("schemas", schemas);
-
-    Map<String, Object> subscriptionsMeta = new LinkedHashMap<String, Object>();
-    subscriptionsMeta.put("pointCov", Boolean.TRUE);
-    subscriptionsMeta.put("pointCovBatching", Boolean.valueOf(runtime.getService().getCovBatchWindowMillisValue() > 0));
-    subscriptionsMeta.put("viewGroups", Boolean.TRUE);
-    subscriptionsMeta.put("leasedGroups", Boolean.valueOf(runtime.getService().getSubscriptionLeaseSecValue() > 0));
-    subscriptionsMeta.put("alarmEvents", Boolean.TRUE);
-    subscriptionsMeta.put("modelEvents", Boolean.TRUE);
-    subscriptionsMeta.put("sharedStationSubscriptions", Boolean.FALSE);
-    subscriptionsMeta.put("historyLive", Boolean.FALSE);
-    subscriptionsMeta.put("scheduleLive", Boolean.FALSE);
-    capabilities.put("subscriptions", subscriptionsMeta);
-
-    Map<String, Object> pointSnapshot = new LinkedHashMap<String, Object>();
-    pointSnapshot.put("operation", "read");
-    pointSnapshot.put("batch", Boolean.TRUE);
-    pointSnapshot.put("facets", Boolean.TRUE);
-    pointSnapshot.put("fieldSelection", Boolean.TRUE);
-    pointSnapshot.put("maxPoints", Long.valueOf(runtime.getService().getMaxPointSnapshotPointsValue()));
-    pointSnapshot.put("fields", listOf(
-        "point",
-        "ok",
-        "display",
-        "type",
-        "valueType",
-        "value",
-        "displayValue",
-        "status",
-        "timestamp",
-        "facets",
-        "enumOrdinal",
-        "enumTag",
-        "enumDisplay",
-        "enumOptions"));
-    capabilities.put("pointSnapshot", pointSnapshot);
-
-    Map<String, Object> tagsMeta = new LinkedHashMap<String, Object>();
-    tagsMeta.put("read", Boolean.TRUE);
-    tagsMeta.put("writeDirect", Boolean.TRUE);
-    tagsMeta.put("relations", Boolean.TRUE);
-    tagsMeta.put("impliedTagsReadOnly", Boolean.TRUE);
-    tagsMeta.put("maxTargetsPerRequest", Long.valueOf(runtime.getTagResolver().getMaxTargetsPerRequest()));
-    tagsMeta.put("note", "Tags are dictionary-neutral: address Haystack (hs:), Niagara (n:), and hierarchy/site dictionary tags by qualified name.");
-    capabilities.put("tags", tagsMeta);
-
-    Map<String, Object> graphics = new LinkedHashMap<String, Object>();
-    graphics.put("plainPx", Boolean.FALSE);
-    graphics.put("plainGraphic", Boolean.FALSE);
-    graphics.put("note", "Plain Px/WebOp embedding is not implemented in this API version.");
-    capabilities.put("graphics", graphics);
-
-    Map<String, Object> policy = new LinkedHashMap<String, Object>();
-    policy.put("allowedPathPatterns", runtime.getService().getAllowedPathPatterns());
-    policy.put("allowedOrigins", runtime.getService().getAllowedOrigins());
-    policy.put("slotBrowseOnly", Boolean.TRUE);
-    policy.put("hierarchyBrowse", Boolean.TRUE);
-    policy.put("historyOrdReads", Boolean.TRUE);
-    capabilities.put("policy", policy);
-
-    Map<String, Object> response = baseMessage("capabilities_result", id);
-    response.put("capabilities", capabilities);
-    send(response);
-  }
-
-  private void handleRead(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    List<String> points = runtime.getCodec().requireStringList(request, "points");
-    requireMaxSize(points, "points", runtime.getService().getMaxPointSnapshotPointsValue());
-    List<String> fields = normalizeSnapshotFields(request);
-    List<Object> results = new ArrayList<Object>(points.size());
-    for (String pointOrd : points)
-    {
-      results.add(resolveReadResult(pointOrd, fields));
-    }
-
-    Map<String, Object> response = baseMessage("read_result", id);
-    response.put("points", results);
-    send(response);
-  }
-
-  private void handleWrite(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    Map<String, Object> response = baseMessage("write_result", id);
-    response.put("points", runtime.getWriteResolver().write(request, context, () -> closed.get()));
-    send(response);
-  }
-
-  private void handleSubscribe(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    List<String> points = runtime.getCodec().requireStringList(request, "points");
-    requireMaxSize(points, "points", MAX_POINTS_PER_REQUEST);
-    List<Object> results = new ArrayList<Object>(points.size());
-
-    synchronized (subscriptionLock)
-    {
-      for (String pointOrd : points)
-      {
-        try
-        {
-          BaskStreamPointResolver.ResolvedPoint resolved = ensurePointSubscription(pointOrd);
-          directSubscriptions.add(pointOrd);
-          results.add(runtime.getResolver().snapshot(resolved, context).toWire());
-        }
-        catch (BaskStreamProtocolException e)
-        {
-          results.add(errorEntry(pointOrd, e.getCode(), e.getMessage()));
-        }
-      }
-    }
-
-    runtime.onSubscriptionCountChanged();
-
-    Map<String, Object> response = baseMessage("subscribed", id);
-    response.put("points", results);
-    send(response);
-  }
-
-  private void handleUnsubscribe(Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    List<String> points = runtime.getCodec().requireStringList(request, "points");
-    synchronized (subscriptionLock)
-    {
-      for (String pointOrd : points)
-      {
-        directSubscriptions.remove(pointOrd);
-        removePointIfUnreferenced(pointOrd);
-      }
-    }
-    runtime.onSubscriptionCountChanged();
-  }
-
-  private void handleReplaceSubscriptions(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    String groupName = normalizeGroupName(runtime.getCodec().optionalString(request, "group"));
-    List<String> requested = runtime.getCodec().requireStringList(request, "points");
-    requireMaxSize(requested, "points", MAX_POINTS_PER_REQUEST);
-    LinkedHashSet<String> desired = new LinkedHashSet<String>(requested);
-    List<Object> results = new ArrayList<Object>(desired.size());
-    long now = Clock.millis();
-    int leaseSec = normalizeLeaseSec(request.get("leaseSec"));
-    long expiresAt = leaseSec <= 0 ? 0L : now + leaseSec * 1000L;
-    int added = 0;
-    int removed = 0;
-
-    synchronized (subscriptionLock)
-    {
-      SubscriptionGroup group = subscriptionGroups.get(groupName);
-      if (group == null && !desired.isEmpty()
-          && subscriptionGroups.size() >= Math.max(1, runtime.getService().getMaxSubscriptionsPerClientValue()))
-      {
-        throw new BaskStreamProtocolException("subscription_limit", "Subscription group limit reached.");
-      }
-      Set<String> oldPoints = group == null ? Collections.<String>emptySet() : new LinkedHashSet<String>(group.points);
-      LinkedHashSet<String> newPoints = new LinkedHashSet<String>();
-      // Release this group's obsolete references before admitting replacements.
-      // Other groups and direct subscriptions continue to retain their points.
-      if (group != null)
-      {
-        group.points.retainAll(desired);
-        for (String oldPoint : oldPoints)
-        {
-          if (!desired.contains(oldPoint)) removePointIfUnreferenced(oldPoint);
-        }
-      }
-
-      for (String pointOrd : desired)
-      {
-        try
-        {
-          BaskStreamPointResolver.ResolvedPoint resolved = ensurePointSubscription(pointOrd);
-          newPoints.add(pointOrd);
-          if (!oldPoints.contains(pointOrd))
-          {
-            added++;
-          }
-          results.add(runtime.getResolver().snapshot(resolved, context).toWire());
-        }
-        catch (BaskStreamProtocolException e)
-        {
-          results.add(errorEntry(pointOrd, e.getCode(), e.getMessage()));
-        }
-      }
-
-      if (group == null)
-      {
-        group = new SubscriptionGroup(groupName, now);
-        subscriptionGroups.put(groupName, group);
-      }
-      group.points.clear();
-      group.points.addAll(newPoints);
-      group.updatedAt = now;
-      group.leaseSec = leaseSec;
-      group.expiresAt = expiresAt;
-
-      for (String oldPoint : oldPoints)
-      {
-        if (!newPoints.contains(oldPoint))
-        {
-          removed++;
-          removePointIfUnreferenced(oldPoint);
-        }
-      }
-
-      if (newPoints.isEmpty())
-      {
-        subscriptionGroups.remove(groupName);
-      }
-      scheduleLeaseSweepLocked();
-    }
-
-    runtime.onSubscriptionCountChanged();
-    Map<String, Object> response = baseMessage("subscriptions_replaced", id);
-    response.put("group", groupName);
-    response.put("points", results);
-    response.put("added", Long.valueOf(added));
-    response.put("removed", Long.valueOf(removed));
-    response.put("leaseSec", Long.valueOf(leaseSec));
-    response.put("leaseExpiresAt", expiresAt == 0L ? null : Long.valueOf(expiresAt));
-    response.put("pointSubscriptions", Long.valueOf(getPointSubscriptionCount()));
-    response.put("subscriptionGroups", Long.valueOf(subscriptionGroups.size()));
-    send(response);
-  }
-
-  private void handleRenewSubscriptions(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    String groupName = normalizeGroupName(runtime.getCodec().optionalString(request, "group"));
-    long now = Clock.millis();
-    int leaseSec = normalizeLeaseSec(request.get("leaseSec"));
-    long expiresAt = leaseSec <= 0 ? 0L : now + leaseSec * 1000L;
-    SubscriptionGroup group;
-    synchronized (subscriptionLock)
-    {
-      group = subscriptionGroups.get(groupName);
-      if (group == null)
-      {
-        throw new BaskStreamProtocolException("group_not_found", "Subscription group not found: " + groupName);
-      }
-      group.updatedAt = now;
-      group.leaseSec = leaseSec;
-      group.expiresAt = expiresAt;
-      scheduleLeaseSweepLocked();
-    }
-
-    Map<String, Object> response = baseMessage("subscriptions_renewed", id);
-    response.put("group", groupName);
-    response.put("pointCount", Long.valueOf(group.points.size()));
-    response.put("leaseSec", Long.valueOf(leaseSec));
-    response.put("leaseExpiresAt", expiresAt == 0L ? null : Long.valueOf(expiresAt));
-    send(response);
-  }
-
-  private void handleReleaseSubscriptions(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    String groupName = normalizeGroupName(runtime.getCodec().optionalString(request, "group"));
-    int removed = 0;
-    synchronized (subscriptionLock)
-    {
-      SubscriptionGroup group = subscriptionGroups.remove(groupName);
-      if (group == null)
-      {
-        throw new BaskStreamProtocolException("group_not_found", "Subscription group not found: " + groupName);
-      }
-      removed = group.points.size();
-      for (String pointOrd : group.points)
-      {
-        removePointIfUnreferenced(pointOrd);
-      }
-      scheduleLeaseSweepLocked();
-    }
-    runtime.onSubscriptionCountChanged();
-
-    Map<String, Object> response = baseMessage("subscriptions_released", id);
-    response.put("group", groupName);
-    response.put("removed", Long.valueOf(removed));
-    response.put("pointSubscriptions", Long.valueOf(getPointSubscriptionCount()));
-    response.put("subscriptionGroups", Long.valueOf(subscriptionGroups.size()));
-    send(response);
-  }
-
-  private void handleSubscriptionStatus(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    Boolean includePoints = optionalBoolean(request, "includePoints");
-    sweepExpiredSubscriptionGroups();
-
-    Map<String, Object> session = new LinkedHashMap<String, Object>();
-    session.put("id", sessionId);
-    session.put("user", user.getUsername());
-    session.put("closed", Boolean.valueOf(closed.get()));
-    session.put("pointSubscriptions", Long.valueOf(getPointSubscriptionCount()));
-    session.put("directPointSubscriptions", Long.valueOf(directSubscriptions.size()));
-    session.put("alarmSubscriptions", Long.valueOf(getAlarmSubscriptionCount()));
-    session.put("modelSubscriptions", Long.valueOf(getModelSubscriptionCount()));
-    session.put("subscriptionGroups", Long.valueOf(subscriptionGroups.size()));
-    session.put("pendingCovPoints", Long.valueOf(getPendingCovPointCount()));
-    session.put("pendingCovSourceEvents", Long.valueOf(getPendingCovEventCount()));
-
-    Map<String, Object> limits = new LinkedHashMap<String, Object>();
-    limits.put("maxSubscriptionsPerClient", Long.valueOf(runtime.getService().getMaxSubscriptionsPerClientValue()));
-    limits.put("subscriptionLeaseSec", Long.valueOf(runtime.getService().getSubscriptionLeaseSecValue()));
-    limits.put("covBatchWindowMillis", Long.valueOf(runtime.getService().getCovBatchWindowMillisValue()));
-
-    Map<String, Object> response = baseMessage("subscription_status_result", id);
-    response.put("session", session);
-    response.put("limits", limits);
-    response.put("groups", subscriptionGroupSummaries(Boolean.TRUE.equals(includePoints)));
-    send(response);
-  }
-
-  private void handleBrowse(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    String baseOrd = runtime.getCodec().optionalString(request, "base");
-    int depth = runtime.getBrowseResolver().normalizeDepth(request.get("depth"));
-    String metadataMode = runtime.getBrowseResolver().normalizeMetadataMode(
-        metadataRequestValue(request),
-        BaskStreamBrowseResolver.METADATA_NONE);
-
-    Map<String, Object> response = baseMessage("browse_result", id);
-    response.put("depth", Long.valueOf(depth));
-    response.put("metadata", metadataMode);
-    response.put("node", runtime.getBrowseResolver().browse(baseOrd, depth, metadataMode, context));
-    send(response);
-  }
-
-  private void handleDescribe(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    String ord = runtime.getCodec().optionalString(request, "ord");
-    if (ord == null || ord.trim().length() == 0)
-    {
-      ord = runtime.getCodec().optionalString(request, "base");
-    }
-
-    Map<String, Object> response = baseMessage("describe_result", id);
-    String metadataMode = runtime.getBrowseResolver().normalizeMetadataMode(
-        metadataRequestValue(request),
-        BaskStreamBrowseResolver.METADATA_FULL);
-    response.put("metadata", metadataMode);
-    response.put("node", runtime.getBrowseResolver().describe(ord, metadataMode, context));
-    send(response);
-  }
-
-  private void handleSearch(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    String baseOrd = runtime.getCodec().optionalString(request, "base");
-    Object searchDepth = request.containsKey("maxDepth") ? request.get("maxDepth") : request.get("depth");
-    String metadataMode = runtime.getBrowseResolver().normalizeMetadataMode(
-        metadataRequestValue(request),
-        BaskStreamBrowseResolver.METADATA_NONE);
-    Map<String, Object> response = baseMessage("search_result", id);
-    response.put("result", runtime.getBrowseResolver().search(
-        baseOrd,
-        searchDepth,
-        metadataMode,
-        runtime.getCodec().optionalString(request, "query"),
-        runtime.getCodec().optionalString(request, "kind"),
-        optionalStringList(request, "features"),
-        optionalStringList(request, "operations"),
-        optionalBoolean(request, "writable"),
-        request.get("limit"),
-        request.get("maxVisited"),
-        request.get("timeoutMillis"),
-        context));
-    send(response);
-  }
-
-  private void handleDescribeWrite(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    Map<String, Object> response = baseMessage("write_description", id);
-    response.put("points", runtime.getWriteResolver().describe(request, context));
-    send(response);
-  }
-
-  private Object metadataRequestValue(Map<String, Object> request)
-  {
-    if (request.containsKey("metadata"))
-    {
-      return request.get("metadata");
-    }
-    return request.get("includeMetadata");
-  }
-
-  private void handleReadHistory(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    String ord = runtime.getCodec().optionalString(request, "ord");
-    Map<String, Object> response = baseMessage("history_result", id);
-    response.put("history", runtime.getHistoryResolver().readHistory(
-        ord,
-        request.get("start"),
-        request.get("end"),
-        request.get("limit"),
-        context));
-    send(response);
-  }
-
-  private void handleDescribeHistory(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    String ord = runtime.getCodec().optionalString(request, "ord");
-    if (ord == null || ord.trim().length() == 0)
-    {
-      ord = runtime.getCodec().optionalString(request, "source");
-    }
-
-    Map<String, Object> response = baseMessage("history_description", id);
-    response.put("history", runtime.getHistoryResolver().describeHistory(ord, context));
-    send(response);
-  }
-
-  private void handleReadAlarms(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    String source = runtime.getCodec().optionalString(request, "source");
-    String scope = runtime.getCodec().optionalString(request, "scope");
-
-    Map<String, Object> response = baseMessage("alarms_result", id);
-    response.put("alarms", runtime.getAlarmResolver().readAlarms(source, scope, request.get("limit"), context));
-    send(response);
-  }
-
-  private void handleAckAlarms(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    String source = runtime.getCodec().optionalString(request, "source");
-    Map<String, Object> response = baseMessage("alarm_action_result", id);
-    response.put("alarms", runtime.getAlarmResolver().acknowledgeAlarms(alarmUuidValue(request), source, context, user.getUsername()));
-    send(response);
-  }
-
-  private void handleClearAlarms(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    String source = runtime.getCodec().optionalString(request, "source");
-    Map<String, Object> response = baseMessage("alarm_action_result", id);
-    response.put("alarms", runtime.getAlarmResolver().clearAlarms(alarmUuidValue(request), source, context, user.getUsername()));
-    send(response);
-  }
-
-  private Object alarmUuidValue(Map<String, Object> request)
-  {
-    return request.containsKey("uuids") ? request.get("uuids") : request.get("uuid");
-  }
-
-  private void handleSubscribeAlarms(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    BaskStreamAlarmResolver.AlarmSubscriptionSpec spec = runtime.getAlarmResolver().normalizeSubscription(
-        runtime.getCodec().optionalString(request, "source"),
-        runtime.getCodec().optionalString(request, "scope"),
-        request.get("limit"),
-        runtime.getCodec().optionalString(request, "mode"));
-
-    if (!alarmSubscriptions.containsKey(spec.key())
-        && getSubscriptionCount() >= runtime.getService().getMaxSubscriptionsPerClientValue())
-    {
-      throw new BaskStreamProtocolException("subscription_limit", "maxSubscriptionsPerClient exceeded.");
-    }
-    runtime.getAlarmResolver().requireAllowed(spec);
-    ensureAlarmServiceSubscribed();
-    alarmSubscriptions.put(spec.key(), spec);
-    runtime.onSubscriptionCountChanged();
-
-    Map<String, Object> response = baseMessage("alarms_subscribed", id);
-    response.put("mode", spec.mode);
-    response.put("alarms", runtime.getAlarmResolver().readAlarms(spec.source, spec.scope, Integer.valueOf(spec.limit), context));
-    send(response);
-  }
-
-  private void handleUnsubscribeAlarms(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    boolean hasFilter = request.containsKey("source") || request.containsKey("scope") || request.containsKey("limit") || request.containsKey("mode");
-    if (!hasFilter)
-    {
-      alarmSubscriptions.clear();
-      alarmSubscriber.unsubscribeAll();
-      runtime.onSubscriptionCountChanged();
-      sendUnsubscribedAlarms(id);
-      return;
-    }
-
-    String mode = runtime.getCodec().optionalString(request, "mode");
-    BaskStreamAlarmResolver.AlarmSubscriptionSpec spec = runtime.getAlarmResolver().normalizeSubscription(
-        runtime.getCodec().optionalString(request, "source"),
-        runtime.getCodec().optionalString(request, "scope"),
-        request.get("limit"),
-        mode);
-    if (mode == null || mode.trim().length() == 0)
-    {
-      removeAlarmSubscriptions(spec);
-    }
-    else
-    {
-      alarmSubscriptions.remove(spec.key());
-    }
-    if (alarmSubscriptions.isEmpty())
-    {
-      alarmSubscriber.unsubscribeAll();
-    }
-    runtime.onSubscriptionCountChanged();
-    sendUnsubscribedAlarms(id);
-  }
-
-  private void sendUnsubscribedAlarms(String id)
-  {
-    if (id == null)
-    {
-      return;
-    }
-    Map<String, Object> response = baseMessage("alarms_unsubscribed", id);
-    response.put("remaining", Long.valueOf(alarmSubscriptions.size()));
-    send(response);
-  }
-
-  private void removeAlarmSubscriptions(BaskStreamAlarmResolver.AlarmSubscriptionSpec spec)
-  {
-    for (BaskStreamAlarmResolver.AlarmSubscriptionSpec existing :
-        alarmSubscriptions.values().toArray(new BaskStreamAlarmResolver.AlarmSubscriptionSpec[0]))
-    {
-      if (sameAlarmFilter(existing, spec))
-      {
-        alarmSubscriptions.remove(existing.key());
-      }
-    }
-  }
-
-  private boolean sameAlarmFilter(BaskStreamAlarmResolver.AlarmSubscriptionSpec left, BaskStreamAlarmResolver.AlarmSubscriptionSpec right)
-  {
-    if (left.limit != right.limit || !left.scope.equals(right.scope))
-    {
-      return false;
-    }
-    if (left.source == null)
-    {
-      return right.source == null;
-    }
-    return left.source.equals(right.source);
-  }
-
-  private void handleSubscribeModel(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    List<String> bases = modelBaseOrds(request);
-    int depth = runtime.getBrowseResolver().normalizeDepth(request.get("depth"));
-    List<Object> roots = new ArrayList<Object>();
-    int before = modelSubscriptions.size();
-    for (String base : bases)
-    {
-      BComponent component = resolveModelComponent(base);
-      roots.add(componentSummary(component));
-      subscribeModelComponent(component, depth);
-    }
-    runtime.onSubscriptionCountChanged();
-
-    Map<String, Object> response = baseMessage("model_subscribed", id);
-    response.put("bases", roots);
-    response.put("depth", Long.valueOf(depth));
-    response.put("added", Long.valueOf(modelSubscriptions.size() - before));
-    response.put("count", Long.valueOf(modelSubscriptions.size()));
-    response.put("mode", "component_events");
-    response.put("note", "Model events are change hints; refresh affected branches with browse/describe.");
-    send(response);
-  }
-
-  private void handleUnsubscribeModel(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    if (!request.containsKey("base") && !request.containsKey("bases"))
-    {
-      modelSubscriptions.clear();
-      modelSubscriber.unsubscribeAll();
-    }
-    else
-    {
-      for (String base : modelBaseOrds(request))
-      {
-        BComponent component = resolveModelComponent(base);
-        unsubscribeModelComponent(component);
-      }
-    }
-    runtime.onSubscriptionCountChanged();
-    if (id != null)
-    {
-      Map<String, Object> response = baseMessage("model_unsubscribed", id);
-      response.put("count", Long.valueOf(modelSubscriptions.size()));
-      send(response);
-    }
-  }
-
-  private List<String> modelBaseOrds(Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    List<String> bases = optionalStringList(request, "bases");
-    if (bases != null && !bases.isEmpty())
-    {
-      requireMaxSize(bases, "bases", MAX_MODEL_BASES_PER_REQUEST);
-      return bases;
-    }
-    String base = runtime.getCodec().optionalString(request, "base");
-    if (base == null || base.trim().length() == 0)
-    {
-      base = "slot:/";
-    }
-    List<String> single = new ArrayList<String>(1);
-    single.add(base);
-    return single;
-  }
-
-  private void requireMaxSize(List<?> values, String key, int max) throws BaskStreamProtocolException
+  void requireMaxSize(List<?> values, String key, int max) throws BaskStreamProtocolException
   {
     if (values != null && values.size() > max)
     {
@@ -1065,596 +358,10 @@ final class BaskStreamClientSession
     }
   }
 
-  private BComponent resolveModelComponent(String ord) throws BaskStreamProtocolException
-  {
-    if (ord == null || !ord.startsWith("slot:/"))
-    {
-      throw new BaskStreamProtocolException("invalid_point", "Model subscriptions support slot:/ ORDs only.");
-    }
-    if (!runtime.getBrowseResolver().isAllowedOrd(ord))
-    {
-      throw new BaskStreamProtocolException("forbidden_point", "Model subscription base is outside allowedPathPatterns.");
-    }
-    try
-    {
-      OrdTarget target = BOrd.make(ord).resolve(runtime.getService(), context);
-      if (!target.canRead())
-      {
-        throw new BaskStreamProtocolException("forbidden_point", "Model subscription base is not readable for the authenticated user.");
-      }
-      BObject object = target.get();
-      BComponent component = object instanceof BComponent ? (BComponent) object : target.getComponent();
-      if (component == null)
-      {
-        throw new BaskStreamProtocolException("invalid_point", "Model subscription base did not resolve to a component.");
-      }
-      return component;
-    }
-    catch (BaskStreamProtocolException e)
-    {
-      throw e;
-    }
-    catch (Exception e)
-    {
-      throw new BaskStreamProtocolException("invalid_point",
-          e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
-    }
-  }
-
-  private void subscribeModelComponent(BComponent component, int depth) throws BaskStreamProtocolException
-  {
-    String key = modelKey(component);
-    if (key == null)
-    {
-      return;
-    }
-    if (!canReadModelComponent(component))
-    {
-      return;
-    }
-    if (!modelSubscriptions.containsKey(key))
-    {
-      if (getSubscriptionCount() >= runtime.getService().getMaxSubscriptionsPerClientValue())
-      {
-        throw new BaskStreamProtocolException("subscription_limit", "maxSubscriptionsPerClient exceeded.");
-      }
-      modelSubscriptions.put(key, component);
-      if (!modelSubscriber.isSubscribed(component))
-      {
-        modelSubscriber.subscribe(component, 0, context);
-      }
-    }
-    if (depth <= 0)
-    {
-      return;
-    }
-    BComponent[] children = component.getChildComponents();
-    for (int i = 0; i < children.length; i++)
-    {
-      subscribeModelComponent(children[i], depth - 1);
-    }
-  }
-
-  private void unsubscribeModelComponent(BComponent component)
-  {
-    String key = modelKey(component);
-    if (key != null)
-    {
-      modelSubscriptions.remove(key);
-      modelSubscriber.unsubscribe(component, context);
-    }
-    BComponent[] children = component.getChildComponents();
-    for (int i = 0; i < children.length; i++)
-    {
-      unsubscribeModelComponent(children[i]);
-    }
-  }
-
-  /** Current slot path, for policy checks and for what clients see. */
-  private String componentKey(BComponent component)
-  {
-    return component == null || component.getSlotPath() == null ? null : component.getSlotPath().toString();
-  }
-
-  /** Subscription key: the component's handle, which survives rename and move. */
-  private String modelKey(BComponent component)
-  {
-    return component == null || component.getHandle() == null ? null : String.valueOf(component.getHandle());
-  }
-
-  private boolean canReadModelComponent(BComponent component)
-  {
-    // Deleted components have no slot path and fail here, which also prunes them on revalidation.
-    return component != null && component.getSlotPath() != null && authorizer.canRead(component, context);
-  }
-
-  private Map<String, Object> componentSummary(BComponent component)
-  {
-    Map<String, Object> summary = new LinkedHashMap<String, Object>();
-    if (component == null)
-    {
-      return summary;
-    }
-    summary.put("slotPath", component.getSlotPath() == null ? null : component.getSlotPath().toString());
-    summary.put("name", component.getName());
-    summary.put("display", component.getDisplayName(context));
-    summary.put("typeSpec", component.getType().toString());
-    return summary;
-  }
-
-  private void handleModelOperation(String id, String op, Map<String, Object> request) throws Exception
-  {
-    BaskStreamModelResolver model = runtime.getModelResolver();
-    Map<String, Object> result;
-    if ("describe_component_types".equals(op)) result = model.types(request, context);
-    else if ("describe_component".equals(op)) result = model.describe(request, context);
-    else if ("apply_model_changes".equals(op))
-    {
-      result = model.apply(request, context);
-      runtime.modelChanged(result);
-    }
-    else if ("model_plan_status".equals(op)) result = model.status(request, context);
-    else if ("cancel_model_plan".equals(op)) result = model.cancel(request, context);
-    else if ("preview_model_changes".equals(op)) result = model.preview(request, context);
-    else
-    {
-      // Convenience operation names compile into the same preview/apply engine.
-      // None is a second, unreviewed path around an approved plan.
-      String action = "create_components".equals(op) ? "create" : "update_component_properties".equals(op) ? "update"
-          : "rename_component".equals(op) ? "rename" : "move_components".equals(op) ? "move"
-          : "delete_components".equals(op) ? "delete" : op;
-      Object raw = request.get("changes");
-      List<Object> changes = new ArrayList<Object>();
-      if (raw != null && !(raw instanceof List)) throw new BaskStreamProtocolException("bad_request", "changes must be an array.");
-      List<?> inputs = raw == null ? java.util.Collections.singletonList(request) : (List<?>)raw;
-      for (Object input : inputs)
-      {
-        Map<String, Object> change = new LinkedHashMap<String, Object>(BaskStreamModelResolver.object(input, "change"));
-        change.remove("op"); change.remove("id"); change.put("action", action); changes.add(change);
-      }
-      result = model.preview(BaskStreamModelPlans.map("changes", changes), context);
-    }
-    Map<String, Object> response = baseMessage("model_result", id);
-    response.put("operation", op); response.put("result", result);
-    send(response);
-  }
-
-  private void handleReadSchedule(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    String ord = runtime.getCodec().optionalString(request, "ord");
-    if (ord == null || ord.trim().length() == 0)
-    {
-      ord = runtime.getCodec().optionalString(request, "source");
-    }
-
-    Map<String, Object> response = baseMessage("schedule_result", id);
-    response.put("schedule", runtime.getScheduleResolver().readSchedule(ord, request.get("at"), context));
-    send(response);
-  }
-
-  private void handleReadTags(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    Map<String, Object> response = baseMessage("tags_result", id);
-    response.put("targets", runtime.getTagResolver().readTags(request, context));
-    send(response);
-  }
-
-  private void handleWriteTags(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    Map<String, Object> response = baseMessage("tags_written", id);
-    response.put("targets", runtime.getTagResolver().writeTags(request, context));
-    send(response);
-  }
-
-  private void handleWriteRelations(String id, Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    Map<String, Object> response = baseMessage("relations_written", id);
-    response.put("targets", runtime.getTagResolver().writeRelations(request, context));
-    send(response);
-  }
-
-  private void ensureAlarmServiceSubscribed() throws BaskStreamProtocolException
-  {
-    BAlarmService alarmService = BAlarmService.getService();
-    if (alarmService == null)
-    {
-      throw new BaskStreamProtocolException("alarm_failed", "Niagara AlarmService is not available.");
-    }
-    if (!alarmSubscriber.isSubscribed(alarmService))
-    {
-      alarmSubscriber.subscribe(alarmService, 0, context);
-    }
-  }
-
-  private BaskStreamPointResolver.ResolvedPoint ensurePointSubscription(String pointOrd) throws BaskStreamProtocolException
-  {
-    BaskStreamPointResolver.ResolvedPoint existing = subscriptions.get(pointOrd);
-    if (existing != null)
-    {
-      return existing;
-    }
-
-    if (getSubscriptionCount() >= runtime.getService().getMaxSubscriptionsPerClientValue())
-    {
-      throw new BaskStreamProtocolException("subscription_limit", "maxSubscriptionsPerClient exceeded.");
-    }
-
-    BaskStreamPointResolver.ResolvedPoint resolved = runtime.getResolver().resolve(pointOrd, context);
-    subscriptions.put(pointOrd, resolved);
-    if (resolved.getComponent() != null && !subscriber.isSubscribed(resolved.getComponent()))
-    {
-      subscriber.subscribe(resolved.getComponent(), 0, context);
-    }
-    return resolved;
-  }
-
-  private void removePointIfUnreferenced(String pointOrd)
-  {
-    if (directSubscriptions.contains(pointOrd) || isGroupReferenced(pointOrd))
-    {
-      return;
-    }
-    removeActualSubscription(pointOrd);
-  }
-
-  private boolean isGroupReferenced(String pointOrd)
-  {
-    for (SubscriptionGroup group : subscriptionGroups.values())
-    {
-      if (group.points.contains(pointOrd))
-      {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  private void removeActualSubscription(String pointOrd)
-  {
-    BaskStreamPointResolver.ResolvedPoint removed = subscriptions.remove(pointOrd);
-    if (removed == null || removed.getComponent() == null)
-    {
-      return;
-    }
-
-    boolean stillNeeded = false;
-    for (BaskStreamPointResolver.ResolvedPoint point : subscriptions.values())
-    {
-      if (removed.getComponent().equals(point.getComponent()))
-      {
-        stillNeeded = true;
-        break;
-      }
-    }
-
-    if (!stillNeeded)
-    {
-      subscriber.unsubscribe(removed.getComponent(), context);
-    }
-  }
-
-  private Object resolveReadResult(String pointOrd, List<String> fields)
-  {
-    try
-    {
-      BaskStreamPointResolver.ResolvedPoint point = runtime.getResolver().resolve(pointOrd, context);
-      return runtime.getResolver().snapshot(point, context).toWire(fields);
-    }
-    catch (BaskStreamProtocolException e)
-    {
-      return errorEntry(pointOrd, e.getCode(), e.getMessage());
-    }
-  }
-
-  private List<String> normalizeSnapshotFields(Map<String, Object> request) throws BaskStreamProtocolException
-  {
-    List<String> fields = optionalStringList(request, "fields");
-    if (fields == null)
-    {
-      return null;
-    }
-
-    List<String> normalized = new ArrayList<String>(fields.size());
-    for (String raw : fields)
-    {
-      String field = raw == null ? "" : raw.trim();
-      if (field.length() == 0)
-      {
-        throw new BaskStreamProtocolException("bad_request", "Field 'fields' cannot contain blank entries.");
-      }
-      if (!isSupportedSnapshotField(field))
-      {
-        throw new BaskStreamProtocolException("bad_request", "Unsupported point snapshot field: " + field);
-      }
-      if (!normalized.contains(field))
-      {
-        normalized.add(field);
-      }
-    }
-    return normalized;
-  }
-
-  private boolean isSupportedSnapshotField(String field)
-  {
-    return "point".equals(field)
-        || "ok".equals(field)
-        || "display".equals(field)
-        || "type".equals(field)
-        || "valueType".equals(field)
-        || "value".equals(field)
-        || "displayValue".equals(field)
-        || "status".equals(field)
-        || "timestamp".equals(field)
-        || "facets".equals(field)
-        || "enumOrdinal".equals(field)
-        || "enumTag".equals(field)
-        || "enumDisplay".equals(field)
-        || "enumOptions".equals(field);
-  }
-
-  private void onComponentEvent(BComponentEvent event)
-  {
-    if (closed.get() || event.getId() != BComponentEvent.PROPERTY_CHANGED)
-    {
-      return;
-    }
-    // No lease sweep here: it takes subscriptionLock, which the worker can hold for a whole
-    // batch, and this runs on Niagara's event thread. The lease timer handles expiry.
-
-    // Runs on a Niagara event thread: only note which points changed. The event lane reads
-    // their values when the batch is flushed.
-    String slotName = event.getSlotName();
-    List<String> changed = new ArrayList<String>();
-    for (BaskStreamPointResolver.ResolvedPoint point : subscriptions.values())
-    {
-      if (point.getComponent() != null && point.getComponent().equals(event.getSourceComponent())
-          && point.isTriggeredBy(slotName))
-      {
-        changed.add(point.getPointOrd());
-      }
-    }
-
-    if (!changed.isEmpty())
-    {
-      queueCovChanges(changed);
-    }
-  }
-
-  private void onAlarmEvent(BComponentEvent event)
-  {
-    if (closed.get() || event.getId() != BComponentEvent.TOPIC_FIRED || !"alarm".equals(event.getSlotName()))
-    {
-      return;
-    }
-    // Runs on the alarm service's thread: copy the record and let the lane do the work,
-    // including any snapshot-mode alarm database query.
-    BAlarmRecord fired = alarmRecord(event);
-    final BAlarmRecord record = fired == null ? null : (BAlarmRecord) fired.newCopy();
-    events.submit(() -> deliverAlarm(record));
-  }
-
-  private void deliverAlarm(BAlarmRecord record)
-  {
-    if (closed.get())
-    {
-      return;
-    }
-    if (record != null && !runtime.getAlarmResolver().canView(record, context))
-    {
-      return;
-    }
-    for (BaskStreamAlarmResolver.AlarmSubscriptionSpec spec : alarmSubscriptions.values())
-    {
-      try
-      {
-        runtime.getAlarmResolver().requireAllowed(spec);
-        if (record != null && spec.source != null && !runtime.getAlarmResolver().matchesSource(record, spec.source))
-        {
-          continue;
-        }
-
-        Map<String, Object> message = baseMessage("alarm_cov", null);
-        message.put("sequence", Long.valueOf(alarmSequence.incrementAndGet()));
-        message.put("timestamp", Long.valueOf(Clock.millis()));
-        message.put("source", spec.source);
-        message.put("scope", spec.scope);
-        message.put("limit", Long.valueOf(spec.limit));
-        message.put("mode", spec.mode);
-
-        if (record != null)
-        {
-          message.put("event", runtime.getAlarmResolver().toWire(record, context));
-          message.put("inScope", Boolean.valueOf(runtime.getAlarmResolver().matchesScope(record, spec.scope)));
-        }
-        else
-        {
-          message.put("event", null);
-          message.put("refreshRecommended", Boolean.TRUE);
-        }
-
-        if ("snapshot".equals(spec.mode) || "both".equals(spec.mode) || record == null)
-        {
-          message.put("alarms", runtime.getAlarmResolver().readAlarms(spec.source, spec.scope, Integer.valueOf(spec.limit), context));
-        }
-        send(message);
-      }
-      catch (BaskStreamProtocolException e)
-      {
-        sendError(null, e.getCode(), e.getMessage());
-      }
-    }
-  }
-
-  private void onModelEvent(BComponentEvent event)
-  {
-    if (closed.get())
-    {
-      return;
-    }
-    final BComponent source = event.getSourceComponent();
-    final int eventId = event.getId();
-    final String slot = event.getSlotName();
-    final BValue value = event.getValue();
-    events.submit(() -> deliverModelEvent(source, eventId, slot, value));
-  }
-
-  private void deliverModelEvent(BComponent source, int eventId, String slot, BValue value)
-  {
-    if (closed.get() || !canReadModelComponent(source))
-    {
-      return;
-    }
-    Map<String, Object> message = baseMessage("model_cov", null);
-    message.put("sequence", Long.valueOf(modelSequence.incrementAndGet()));
-    message.put("timestamp", Long.valueOf(Clock.millis()));
-    message.put("eventId", Long.valueOf(eventId));
-    message.put("event", modelEventName(eventId));
-    message.put("slot", slot);
-    message.put("source", componentSummary(source));
-    if (value != null && !BaskStreamModelResolver.sensitive(slot, value.getType().toString()))
-    {
-      message.put("valueType", value.getType().toString());
-      message.put("value", value.toString(context));
-    }
-    message.put("refreshRecommended", Boolean.TRUE);
-    send(message);
-  }
-
-  /** Called on the applying session's worker; the matching and sending happen on this session's lane. */
+  /** The runtime's post-apply fan-out; the model stream matches and queues the notice. */
   void modelChanged(Set<String> affected)
   {
-    if (closed.get()) return;
-    events.submit(() -> deliverModelChanged(affected));
-  }
-
-  private void deliverModelChanged(Set<String> affected)
-  {
-    if (closed.get()) return;
-    Set<String> bases = new LinkedHashSet<String>();
-    for (Map.Entry<String, BComponent> watch : modelSubscriptions.entrySet())
-    {
-      if (!canReadModelComponent(watch.getValue())) continue;
-      String base = componentKey(watch.getValue());
-      if (base == null) continue;
-      String prefix = base.endsWith("/") ? base : base + "/";
-      for (String changed : affected)
-        if (changed.equals(base) || changed.startsWith(prefix) || base.startsWith(changed.endsWith("/") ? changed : changed + "/"))
-        { bases.add(base); break; }
-    }
-    if (bases.isEmpty()) return;
-    Map<String, Object> message = baseMessage("model_cov", null);
-    message.put("sequence", Long.valueOf(modelSequence.incrementAndGet()));
-    message.put("timestamp", Long.valueOf(Clock.millis()));
-    message.put("event", "model_plan_applied");
-    message.put("bases", new ArrayList<String>(bases));
-    message.put("refreshRecommended", Boolean.TRUE);
-    send(message);
-  }
-
-  private String modelEventName(int id)
-  {
-    switch (id)
-    {
-      case BComponentEvent.PROPERTY_ADDED:
-        return "property_added";
-      case BComponentEvent.PROPERTY_REMOVED:
-        return "property_removed";
-      case BComponentEvent.PROPERTY_RENAMED:
-        return "property_renamed";
-      case BComponentEvent.PROPERTIES_REORDERED:
-        return "properties_reordered";
-      case BComponentEvent.FLAGS_CHANGED:
-        return "flags_changed";
-      case BComponentEvent.FACETS_CHANGED:
-        return "facets_changed";
-      case BComponentEvent.KNOB_ADDED:
-        return "knob_added";
-      case BComponentEvent.KNOB_REMOVED:
-        return "knob_removed";
-      case BComponentEvent.RECATEGORIZED:
-        return "recategorized";
-      case BComponentEvent.COMPONENT_PARENTED:
-        return "component_parented";
-      case BComponentEvent.COMPONENT_UNPARENTED:
-        return "component_unparented";
-      case BComponentEvent.COMPONENT_RENAMED:
-        return "component_renamed";
-      case BComponentEvent.COMPONENT_REORDERED:
-        return "component_reordered";
-      case BComponentEvent.COMPONENT_FLAGS_CHANGED:
-        return "component_flags_changed";
-      case BComponentEvent.COMPONENT_FACETS_CHANGED:
-        return "component_facets_changed";
-      case BComponentEvent.RELATION_KNOB_ADDED:
-        return "relation_added";
-      case BComponentEvent.RELATION_KNOB_REMOVED:
-        return "relation_removed";
-      default:
-        return "component_event";
-    }
-  }
-
-  private BAlarmRecord alarmRecord(BComponentEvent event)
-  {
-    BValue value = event.getValue();
-    return value instanceof BAlarmRecord ? (BAlarmRecord) value : null;
-  }
-
-  private void queueCovChanges(List<String> pointOrds)
-  {
-    // A zero window still goes through the scheduler and the lane, just without waiting.
-    int delayMillis = Math.max(0, runtime.getService().getCovBatchWindowMillisValue());
-    synchronized (covLock)
-    {
-      if (closed.get())
-      {
-        return;
-      }
-      pendingCov.addAll(pointOrds);
-      pendingCovEventCount++;
-      if (covFlushFuture == null || covFlushFuture.isDone())
-      {
-        // The scheduler only hands the flush to this session's lane; it never snapshots or sends.
-        covFlushFuture = runtime.schedule(() -> events.submit(this::flushPendingCov), delayMillis);
-      }
-    }
-  }
-
-  private void flushPendingCov()
-  {
-    List<String> pointOrds;
-    int sourceEvents;
-    synchronized (covLock)
-    {
-      covFlushFuture = null;
-      if (pendingCov.isEmpty())
-      {
-        pendingCovEventCount = 0;
-        return;
-      }
-      pointOrds = new ArrayList<String>(pendingCov);
-      pendingCov.clear();
-      sourceEvents = pendingCovEventCount;
-      pendingCovEventCount = 0;
-    }
-    List<Object> changes = new ArrayList<Object>(pointOrds.size());
-    for (String pointOrd : pointOrds)
-    {
-      BaskStreamPointResolver.ResolvedPoint point = subscriptions.get(pointOrd);
-      if (point == null)
-      {
-        continue; // Unsubscribed since it changed.
-      }
-      try
-      {
-        changes.add(runtime.getResolver().snapshot(point, context).toWire());
-      }
-      catch (BaskStreamProtocolException e)
-      {
-        changes.add(errorEntry(pointOrd, e.getCode(), e.getMessage()));
-      }
-    }
-    sendCov(changes, runtime.getService().getCovBatchWindowMillisValue() > 0, sourceEvents);
+    models.modelChanged(affected);
   }
 
   /** Sent after the event lane dropped a backlog: the client should re-read what it shows. */
@@ -1665,154 +372,6 @@ final class BaskStreamClientSession
     notice.put("droppedEvents", Long.valueOf(dropped));
     notice.put("timestamp", Long.valueOf(Clock.millis()));
     send(notice);
-  }
-
-  private void sendCov(List<Object> changes, boolean batched, int sourceEvents)
-  {
-    if (changes == null || changes.isEmpty())
-    {
-      return;
-    }
-    Map<String, Object> cov = baseMessage("cov", null);
-    cov.put("sequence", Long.valueOf(covSequence.incrementAndGet()));
-    cov.put("timestamp", Long.valueOf(Clock.millis()));
-    cov.put("batched", Boolean.valueOf(batched));
-    cov.put("sourceEvents", Long.valueOf(sourceEvents));
-    cov.put("points", changes);
-    send(cov);
-  }
-
-  private int getPendingCovPointCount()
-  {
-    synchronized (covLock)
-    {
-      return pendingCov.size();
-    }
-  }
-
-  private int getPendingCovEventCount()
-  {
-    synchronized (covLock)
-    {
-      return pendingCovEventCount;
-    }
-  }
-
-  private String normalizeGroupName(String group) throws BaskStreamProtocolException
-  {
-    if (group == null || group.trim().length() == 0)
-    {
-      throw new BaskStreamProtocolException("bad_request", "Field 'group' is required.");
-    }
-    String normalized = group.trim();
-    if (normalized.length() > MAX_GROUP_NAME_LENGTH)
-    {
-      throw new BaskStreamProtocolException("bad_request", "Field 'group' must be " + MAX_GROUP_NAME_LENGTH + " characters or fewer.");
-    }
-    return normalized;
-  }
-
-  private int normalizeLeaseSec(Object value) throws BaskStreamProtocolException
-  {
-    int leaseSec = runtime.getService().getSubscriptionLeaseSecValue();
-    if (value != null)
-    {
-      if (!(value instanceof Number))
-      {
-        throw new BaskStreamProtocolException("bad_request", "Field 'leaseSec' must be a number.");
-      }
-      leaseSec = ((Number) value).intValue();
-    }
-    if (leaseSec < 0)
-    {
-      throw new BaskStreamProtocolException("bad_request", "Field 'leaseSec' cannot be negative.");
-    }
-    if (leaseSec > MAX_LEASE_SEC)
-    {
-      throw new BaskStreamProtocolException("bad_request", "Field 'leaseSec' cannot exceed " + MAX_LEASE_SEC + ".");
-    }
-    return leaseSec;
-  }
-
-  private void sweepExpiredSubscriptionGroups()
-  {
-    if (subscriptionGroups.isEmpty())
-    {
-      return;
-    }
-    boolean changed = false;
-    long now = Clock.millis();
-    synchronized (subscriptionLock)
-    {
-      for (SubscriptionGroup group : subscriptionGroups.values().toArray(new SubscriptionGroup[0]))
-      {
-        if (group.expiresAt > 0L && group.expiresAt <= now)
-        {
-          subscriptionGroups.remove(group.name);
-          for (String pointOrd : group.points)
-          {
-            removePointIfUnreferenced(pointOrd);
-          }
-          changed = true;
-        }
-      }
-      scheduleLeaseSweepLocked();
-    }
-    if (changed)
-    {
-      runtime.onSubscriptionCountChanged();
-    }
-  }
-
-  private void scheduleLeaseSweepLocked()
-  {
-    if (closed.get())
-    {
-      return;
-    }
-
-    long now = Clock.millis();
-    long next = Long.MAX_VALUE;
-    for (SubscriptionGroup group : subscriptionGroups.values())
-    {
-      if (group.expiresAt > 0L && group.expiresAt < next)
-      {
-        next = group.expiresAt;
-      }
-    }
-    if (next == leaseSweepAt && leaseSweepFuture != null && !leaseSweepFuture.isDone()) return;
-    cancelScheduled(leaseSweepFuture);
-    leaseSweepFuture = null;
-    leaseSweepAt = next;
-    if (next == Long.MAX_VALUE) return;
-
-    leaseSweepFuture = runtime.schedule(new Runnable()
-    {
-      @Override
-      public void run()
-      {
-        // Hop onto the session worker so the shared scheduler never waits on subscriptionLock.
-        try
-        {
-          worker.execute(new Runnable()
-          {
-            @Override
-            public void run()
-            {
-              synchronized (subscriptionLock)
-              {
-                leaseSweepAt = 0L;
-                sweepExpiredSubscriptionGroups();
-              }
-            }
-          });
-        }
-        catch (RejectedExecutionException ignored)
-        {
-          // Closing, or the request queue is full; the next request's sweep reschedules the timer.
-        }
-      }
-    }, Math.max(100L, next - now));
   }
 
   /**
@@ -1838,7 +397,7 @@ final class BaskStreamClientSession
     {
       return;
     }
-    synchronized (subscriptionLock)
+    synchronized (timerLock)
     {
       cancelScheduled(revalidateFuture);
       revalidateFuture = runtime.schedule(new Runnable()
@@ -1882,85 +441,13 @@ final class BaskStreamClientSession
         return;
       }
 
-      Set<String> subscribed = new LinkedHashSet<String>(directSubscriptions);
-      synchronized (subscriptionLock)
-      {
-        for (SubscriptionGroup group : subscriptionGroups.values())
-        {
-          subscribed.addAll(group.points);
-        }
-      }
+      List<String> revoked = points.revalidate();
+      List<String> revokedAlarms = alarms.revalidate();
 
-      List<String> revoked = new ArrayList<String>();
-      unresolvedAtRevalidation.retainAll(subscribed);
-      for (String pointOrd : subscribed)
-      {
-        Boolean authorized = stillAuthorized(pointOrd);
-        if (authorized == null)
-        {
-          // One failed check may be a glitch; failing twice in a row means the point is gone.
-          if (!unresolvedAtRevalidation.add(pointOrd))
-          {
-            revoked.add(pointOrd);
-          }
-          continue;
-        }
-        unresolvedAtRevalidation.remove(pointOrd);
-        if (!authorized.booleanValue())
-        {
-          revoked.add(pointOrd);
-        }
-      }
-      unresolvedAtRevalidation.removeAll(revoked);
-
-      // Alarm events are checked per record as they fire; here only the filter's path can go stale.
-      List<String> revokedAlarms = new ArrayList<String>();
-      for (BaskStreamAlarmResolver.AlarmSubscriptionSpec spec :
-          alarmSubscriptions.values().toArray(new BaskStreamAlarmResolver.AlarmSubscriptionSpec[0]))
-      {
-        try
-        {
-          runtime.getAlarmResolver().requireAllowed(spec);
-        }
-        catch (BaskStreamProtocolException e)
-        {
-          alarmSubscriptions.remove(spec.key());
-          revokedAlarms.add(spec.key());
-        }
-      }
-      if (!revokedAlarms.isEmpty() && alarmSubscriptions.isEmpty())
-      {
-        alarmSubscriber.unsubscribeAll();
-      }
-
-      // Model subscriptions: also drops components that were deleted, moved out of scope or hidden.
-      List<String> revokedModels = new ArrayList<String>();
-      for (Map.Entry<String, BComponent> entry : new ArrayList<Map.Entry<String, BComponent>>(modelSubscriptions.entrySet()))
-      {
-        if (!canReadModelComponent(entry.getValue()))
-        {
-          modelSubscriptions.remove(entry.getKey());
-          modelSubscriber.unsubscribe(entry.getValue(), context);
-          // Report the last known path, which means more to a client than a handle.
-          String path = componentKey(entry.getValue());
-          revokedModels.add(path != null ? path : "handle:" + entry.getKey());
-        }
-      }
+      List<String> revokedModels = models.revalidate();
 
       if (!revoked.isEmpty() || !revokedAlarms.isEmpty() || !revokedModels.isEmpty())
       {
-        synchronized (subscriptionLock)
-        {
-          for (String pointOrd : revoked)
-          {
-            directSubscriptions.remove(pointOrd);
-            for (SubscriptionGroup group : subscriptionGroups.values())
-            {
-              group.points.remove(pointOrd);
-            }
-            removeActualSubscription(pointOrd);
-          }
-        }
         Map<String, Object> notice = baseMessage("subscriptions_revoked", null);
         notice.put("points", revoked);
         notice.put("alarmSubscriptions", revokedAlarms);
@@ -1983,25 +470,6 @@ final class BaskStreamClientSession
     }
   }
 
-  /** TRUE or FALSE, or null when the check itself failed (for example, the point did not resolve). */
-  private Boolean stillAuthorized(String pointOrd)
-  {
-    // The path policy may have been narrowed mid-session — re-check it explicitly.
-    if (!BaskStreamAccessPolicy.isAllowed(runtime.getService(), pointOrd))
-    {
-      return Boolean.FALSE;
-    }
-    try
-    {
-      OrdTarget target = BOrd.make(pointOrd).resolve(runtime.getService(), context);
-      return Boolean.valueOf(target.canRead());
-    }
-    catch (Exception e)
-    {
-      return null;
-    }
-  }
-
   private void teardown(String reason)
   {
     runtime.getService().audit("session_revoked", "user=" + user.getUsername() + " session=" + sessionId
@@ -2013,30 +481,7 @@ final class BaskStreamClientSession
     close(reason);
   }
 
-  private List<Object> subscriptionGroupSummaries(boolean includePoints)
-  {
-    long now = Clock.millis();
-    List<Object> groups = new ArrayList<Object>(subscriptionGroups.size());
-    for (SubscriptionGroup group : subscriptionGroups.values())
-    {
-      Map<String, Object> summary = new LinkedHashMap<String, Object>();
-      summary.put("group", group.name);
-      summary.put("pointCount", Long.valueOf(group.points.size()));
-      summary.put("createdAt", Long.valueOf(group.createdAt));
-      summary.put("updatedAt", Long.valueOf(group.updatedAt));
-      summary.put("leaseSec", Long.valueOf(group.leaseSec));
-      summary.put("leaseExpiresAt", group.expiresAt == 0L ? null : Long.valueOf(group.expiresAt));
-      summary.put("ttlSec", group.expiresAt == 0L ? null : Long.valueOf(Math.max(0L, (group.expiresAt - now) / 1000L)));
-      if (includePoints)
-      {
-        summary.put("points", new ArrayList<String>(group.points));
-      }
-      groups.add(summary);
-    }
-    return groups;
-  }
-
-  private void cancelScheduled(ScheduledFuture<?> future)
+  void cancelScheduled(ScheduledFuture<?> future)
   {
     if (future != null)
     {
@@ -2044,7 +489,7 @@ final class BaskStreamClientSession
     }
   }
 
-  private List<String> optionalStringList(Map<String, Object> request, String key) throws BaskStreamProtocolException
+  List<String> optionalStringList(Map<String, Object> request, String key) throws BaskStreamProtocolException
   {
     Object value = request.get(key);
     if (value == null)
@@ -2068,7 +513,7 @@ final class BaskStreamClientSession
     return out;
   }
 
-  private Boolean optionalBoolean(Map<String, Object> request, String key) throws BaskStreamProtocolException
+  Boolean optionalBoolean(Map<String, Object> request, String key) throws BaskStreamProtocolException
   {
     Object value = request.get(key);
     if (value == null)
@@ -2082,7 +527,7 @@ final class BaskStreamClientSession
     throw new BaskStreamProtocolException("bad_request", "Field '" + key + "' must be a boolean.");
   }
 
-  private List<Object> listOf(Object... values)
+  List<Object> listOf(Object... values)
   {
     List<Object> out = new ArrayList<Object>(values.length);
     for (int i = 0; i < values.length; i++)
@@ -2098,7 +543,7 @@ final class BaskStreamClientSession
     send(pong);
   }
 
-  private void sendError(String id, String code, String message)
+  void sendError(String id, String code, String message)
   {
     Map<String, Object> error = baseMessage("error", id);
     error.put("code", code);
@@ -2106,7 +551,7 @@ final class BaskStreamClientSession
     send(error);
   }
 
-  private synchronized void send(Map<String, Object> message)
+  synchronized void send(Map<String, Object> message)
   {
     if (closed.get())
     {
@@ -2134,7 +579,7 @@ final class BaskStreamClientSession
     }
   }
 
-  private Map<String, Object> baseMessage(String op, String id)
+  Map<String, Object> baseMessage(String op, String id)
   {
     Map<String, Object> message = new LinkedHashMap<String, Object>();
     message.put("op", op);
@@ -2145,7 +590,7 @@ final class BaskStreamClientSession
     return message;
   }
 
-  private Map<String, Object> errorEntry(String pointOrd, String code, String message)
+  Map<String, Object> errorEntry(String pointOrd, String code, String message)
   {
     Map<String, Object> error = new LinkedHashMap<String, Object>();
     error.put("point", pointOrd);
@@ -2155,20 +600,4 @@ final class BaskStreamClientSession
     return error;
   }
 
-  private static final class SubscriptionGroup
-  {
-    private final String name;
-    private final LinkedHashSet<String> points = new LinkedHashSet<String>();
-    private final long createdAt;
-    private long updatedAt;
-    private int leaseSec;
-    private long expiresAt;
-
-    private SubscriptionGroup(String name, long now)
-    {
-      this.name = name;
-      this.createdAt = now;
-      this.updatedAt = now;
-    }
-  }
 }
