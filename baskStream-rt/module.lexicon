@@ -1,7 +1,33 @@
 #
 # Lexicon for the baskStream module.
 #
+# Slot display names use the bare slot name as the key (Niagara 4 Developer Guide,
+# localization). Only slots declared by BBaskStreamService belong here; servletName is
+# declared by the web module and takes its display name from that lexicon.
+#
 type.BaskStreamService=BASkStreamService
-slot.BaskStreamService.servletName=Servlet Name
-slot.BaskStreamService.wsPath=WebSocket Path
-slot.BaskStreamService.allowedOrigins=Allowed Origins
+
+writesEnabled=Writes Enabled
+modelEditsEnabled=Model Edits Enabled
+wsPath=WebSocket Path
+maxConnections=Max Connections
+maxConnectionsPerUser=Max Connections Per User
+maxMessageBytes=Max Message Bytes
+maxSubscriptionsPerClient=Max Subscriptions Per Client
+maxPointSnapshotPoints=Max Point Snapshot Points
+heartbeatIntervalSec=Heartbeat Interval (s)
+subscriptionLeaseSec=Subscription Lease (s)
+covBatchWindowMillis=COV Batch Window (ms)
+writeSettleMillis=Write Settle Delay (ms)
+allowedPathPatterns=Allowed Path Patterns
+allowedOrigins=Allowed Origins
+requireAuthorizationHeader=Require Authorization Header
+rejectMissingOrigin=Reject Missing Origin
+revalidateIntervalSec=Revalidate Interval (s)
+activeConnections=Active Connections
+totalSubscriptions=Total Subscriptions
+requestCount=Request Count
+errorCount=Error Count
+writeRequestCount=Write Request Count
+resyncCount=Resync Count
+requestTimeoutCount=Request Timeout Count

@@ -57,9 +57,12 @@ final class BaskStreamBrowseResolver
 
   private final BBaskStreamService service;
 
+  private final BaskStreamAuthorizer authorizer;
+
   BaskStreamBrowseResolver(BBaskStreamService service)
   {
     this.service = service;
+    this.authorizer = new BaskStreamAuthorizer(service);
   }
 
   Map<String, Object> browse(String baseOrd, int depth, String metadataMode, Context context) throws BaskStreamProtocolException
@@ -208,6 +211,12 @@ final class BaskStreamBrowseResolver
         throw new BaskStreamProtocolException("invalid_point", "Resolved target is not browsable.");
       }
 
+      // Judge where the ORD actually led, not only the text that was sent.
+      BComponent resolved = object instanceof BComponent ? (BComponent) object : target.getComponent();
+      if (resolved != null && !authorizer.pathAllowed(resolved))
+      {
+        throw new BaskStreamProtocolException("forbidden_point", "Node is outside the allowedPathPatterns policy.");
+      }
       requireAllowedHierarchyTarget(ord, object, target);
 
       return toWire(navNode, target, context, depth, metadataMode, isHierarchyOrd(ord));
@@ -280,7 +289,7 @@ final class BaskStreamBrowseResolver
     wire.put("writable", Boolean.valueOf(writable));
     wire.put("features", buildFeatures(point, history, alarm, schedule));
     wire.put("operations", buildOperations(hasChildren, point, writable, history, alarm, schedule));
-    putHierarchyBindings(wire, object);
+    putHierarchyBindings(wire, object, context);
     if (includeMetadata(metadataMode))
     {
       wire.put("metadata", metadata(object, component, point, writable, history, alarm, schedule, context));
@@ -337,7 +346,7 @@ final class BaskStreamBrowseResolver
     metadata.put("subscriptions", subscriptionMetadata(point, history, alarm, schedule));
     metadata.put("facets", componentFacets(component, context));
     metadata.put("tags", tags(component));
-    metadata.put("relations", relations(component));
+    metadata.put("relations", relations(component, context));
     return metadata;
   }
 
@@ -387,7 +396,7 @@ final class BaskStreamBrowseResolver
     driver.put("device", componentSummary(device, context));
     driver.put("pointDeviceExt", componentSummary(pointDeviceExt, context));
     driver.put("proxyExt", componentSummary(proxyExt, context));
-    if (proxyExt != null)
+    if (proxyExt != null && authorizer.canRead(proxyExt, context))
     {
       driver.put("proxyExtType", proxyExt.getType().toString());
       driver.put("deviceExtType", proxyExt.getDeviceExtType().toString());
@@ -472,6 +481,10 @@ final class BaskStreamBrowseResolver
   private Map<String, Object> historyExtensionSummary(BHistoryExt extension, Context context)
   {
     Map<String, Object> summary = componentSummary(extension, context);
+    if (Boolean.TRUE.equals(summary.get("redacted")))
+    {
+      return summary;
+    }
     summary.put("enabled", Boolean.valueOf(extension.getEnabled()));
     summary.put("active", Boolean.valueOf(extension.getActive()));
     summary.put("status", extension.getStatus() == null ? null : extension.getStatus().toString(context));
@@ -483,8 +496,15 @@ final class BaskStreamBrowseResolver
     try
     {
       BIHistory history = extension.getHistory();
-      summary.put("historyOrd", history == null || history.getOrdInSpace() == null ? null : history.getOrdInSpace().toString());
-      summary.put("historyId", history == null || history.getId() == null ? null : history.getId().toString());
+      if (history != null && !authorizer.canReadHistory(history, context))
+      {
+        summary.put("historyRedacted", Boolean.TRUE);
+      }
+      else
+      {
+        summary.put("historyOrd", history == null || history.getOrdInSpace() == null ? null : history.getOrdInSpace().toString());
+        summary.put("historyId", history == null || history.getId() == null ? null : history.getId().toString());
+      }
     }
     catch (Exception e)
     {
@@ -685,6 +705,10 @@ final class BaskStreamBrowseResolver
     {
       return summary;
     }
+    if (!authorizer.canRead(component, context))
+    {
+      return BaskStreamAuthorizer.redacted();
+    }
     summary.put("ord", component.getSlotPath() == null ? null : component.getSlotPath().toString());
     summary.put("slotPath", component.getSlotPath() == null ? null : component.getSlotPath().toString());
     summary.put("name", component.getName());
@@ -860,7 +884,7 @@ final class BaskStreamBrowseResolver
     return tags;
   }
 
-  private List<Object> relations(BComponent component)
+  private List<Object> relations(BComponent component, Context context)
   {
     List<Object> relations = new ArrayList<Object>();
     if (component == null)
@@ -881,6 +905,12 @@ final class BaskStreamBrowseResolver
         Map<String, Object> wire = new LinkedHashMap<String, Object>();
         wire.put("id", relation.getId().toString());
         wire.put("direction", relation.isInbound() ? "in" : "out");
+        if (!canSeeEndpoint(relation, context))
+        {
+          wire.put("endpointRedacted", Boolean.TRUE);
+          relations.add(wire);
+          continue;
+        }
         wire.put("endpointOrd", relation.getEndpointOrd() == null ? null : relation.getEndpointOrd().toString());
         wire.put("endpoint", relation.getEndpoint() == null ? null : relation.getEndpoint().toString());
         relations.add(wire);
@@ -891,6 +921,19 @@ final class BaskStreamBrowseResolver
       // Relations are supplemental metadata; do not fail browse/describe if a relation provider errors.
     }
     return relations;
+  }
+
+  /** Relation endpoints are separate objects; show them only when the user may read them. */
+  private boolean canSeeEndpoint(Relation relation, Context context)
+  {
+    Object endpoint = relation.getEndpoint();
+    if (endpoint instanceof BObject)
+    {
+      return authorizer.canRead((BObject) endpoint, context);
+    }
+    // Unresolved endpoint: only its ORD text is known, so apply the path policy to it.
+    String ord = relation.getEndpointOrd() == null ? null : BaskStreamAccessPolicy.localSlotOrd(relation.getEndpointOrd().toString());
+    return BaskStreamAccessPolicy.isDefaultWideOpen(service) || (ord != null && BaskStreamAccessPolicy.isAllowed(service, ord));
   }
 
   private BProxyExt proxyExt(BComponent component)
@@ -1052,7 +1095,8 @@ final class BaskStreamBrowseResolver
     BOrd ord = child.getNavOrd();
     if (ord == null)
     {
-      return fallbackNode(child, null, null, metadataMode);
+      // Without an ORD there is nothing to permission-check, so do not reveal the child.
+      return null;
     }
 
     String childOrd = ord.toString();
@@ -1107,31 +1151,6 @@ final class BaskStreamBrowseResolver
     }
 
     return BaskStreamAccessPolicy.extractSlotOrd(ord);
-  }
-
-  private Map<String, Object> fallbackNode(BINavNode navNode, String ord, String error, String metadataMode)
-  {
-    Map<String, Object> wire = new LinkedHashMap<String, Object>();
-    wire.put("ord", ord);
-    wire.put("slotPath", null);
-    wire.put("name", navNode.getNavName());
-    wire.put("display", navNode.getNavName());
-    wire.put("description", null);
-    wire.put("typeSpec", null);
-    wire.put("kind", navNode.hasNavChildren() ? "container" : "component");
-    wire.put("hasChildren", Boolean.valueOf(navNode.hasNavChildren()));
-    wire.put("writable", Boolean.FALSE);
-    wire.put("features", new ArrayList<Object>(0));
-    wire.put("operations", navNode.hasNavChildren() ? listOf("browse") : new ArrayList<Object>(0));
-    if (includeMetadata(metadataMode))
-    {
-      wire.put("metadata", new LinkedHashMap<String, Object>());
-    }
-    if (error != null)
-    {
-      wire.put("error", error);
-    }
-    return wire;
   }
 
   private SearchNode resolveSearchRoot(String ord, Context context) throws BaskStreamProtocolException
@@ -1666,7 +1685,7 @@ final class BaskStreamBrowseResolver
    * Additive hierarchy bindings. Invoked only for hierarchy:* types so slot:/
    * node shape is unchanged. Uses reflection to avoid a hierarchy-rt dependency.
    */
-  private void putHierarchyBindings(Map<String, Object> wire, BObject object)
+  private void putHierarchyBindings(Map<String, Object> wire, BObject object, Context context)
   {
     if (object == null || !isHierarchyType(object.getType().toString()))
     {
@@ -1677,6 +1696,11 @@ final class BaskStreamBrowseResolver
       Object entityOrd = object.getClass().getMethod("getEntityOrd").invoke(object);
       Object targetOrd = object.getClass().getMethod("getTargetOrd").invoke(object);
       Object targetComponent = object.getClass().getMethod("getTargetComponent").invoke(object);
+      if (targetComponent instanceof BComponent && !authorizer.canRead((BComponent) targetComponent, context))
+      {
+        wire.put("bindingRedacted", Boolean.TRUE);
+        return;
+      }
       if (entityOrd != null)
       {
         wire.put("entityOrd", entityOrd.toString());
@@ -1729,12 +1753,5 @@ final class BaskStreamBrowseResolver
   private static String safe(String value)
   {
     return value == null ? "" : value;
-  }
-
-  private static List<Object> listOf(String value)
-  {
-    List<Object> list = new ArrayList<Object>(1);
-    list.add(value);
-    return list;
   }
 }

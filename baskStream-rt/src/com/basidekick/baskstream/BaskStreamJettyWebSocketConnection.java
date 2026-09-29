@@ -9,7 +9,7 @@ import org.eclipse.jetty.websocket.api.Session;
 import org.eclipse.jetty.websocket.api.WebSocketAdapter;
 import org.eclipse.jetty.websocket.servlet.ServletUpgradeRequest;
 
-final class BaskStreamJettyWebSocketConnection extends WebSocketAdapter
+final class BaskStreamJettyWebSocketConnection extends WebSocketAdapter implements BaskStreamTransport
 {
   private final BaskStreamWebSocketRuntime runtime;
   private final ServletUpgradeRequest upgradeRequest;
@@ -35,7 +35,7 @@ final class BaskStreamJettyWebSocketConnection extends WebSocketAdapter
 
     try
     {
-      BaskStreamClientSession next = runtime.buildSession(this, upgradeRequest);
+      BaskStreamClientSession next = runtime.buildSession(this, upgradeRequest.getUserPrincipal(), upgradeRequest.getLocale());
       if (!runtime.onOpen(next))
       {
         runtime.getService().audit("connect_rejected", "reason=connection_limit user=" + next.getUsername()
@@ -108,7 +108,8 @@ final class BaskStreamJettyWebSocketConnection extends WebSocketAdapter
     super.onWebSocketError(cause);
   }
 
-  void send(byte[] payload) throws IOException
+  @Override
+  public void send(byte[] payload) throws IOException
   {
     boolean start;
     synchronized (outbound)
@@ -169,7 +170,8 @@ final class BaskStreamJettyWebSocketConnection extends WebSocketAdapter
     }
   }
 
-  void closeTransport(int statusCode, String reason)
+  @Override
+  public void closeTransport(int statusCode, String reason)
   {
     synchronized (outbound)
     {

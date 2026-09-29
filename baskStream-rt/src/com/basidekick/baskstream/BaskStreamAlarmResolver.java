@@ -1,6 +1,7 @@
 package com.basidekick.baskstream;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -12,6 +13,8 @@ import javax.baja.alarm.BAlarmService;
 import javax.baja.alarm.BSourceState;
 import javax.baja.naming.BOrd;
 import javax.baja.naming.BOrdList;
+import javax.baja.security.BPermissions;
+import javax.baja.sys.BAbsTime;
 import javax.baja.sys.BObject;
 import javax.baja.sys.Clock;
 import javax.baja.sys.Context;
@@ -22,12 +25,16 @@ final class BaskStreamAlarmResolver
 {
   private static final int DEFAULT_LIMIT = 500;
   private static final int MAX_LIMIT = 5000;
+  // Bounds a filtered read (and snapshot-mode alarm events) on a large alarm database.
+  private static final int MAX_EXAMINED = 50000;
 
   private final BBaskStreamService service;
+  private final BaskStreamAuthorizer authorizer;
 
   BaskStreamAlarmResolver(BBaskStreamService service)
   {
     this.service = service;
+    this.authorizer = new BaskStreamAuthorizer(service);
   }
 
   AlarmSubscriptionSpec normalizeSubscription(String sourceOrd, String scope, Object limitValue)
@@ -49,6 +56,16 @@ final class BaskStreamAlarmResolver
   Map<String, Object> readAlarms(String sourceOrd, String scope, Object limitValue, Context context)
       throws BaskStreamProtocolException
   {
+    return readAlarms(sourceOrd, scope, limitValue, AlarmFilter.NONE, false, context);
+  }
+
+  /**
+   * Bounded alarm read. The filter narrows by alarm class, priority, ack state and time; newest
+   * returns the most recent matches first (the oldest are dropped when over the limit).
+   */
+  Map<String, Object> readAlarms(String sourceOrd, String scope, Object limitValue, AlarmFilter filter, boolean newest,
+      Context context) throws BaskStreamProtocolException
+  {
     AlarmSubscriptionSpec spec = normalizeSubscription(sourceOrd, scope, limitValue);
     requireAllowed(spec);
 
@@ -59,23 +76,48 @@ final class BaskStreamAlarmResolver
     }
 
     List<Object> alarms = new ArrayList<Object>();
+    java.util.ArrayDeque<BAlarmRecord> newestWindow = new java.util.ArrayDeque<BAlarmRecord>();
     boolean truncated = false;
+    String truncatedReason = null;
+    Map<String, BPermissions> classPermissions = new HashMap<String, BPermissions>();
 
     try (AlarmSpaceConnection connection = alarmService.getAlarmDb().getConnection(context))
     {
       Cursor<BAlarmRecord> cursor = null;
       try
       {
-        cursor = openCursor(connection, spec.scope);
+        // A time window over every alarm uses the database's time index instead of a full scan.
+        cursor = "all".equals(spec.scope) && filter.hasTimeWindow()
+            ? connection.timeQuery(BAbsTime.make(filter.since == null ? 0L : filter.since.longValue()),
+                BAbsTime.make(filter.until == null ? Clock.millis() : filter.until.longValue()))
+            : openCursor(connection, spec.scope);
         int count = 0;
+        int examined = 0;
         while (cursor.next())
         {
+          if (++examined > MAX_EXAMINED) { truncated = true; truncatedReason = "examined_limit"; break; }
           BAlarmRecord record = cursor.get();
           if (spec.source != null && !matchesSource(record, spec.source))
           {
             continue;
           }
-          if (count >= spec.limit) { truncated = true; break; }
+          if (!filter.matches(record))
+          {
+            continue;
+          }
+          if (!authorizer.alarmPermissions(alarmService, record, context, classPermissions).hasOperatorRead())
+          {
+            continue;
+          }
+          if (newest)
+          {
+            // Keep the most recent `limit` matches; older ones fall out of the window.
+            if (newestWindow.size() >= spec.limit) { newestWindow.pollFirst(); truncated = true; truncatedReason = "limit"; }
+            // The cursor reuses one record instance per get(), so keep a copy.
+            newestWindow.addLast((BAlarmRecord) record.newCopy());
+            continue;
+          }
+          if (count >= spec.limit) { truncated = true; truncatedReason = "limit"; break; }
           alarms.add(toWire(record, context));
           count++;
         }
@@ -99,21 +141,87 @@ final class BaskStreamAlarmResolver
           e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
     }
 
+    for (java.util.Iterator<BAlarmRecord> it = newestWindow.descendingIterator(); it.hasNext(); )
+    {
+      alarms.add(toWire(it.next(), context));
+    }
     Map<String, Object> response = result(spec, alarms);
+    if (!filter.isEmpty())
+    {
+      response.put("filter", filter.toWire());
+    }
+    if (newest)
+    {
+      response.put("order", "newest");
+    }
     response.put("truncated", Boolean.valueOf(truncated));
+    if (truncatedReason != null)
+    {
+      response.put("truncatedReason", truncatedReason);
+    }
     return response;
   }
 
   Map<String, Object> acknowledgeAlarms(Object uuidValue, String sourceOrd, Context context, String userName)
       throws BaskStreamProtocolException
   {
-    return alarmAction("ack_alarm", uuidValue, sourceOrd, context, userName);
+    return alarmAction("ack_alarm", uuidValue, sourceOrd, false, context, userName);
   }
 
   Map<String, Object> clearAlarms(Object uuidValue, String sourceOrd, Context context, String userName)
       throws BaskStreamProtocolException
   {
-    return alarmAction("clear_alarm", uuidValue, sourceOrd, context, userName);
+    return alarmAction("clear_alarm", uuidValue, sourceOrd, false, context, userName);
+  }
+
+  /**
+   * Acknowledge or force-clear by UUIDs or by a filter. With a filter, the matching alarms (up to
+   * the limit) are found first, then each goes through the same per-record checks as a UUID
+   * request. dryRun reports what would happen without changing anything.
+   */
+  Map<String, Object> alarmActionRequest(String action, Object uuidValue, Object filterValue, String scope,
+      Object limitValue, String sourceOrd, Object dryRunValue, Context context, String userName)
+      throws BaskStreamProtocolException
+  {
+    if (dryRunValue != null && !(dryRunValue instanceof Boolean))
+    {
+      throw new BaskStreamProtocolException("bad_request", "Field 'dryRun' must be a boolean.");
+    }
+    boolean dryRun = Boolean.TRUE.equals(dryRunValue);
+    if (filterValue == null)
+    {
+      return alarmAction(action, uuidValue, sourceOrd, dryRun, context, userName);
+    }
+    if (uuidValue != null)
+    {
+      throw new BaskStreamProtocolException("bad_request", "Use either 'uuids' or 'filter', not both.");
+    }
+    AlarmFilter filter = AlarmFilter.parse(filterValue);
+    Map<String, Object> matched = readAlarms(sourceOrd, scope == null ? "open" : scope, limitValue, filter, false, context);
+    List<String> uuids = new ArrayList<String>();
+    for (Object alarm : (List<?>) matched.get("alarms"))
+    {
+      Object uuid = ((Map<?, ?>) alarm).get("uuid");
+      if (uuid != null) uuids.add(uuid.toString());
+    }
+    Map<String, Object> result = uuids.isEmpty()
+        ? emptyActionResult(action, sourceOrd)
+        : alarmAction(action, uuids, sourceOrd, dryRun, context, userName);
+    result.put("filter", filter.toWire());
+    result.put("matched", Long.valueOf(uuids.size()));
+    result.put("truncated", matched.get("truncated"));
+    if (dryRun) result.put("dryRun", Boolean.TRUE);
+    return result;
+  }
+
+  private Map<String, Object> emptyActionResult(String action, String source)
+  {
+    Map<String, Object> result = new LinkedHashMap<String, Object>();
+    result.put("action", action);
+    result.put("source", source);
+    result.put("count", Long.valueOf(0));
+    result.put("alarms", new ArrayList<Object>());
+    return result;
   }
 
   void requireAllowed(AlarmSubscriptionSpec spec) throws BaskStreamProtocolException
@@ -129,6 +237,11 @@ final class BaskStreamAlarmResolver
     }
   }
 
+  boolean canView(BAlarmRecord record, Context context)
+  {
+    return authorizer.canViewAlarm(record, context);
+  }
+
   Map<String, Object> result(AlarmSubscriptionSpec spec, List<Object> alarms)
   {
     Map<String, Object> result = new LinkedHashMap<String, Object>();
@@ -140,8 +253,8 @@ final class BaskStreamAlarmResolver
     return result;
   }
 
-  private Map<String, Object> alarmAction(String action, Object uuidValue, String sourceOrd, Context context, String userName)
-      throws BaskStreamProtocolException
+  private Map<String, Object> alarmAction(String action, Object uuidValue, String sourceOrd, boolean dryRun,
+      Context context, String userName) throws BaskStreamProtocolException
   {
     String source = normalizeSource(sourceOrd);
     List<String> uuids = normalizeUuids(uuidValue);
@@ -150,6 +263,8 @@ final class BaskStreamAlarmResolver
     {
       throw new BaskStreamProtocolException("alarm_failed", "Niagara AlarmService is not available.");
     }
+    // Check the gate before any lookup so a disabled station does not reveal which UUIDs exist.
+    service.requireWritesEnabled();
 
     List<Object> results = new ArrayList<Object>(uuids.size());
     for (String uuid : uuids)
@@ -157,12 +272,36 @@ final class BaskStreamAlarmResolver
       try
       {
         BAlarmRecord record = resolveAlarmRecord(alarmService, uuid, context);
+        BPermissions permissions = authorizer.alarmPermissions(alarmService, record, context, null);
+        if (!permissions.hasOperatorRead())
+        {
+          // Report unreadable records the same way as missing ones.
+          throw new BaskStreamProtocolException("invalid_alarm", "Alarm record was not found.");
+        }
         requireAllowedRecord(record);
         if (source != null && !matchesSource(record, source))
         {
           throw new BaskStreamProtocolException("forbidden_point", "Alarm record did not match the requested source filter.");
         }
-        if ("ack_alarm".equals(action))
+        boolean ack = "ack_alarm".equals(action);
+        if (ack ? !permissions.hasOperatorWrite() : !permissions.hasAdminWrite())
+        {
+          throw new BaskStreamProtocolException("forbidden_alarm", ack
+              ? "Acknowledging requires operator write permission on the alarm class."
+              : "Force-clearing requires admin write permission on the alarm class.");
+        }
+        Map<String, Object> result;
+        if (dryRun)
+        {
+          result = toWire(record, context);
+          result.put("ok", Boolean.TRUE);
+          result.put("action", action);
+          result.put("dryRun", Boolean.TRUE);
+          results.add(result);
+          continue;
+        }
+        service.requireWritesEnabled();
+        if (ack)
         {
           acknowledgeAlarm(alarmService, record, context, userName);
         }
@@ -171,7 +310,7 @@ final class BaskStreamAlarmResolver
           forceClearAlarm(alarmService, record, context, userName);
         }
 
-        Map<String, Object> result = toWire(record, context);
+        result = toWire(record, context);
         result.put("ok", Boolean.TRUE);
         result.put("action", action);
         results.add(result);
@@ -449,13 +588,7 @@ final class BaskStreamAlarmResolver
 
   private static String normalizeSlotOrd(String ord)
   {
-    if (ord == null)
-    {
-      return null;
-    }
-
-    int index = ord.indexOf("slot:/");
-    return index >= 0 ? ord.substring(index) : ord;
+    return BaskStreamAccessPolicy.localSlotOrd(ord);
   }
 
   private String normalizeSource(String sourceOrd) throws BaskStreamProtocolException
@@ -531,6 +664,119 @@ final class BaskStreamAlarmResolver
   private static String ackStateName(BAckState state)
   {
     return state == null ? null : state.toString();
+  }
+
+  /** Optional narrowing for alarm reads and filtered ack/clear. All fields are optional. */
+  static final class AlarmFilter
+  {
+    static final AlarmFilter NONE = new AlarmFilter();
+
+    java.util.Set<String> alarmClasses;
+    Integer minPriority;
+    Integer maxPriority;
+    Boolean acknowledged;
+    Long since;
+    Long until;
+
+    static AlarmFilter parse(Object value) throws BaskStreamProtocolException
+    {
+      if (value == null)
+      {
+        return NONE;
+      }
+      if (!(value instanceof Map))
+      {
+        throw new BaskStreamProtocolException("bad_request", "Field 'filter' must be an object.");
+      }
+      Map<?, ?> map = (Map<?, ?>) value;
+      for (Object key : map.keySet())
+      {
+        if (!java.util.Arrays.asList("alarmClass", "minPriority", "maxPriority", "ackState", "since", "until").contains(key))
+        {
+          throw new BaskStreamProtocolException("bad_request", "Unknown alarm filter field: " + key);
+        }
+      }
+      AlarmFilter filter = new AlarmFilter();
+      Object classes = map.get("alarmClass");
+      if (classes instanceof String)
+      {
+        filter.alarmClasses = java.util.Collections.singleton((String) classes);
+      }
+      else if (classes instanceof List)
+      {
+        filter.alarmClasses = new java.util.HashSet<String>();
+        for (Object item : (List<?>) classes)
+        {
+          if (!(item instanceof String)) throw new BaskStreamProtocolException("bad_request", "alarmClass must be a string or a list of strings.");
+          filter.alarmClasses.add((String) item);
+        }
+      }
+      else if (classes != null)
+      {
+        throw new BaskStreamProtocolException("bad_request", "alarmClass must be a string or a list of strings.");
+      }
+      filter.minPriority = optionalInt(map.get("minPriority"), "minPriority");
+      filter.maxPriority = optionalInt(map.get("maxPriority"), "maxPriority");
+      Object ack = map.get("ackState");
+      if (ack != null)
+      {
+        if ("acked".equals(ack)) filter.acknowledged = Boolean.TRUE;
+        else if ("unacked".equals(ack)) filter.acknowledged = Boolean.FALSE;
+        else throw new BaskStreamProtocolException("bad_request", "ackState must be 'acked' or 'unacked'.");
+      }
+      filter.since = optionalLong(map.get("since"), "since");
+      filter.until = optionalLong(map.get("until"), "until");
+      return filter;
+    }
+
+    private static Integer optionalInt(Object value, String name) throws BaskStreamProtocolException
+    {
+      if (value == null) return null;
+      if (!(value instanceof Number)) throw new BaskStreamProtocolException("bad_request", name + " must be a number.");
+      return Integer.valueOf(((Number) value).intValue());
+    }
+
+    private static Long optionalLong(Object value, String name) throws BaskStreamProtocolException
+    {
+      if (value == null) return null;
+      if (!(value instanceof Number)) throw new BaskStreamProtocolException("bad_request", name + " must be epoch milliseconds.");
+      return Long.valueOf(((Number) value).longValue());
+    }
+
+    boolean isEmpty()
+    {
+      return alarmClasses == null && minPriority == null && maxPriority == null && acknowledged == null
+          && since == null && until == null;
+    }
+
+    boolean hasTimeWindow()
+    {
+      return since != null || until != null;
+    }
+
+    boolean matches(BAlarmRecord record)
+    {
+      if (alarmClasses != null && !alarmClasses.contains(record.getAlarmClass())) return false;
+      if (minPriority != null && record.getPriority() < minPriority.intValue()) return false;
+      if (maxPriority != null && record.getPriority() > maxPriority.intValue()) return false;
+      if (acknowledged != null && record.isAcknowledged() != acknowledged.booleanValue()) return false;
+      long time = record.getTimestamp() == null ? 0L : record.getTimestamp().getMillis();
+      if (since != null && time < since.longValue()) return false;
+      if (until != null && time > until.longValue()) return false;
+      return true;
+    }
+
+    Map<String, Object> toWire()
+    {
+      Map<String, Object> wire = new LinkedHashMap<String, Object>();
+      if (alarmClasses != null) wire.put("alarmClass", new ArrayList<String>(alarmClasses));
+      if (minPriority != null) wire.put("minPriority", Long.valueOf(minPriority.longValue()));
+      if (maxPriority != null) wire.put("maxPriority", Long.valueOf(maxPriority.longValue()));
+      if (acknowledged != null) wire.put("ackState", acknowledged.booleanValue() ? "acked" : "unacked");
+      if (since != null) wire.put("since", since);
+      if (until != null) wire.put("until", until);
+      return wire;
+    }
   }
 
   static final class AlarmSubscriptionSpec

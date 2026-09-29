@@ -12,3 +12,8 @@ tools/mcp/node_modules/
 tools/mcp/dist/
 tools/mcp/.mcpb-build/
 tools/mcp/*.mcpb
+sdk/node_modules/
+sdk/dist/
+cli/node_modules/
+cli/dist/
+cli/bin/

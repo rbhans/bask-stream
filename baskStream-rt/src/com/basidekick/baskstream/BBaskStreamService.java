@@ -16,6 +16,18 @@ import javax.baja.web.WebOp;
 
 @NiagaraType
 @NiagaraProperty(
+  name = "writesEnabled",
+  type = "boolean",
+  defaultValue = "true",
+  flags = Flags.SUMMARY
+)
+@NiagaraProperty(
+  name = "modelEditsEnabled",
+  type = "boolean",
+  defaultValue = "false",
+  flags = Flags.SUMMARY
+)
+@NiagaraProperty(
   name = "wsPath",
   type = "baja:String",
   defaultValue = "/stream",
@@ -117,6 +129,36 @@ import javax.baja.web.WebOp;
   defaultValue = "0",
   flags = Flags.READONLY | Flags.TRANSIENT
 )
+@NiagaraProperty(
+  name = "requestCount",
+  type = "long",
+  defaultValue = "0",
+  flags = Flags.READONLY | Flags.TRANSIENT
+)
+@NiagaraProperty(
+  name = "errorCount",
+  type = "long",
+  defaultValue = "0",
+  flags = Flags.READONLY | Flags.TRANSIENT
+)
+@NiagaraProperty(
+  name = "writeRequestCount",
+  type = "long",
+  defaultValue = "0",
+  flags = Flags.READONLY | Flags.TRANSIENT
+)
+@NiagaraProperty(
+  name = "resyncCount",
+  type = "long",
+  defaultValue = "0",
+  flags = Flags.READONLY | Flags.TRANSIENT
+)
+@NiagaraProperty(
+  name = "requestTimeoutCount",
+  type = "long",
+  defaultValue = "0",
+  flags = Flags.READONLY | Flags.TRANSIENT
+)
 public final class BBaskStreamService extends BWebServlet
 {
   public static final Logger LOG = Logger.getLogger(BBaskStreamService.class.getName());
@@ -130,8 +172,54 @@ public final class BBaskStreamService extends BWebServlet
 
 //region /*+ ------------ BEGIN BAJA AUTO GENERATED CODE ------------ +*/
 //@formatter:off
-/*@ $com.basidekick.baskstream.BBaskStreamService(1166238119)1.0$ @*/
-/* Generated Thu Jul 23 18:37:58 MST 2026 by Slot-o-Matic (c) Tridium, Inc. 2012-2026 */
+/*@ $com.basidekick.baskstream.BBaskStreamService(3979930858)1.0$ @*/
+/* Generated Mon Sep 28 21:50:08 MST 2026 by Slot-o-Matic (c) Tridium, Inc. 2012-2026 */
+
+  //region Property "writesEnabled"
+
+  /**
+   * Slot for the {@code writesEnabled} property.
+   * @see #getWritesEnabled
+   * @see #setWritesEnabled
+   */
+  public static final Property writesEnabled = newProperty(Flags.SUMMARY, true, null);
+
+  /**
+   * Get the {@code writesEnabled} property.
+   * @see #writesEnabled
+   */
+  public boolean getWritesEnabled() { return getBoolean(writesEnabled); }
+
+  /**
+   * Set the {@code writesEnabled} property.
+   * @see #writesEnabled
+   */
+  public void setWritesEnabled(boolean v) { setBoolean(writesEnabled, v, null); }
+
+  //endregion Property "writesEnabled"
+
+  //region Property "modelEditsEnabled"
+
+  /**
+   * Slot for the {@code modelEditsEnabled} property.
+   * @see #getModelEditsEnabled
+   * @see #setModelEditsEnabled
+   */
+  public static final Property modelEditsEnabled = newProperty(Flags.SUMMARY, false, null);
+
+  /**
+   * Get the {@code modelEditsEnabled} property.
+   * @see #modelEditsEnabled
+   */
+  public boolean getModelEditsEnabled() { return getBoolean(modelEditsEnabled); }
+
+  /**
+   * Set the {@code modelEditsEnabled} property.
+   * @see #modelEditsEnabled
+   */
+  public void setModelEditsEnabled(boolean v) { setBoolean(modelEditsEnabled, v, null); }
+
+  //endregion Property "modelEditsEnabled"
 
   //region Property "wsPath"
 
@@ -524,6 +612,121 @@ public final class BBaskStreamService extends BWebServlet
 
   //endregion Property "totalSubscriptions"
 
+  //region Property "requestCount"
+
+  /**
+   * Slot for the {@code requestCount} property.
+   * @see #getRequestCount
+   * @see #setRequestCount
+   */
+  public static final Property requestCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0, null);
+
+  /**
+   * Get the {@code requestCount} property.
+   * @see #requestCount
+   */
+  public long getRequestCount() { return getLong(requestCount); }
+
+  /**
+   * Set the {@code requestCount} property.
+   * @see #requestCount
+   */
+  public void setRequestCount(long v) { setLong(requestCount, v, null); }
+
+  //endregion Property "requestCount"
+
+  //region Property "errorCount"
+
+  /**
+   * Slot for the {@code errorCount} property.
+   * @see #getErrorCount
+   * @see #setErrorCount
+   */
+  public static final Property errorCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0, null);
+
+  /**
+   * Get the {@code errorCount} property.
+   * @see #errorCount
+   */
+  public long getErrorCount() { return getLong(errorCount); }
+
+  /**
+   * Set the {@code errorCount} property.
+   * @see #errorCount
+   */
+  public void setErrorCount(long v) { setLong(errorCount, v, null); }
+
+  //endregion Property "errorCount"
+
+  //region Property "writeRequestCount"
+
+  /**
+   * Slot for the {@code writeRequestCount} property.
+   * @see #getWriteRequestCount
+   * @see #setWriteRequestCount
+   */
+  public static final Property writeRequestCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0, null);
+
+  /**
+   * Get the {@code writeRequestCount} property.
+   * @see #writeRequestCount
+   */
+  public long getWriteRequestCount() { return getLong(writeRequestCount); }
+
+  /**
+   * Set the {@code writeRequestCount} property.
+   * @see #writeRequestCount
+   */
+  public void setWriteRequestCount(long v) { setLong(writeRequestCount, v, null); }
+
+  //endregion Property "writeRequestCount"
+
+  //region Property "resyncCount"
+
+  /**
+   * Slot for the {@code resyncCount} property.
+   * @see #getResyncCount
+   * @see #setResyncCount
+   */
+  public static final Property resyncCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0, null);
+
+  /**
+   * Get the {@code resyncCount} property.
+   * @see #resyncCount
+   */
+  public long getResyncCount() { return getLong(resyncCount); }
+
+  /**
+   * Set the {@code resyncCount} property.
+   * @see #resyncCount
+   */
+  public void setResyncCount(long v) { setLong(resyncCount, v, null); }
+
+  //endregion Property "resyncCount"
+
+  //region Property "requestTimeoutCount"
+
+  /**
+   * Slot for the {@code requestTimeoutCount} property.
+   * @see #getRequestTimeoutCount
+   * @see #setRequestTimeoutCount
+   */
+  public static final Property requestTimeoutCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0, null);
+
+  /**
+   * Get the {@code requestTimeoutCount} property.
+   * @see #requestTimeoutCount
+   */
+  public long getRequestTimeoutCount() { return getLong(requestTimeoutCount); }
+
+  /**
+   * Set the {@code requestTimeoutCount} property.
+   * @see #requestTimeoutCount
+   */
+  public void setRequestTimeoutCount(long v) { setLong(requestTimeoutCount, v, null); }
+
+  //endregion Property "requestTimeoutCount"
+
   //region Type
 
   @Override
@@ -538,6 +741,35 @@ public final class BBaskStreamService extends BWebServlet
   public static BBaskStreamService getActiveService()
   {
     return ACTIVE.get();
+  }
+
+  // Slot-o-matic supplies the new property members at the user-owned build.
+  // Keep the accessors distinct from generated getters.
+  boolean writesAllowed()
+  {
+    Property p = getProperty("writesEnabled");
+    return p != null && getBoolean(p);
+  }
+
+  boolean modelEditsAllowed()
+  {
+    Property p = getProperty("modelEditsEnabled");
+    return writesAllowed() && p != null && getBoolean(p);
+  }
+
+  void requireWritesEnabled() throws BaskStreamProtocolException
+  {
+    if (!getEnabled() || !writesAllowed())
+      throw new BaskStreamProtocolException("writes_disabled", "Station writes are disabled on BASkStreamService.");
+    if (Thread.currentThread().isInterrupted())
+      throw new BaskStreamProtocolException("write_cancelled", "Write was cancelled.");
+  }
+
+  void requireModelEditsEnabled() throws BaskStreamProtocolException
+  {
+    requireWritesEnabled();
+    if (!modelEditsAllowed())
+      throw new BaskStreamProtocolException("model_edits_disabled", "Enable modelEditsEnabled on BASkStreamService to apply model plans.");
   }
 
   @Override
@@ -589,7 +821,7 @@ public final class BBaskStreamService extends BWebServlet
     {
       if (isWebSocketUpgrade(op))
       {
-        current.handleUpgrade(op.getRequest(), op.getResponse());
+        current.getTransport().handleUpgrade(op.getRequest(), op.getResponse());
         return;
       }
 
@@ -605,8 +837,49 @@ public final class BBaskStreamService extends BWebServlet
       return;
     }
 
+    if ("/metrics".equals(pathInfo))
+    {
+      writeMetrics(op, current.getMetrics());
+      return;
+    }
+
 
     op.getResponse().sendError(404);
+  }
+
+  /**
+   * Records a change in the station's audit history. Niagara audits component changes made with
+   * a user Context by itself; this covers the APIs that take no Context (tags and relations).
+   * Auditing never fails the change it describes.
+   */
+  void auditChange(String operation, javax.baja.sys.BComponent target, String slot, String oldValue, String newValue,
+      javax.baja.sys.Context context)
+  {
+    try
+    {
+      javax.baja.security.Auditor auditor = Sys.getAuditor();
+      if (auditor == null || target == null)
+      {
+        return;
+      }
+      String user = context == null || context.getUser() == null ? null : context.getUser().getUsername();
+      String where = target.getSlotPath() == null ? target.getName() : target.getSlotPath().toString();
+      auditor.audit(new javax.baja.security.AuditEvent(operation, where, slot, oldValue, newValue, user));
+    }
+    catch (RuntimeException e)
+    {
+      LOG.log(Level.WARNING, "baskStream could not record an audit event", e);
+    }
+  }
+
+  /** Copies the runtime's traffic counters onto the read-only properties. */
+  synchronized void setTrafficMetrics(BaskStreamMetrics metrics)
+  {
+    setLong(requestCount, metrics.requests.get(), null);
+    setLong(errorCount, metrics.errors.get(), null);
+    setLong(writeRequestCount, metrics.writeRequests.get(), null);
+    setLong(resyncCount, metrics.resyncs.get(), null);
+    setLong(requestTimeoutCount, metrics.requestTimeouts.get(), null);
   }
 
   synchronized void setRuntimeMetrics(int active, int subscriptions)
@@ -658,7 +931,8 @@ public final class BBaskStreamService extends BWebServlet
 
   int getWriteSettleMillisValue()
   {
-    return Math.max(0, getWriteSettleMillis());
+    // Capped: the delay runs once per point, and a batch can hold 1,000 points.
+    return Math.min(5000, Math.max(0, getWriteSettleMillis()));
   }
 
   boolean getRequireAuthorizationHeaderValue()
@@ -744,6 +1018,29 @@ public final class BBaskStreamService extends BWebServlet
     return upgrade != null && "websocket".equalsIgnoreCase(upgrade.trim());
   }
 
+  /** Prometheus/OpenMetrics text: counters since the service started, plus live gauges. */
+  private void writeMetrics(WebOp op, BaskStreamMetrics metrics) throws java.io.IOException
+  {
+    op.getResponse().setStatus(200);
+    op.setContentType("text/plain; version=0.0.4; charset=UTF-8");
+    StringBuilder out = new StringBuilder();
+    metric(out, "baskstream_requests_total", "counter", "Requests handled since the service started.", metrics.requests.get());
+    metric(out, "baskstream_errors_total", "counter", "Requests answered with an error.", metrics.errors.get());
+    metric(out, "baskstream_write_requests_total", "counter", "Requests that change station data.", metrics.writeRequests.get());
+    metric(out, "baskstream_resyncs_total", "counter", "Resync notices after an event backlog overflowed.", metrics.resyncs.get());
+    metric(out, "baskstream_request_timeouts_total", "counter", "Sessions closed by the request watchdog.", metrics.requestTimeouts.get());
+    metric(out, "baskstream_active_connections", "gauge", "Open WebSocket sessions.", getActiveConnectionsValue());
+    metric(out, "baskstream_subscriptions", "gauge", "Point, alarm and model subscriptions across sessions.", getTotalSubscriptionsValue());
+    op.getWriter().write(out.toString());
+  }
+
+  private static void metric(StringBuilder out, String name, String type, String help, long value)
+  {
+    out.append("# HELP ").append(name).append(' ').append(help).append('\n');
+    out.append("# TYPE ").append(name).append(' ').append(type).append('\n');
+    out.append(name).append(' ').append(value).append('\n');
+  }
+
   private void writeHealth(WebOp op) throws java.io.IOException
   {
     java.security.Principal principal = op.getRequest().getUserPrincipal();
@@ -755,7 +1052,9 @@ public final class BBaskStreamService extends BWebServlet
       + "\"service\":\"BASkStreamService\","
       + "\"enabled\":" + getEnabled() + ","
       + "\"wsPath\":\"" + escapeJson(getWsPath()) + "\","
-      + "\"apiVersion\":\"1.5\","
+      + "\"apiVersion\":\"1.6\","
+      + "\"writesEnabled\":" + writesAllowed() + ","
+      + "\"modelEditsEnabled\":" + modelEditsAllowed() + ","
       + "\"servletName\":\"" + escapeJson(getServletName()) + "\","
       + "\"pathInfo\":\"" + escapeJson(op.getPathInfo()) + "\","
       + "\"maxConnections\":" + getMaxConnectionsValue() + ","

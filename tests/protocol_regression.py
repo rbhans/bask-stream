@@ -33,7 +33,12 @@ public class ProtocolRegression {
     check(!BaskStreamAccessPolicy.isAllowed(s,"slot:/Outside/point"));
     check(!BaskStreamAccessPolicy.isAllowed(s,"slot:/Allowed/point|slot:/Outside/point"));
     check(!BaskStreamAccessPolicy.isAllowed(s,"slot:/Allowed/../Outside/point"));
-    System.out.println("PASS: roundtrip, trailing bytes, uint64 overflow, duplicate keys, size limits, ORD policy");
+    check("slot:/Allowed/p".equals(BaskStreamAccessPolicy.localSlotOrd("local:|station:|slot:/Allowed/p")));
+    check("slot:/Allowed/p".equals(BaskStreamAccessPolicy.localSlotOrd("station:|slot:/Allowed/p")));
+    check("slot:/Allowed/p".equals(BaskStreamAccessPolicy.localSlotOrd("slot:/Allowed/p")));
+    check(BaskStreamAccessPolicy.localSlotOrd("ip:10.0.0.9|fox:|station:|slot:/Allowed/p") == null);
+    check(BaskStreamAccessPolicy.localSlotOrd("local:|station:|h:1a2b") == null);
+    System.out.println("PASS: roundtrip, trailing bytes, uint64 overflow, duplicate keys, size limits, ORD policy, local ORDs");
   }
 }
 class BBaskStreamService { String getAllowedPathPatterns() { return "slot:/Allowed/*"; } }

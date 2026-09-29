@@ -82,4 +82,20 @@ final class BaskStreamSubscriptionManager
     sessions.clear();
     refreshMetrics();
   }
+
+  void checkWatchdogs(long now)
+  {
+    for (BaskStreamClientSession session : sessions.toArray(new BaskStreamClientSession[0]))
+    {
+      session.checkWatchdog(now);
+    }
+  }
+
+  void modelChanged(java.util.Set<String> affected)
+  {
+    for (BaskStreamClientSession session : sessions.toArray(new BaskStreamClientSession[0]))
+    {
+      session.modelChanged(affected);
+    }
+  }
 }

@@ -43,10 +43,12 @@ final class BaskStreamTagResolver
   private static final int MAX_TAGS_ON_WIRE = 500;
 
   private final BBaskStreamService service;
+  private final BaskStreamAuthorizer authorizer;
 
   BaskStreamTagResolver(BBaskStreamService service)
   {
     this.service = service;
+    this.authorizer = new BaskStreamAuthorizer(service);
   }
 
   int getMaxTargetsPerRequest()
@@ -72,7 +74,7 @@ final class BaskStreamTagResolver
         entry.put("tags", tagsToWire(component, dictionary));
         if (includeRelations)
         {
-          entry.put("relations", relationsToWire(component, dictionary));
+          entry.put("relations", relationsToWire(component, dictionary, context));
         }
         results.add(entry);
       }
@@ -129,14 +131,18 @@ final class BaskStreamTagResolver
     {
       for (Map<String, Object> setSpec : sets)
       {
-        opResults.add(applyTagSet(tags, setSpec));
+        Map<String, Object> result = applyTagSet(tags, setSpec);
+        opResults.add(result);
+        audit(result, javax.baja.security.AuditEvent.CHANGED, "tag:", component, null, String.valueOf(setSpec.get("value")), context);
       }
     }
     if (removes != null)
     {
       for (Object removeSpec : removes)
       {
-        opResults.add(applyTagRemove(tags, removeSpec));
+        Map<String, Object> result = applyTagRemove(tags, removeSpec);
+        opResults.add(result);
+        audit(result, javax.baja.security.AuditEvent.REMOVED, "tag:", component, null, null, context);
       }
     }
 
@@ -144,6 +150,17 @@ final class BaskStreamTagResolver
     entry.put("results", opResults);
     entry.put("tags", tagsToWire(component, null));
     return entry;
+  }
+
+  /** Audits one successful tag or relation change; the Tags/Relations APIs are not audited by Niagara. */
+  private void audit(Map<String, Object> result, String operation, String prefix, BComponent component,
+      String oldValue, String newValue, Context context)
+  {
+    if (!Boolean.TRUE.equals(result.get("ok")) || Boolean.FALSE.equals(result.get("changed")))
+    {
+      return;
+    }
+    service.auditChange(operation, component, prefix + result.get("id"), oldValue, newValue, context);
   }
 
   private Map<String, Object> applyTagSet(Tags tags, Map<String, Object> setSpec)
@@ -156,6 +173,7 @@ final class BaskStreamTagResolver
     {
       Id id = parseId(qname);
       BIDataValue value = toDataValue(setSpec.get("value"), optionalString(setSpec, "valueType"));
+      service.requireWritesEnabled();
       boolean changed = tags.set(new Tag(id, value));
       result.put("ok", Boolean.TRUE);
       result.put("changed", Boolean.valueOf(changed));
@@ -193,6 +211,7 @@ final class BaskStreamTagResolver
         result.put("message", "Tag is implied by a tag dictionary and cannot be removed from the component.");
         return result;
       }
+      service.requireWritesEnabled();
       boolean ok = tags.removeAll(id);
       result.put("ok", Boolean.valueOf(ok));
       if (!ok)
@@ -261,20 +280,25 @@ final class BaskStreamTagResolver
     {
       for (Map<String, Object> addSpec : adds)
       {
-        opResults.add(applyRelationAdd(relations, addSpec, context));
+        Map<String, Object> result = applyRelationAdd(relations, addSpec, context);
+        opResults.add(result);
+        audit(result, javax.baja.security.AuditEvent.ADDED, "relation:", component, null, String.valueOf(addSpec.get("endpoint")), context);
       }
     }
     if (removes != null)
     {
       for (Map<String, Object> removeSpec : removes)
       {
-        opResults.add(applyRelationRemove(component, removeSpec));
+        Map<String, Object> result = applyRelationRemove(component, removeSpec);
+        opResults.add(result);
+        audit(result, javax.baja.security.AuditEvent.REMOVED, "relation:", component,
+            removeSpec.get("endpoint") == null ? null : String.valueOf(removeSpec.get("endpoint")), null, context);
       }
     }
 
     Map<String, Object> entry = baseEntry(ord, component, context);
     entry.put("results", opResults);
-    entry.put("relations", relationsToWire(component, null));
+    entry.put("relations", relationsToWire(component, null, context));
     return entry;
   }
 
@@ -293,6 +317,7 @@ final class BaskStreamTagResolver
       boolean inbound = Boolean.TRUE.equals(addSpec.get("inbound"));
       // Component-space relations must be BRelation structs; ComponentRelations.add
       // rejects generic javax.baja.tag.BasicRelation instances ("not a BRelation type").
+      service.requireWritesEnabled();
       Relation added = relations.add(new BRelation(id, endpoint, inbound));
       result.put("ok", Boolean.valueOf(added != null));
       if (added == null)
@@ -357,6 +382,7 @@ final class BaskStreamTagResolver
         {
           continue;
         }
+        service.requireWritesEnabled();
         if (removeStoredRelation(component, relations, relation))
         {
           removed++;
@@ -477,7 +503,7 @@ final class BaskStreamTagResolver
     return out;
   }
 
-  private List<Object> relationsToWire(BComponent component, String dictionary)
+  private List<Object> relationsToWire(BComponent component, String dictionary, Context context)
   {
     List<Object> out = new ArrayList<Object>();
     try
@@ -500,7 +526,15 @@ final class BaskStreamTagResolver
         wire.put("dictionary", relation.getId().hasDictionary() ? relation.getId().getDictionary() : null);
         wire.put("name", relation.getId().getName());
         wire.put("direction", relation.isInbound() ? "in" : "out");
-        wire.put("endpointOrd", relation.getEndpointOrd() == null ? null : relation.getEndpointOrd().toString());
+        Object endpoint = relation.getEndpoint();
+        if (endpoint instanceof BObject && !authorizer.canRead((BObject) endpoint, context))
+        {
+          wire.put("endpointRedacted", Boolean.TRUE);
+        }
+        else
+        {
+          wire.put("endpointOrd", relation.getEndpointOrd() == null ? null : relation.getEndpointOrd().toString());
+        }
         wire.put("source", directIds == null ? "unknown" : directIds.contains(relationKey(relation)) ? "direct" : "implied");
         out.add(wire);
       }

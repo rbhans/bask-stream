@@ -42,11 +42,13 @@ final class BaskStreamWriteResolver
 
   private final BBaskStreamService service;
   private final BaskStreamPointResolver pointResolver;
+  private final BaskStreamAuthorizer authorizer;
 
   BaskStreamWriteResolver(BBaskStreamService service, BaskStreamPointResolver pointResolver)
   {
     this.service = service;
     this.pointResolver = pointResolver;
+    this.authorizer = new BaskStreamAuthorizer(service);
   }
 
   List<Object> write(Map<String, Object> request, Context context, java.util.function.BooleanSupplier cancelled) throws BaskStreamProtocolException
@@ -148,10 +150,16 @@ final class BaskStreamWriteResolver
 
     String requestedAction = normalizeAction(optionalString(spec, "action"));
     ActionInvocation invocation = buildInvocation(component, requestedAction, spec);
+    if (!authorizer.canInvoke(component, invocation.action, context))
+    {
+      throw new BaskStreamProtocolException("forbidden_action",
+          "The authenticated user cannot invoke '" + invocation.name + "' on this point.");
+    }
     if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
     {
       throw new BaskStreamProtocolException("write_cancelled", "Session closed before write invocation.");
     }
+    service.requireWritesEnabled();
     component.invoke(invocation.action, invocation.parameter, context);
 
     Map<String, Object> result = snapshotAfterWrite(point, context).toWire();

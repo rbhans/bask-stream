@@ -43,6 +43,27 @@ final class BaskStreamAccessPolicy
         || "*".equals(configured.trim());
   }
 
+  /**
+   * The slot path of a local station ORD ({@code slot:/a}, {@code station:|slot:/a} or
+   * {@code local:|station:|slot:/a}), or null for anything else, such as an ORD that reaches
+   * another station. Remote and imported sources must not be judged as local paths.
+   */
+  static String localSlotOrd(String ord)
+  {
+    if (ord == null)
+    {
+      return null;
+    }
+    int index = ord.indexOf("slot:/");
+    if (index < 0)
+    {
+      return null;
+    }
+    String prefix = ord.substring(0, index);
+    return prefix.isEmpty() || "station:|".equals(prefix) || "local:|station:|".equals(prefix)
+        ? ord.substring(index) : null;
+  }
+
   static String extractSlotOrd(String ord)
   {
     if (ord == null)
