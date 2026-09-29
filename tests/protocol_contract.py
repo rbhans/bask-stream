@@ -74,6 +74,14 @@ doc_errors = set(re.findall(r'^\| `([a-z_]+)` \|', table, re.M))
 check(doc_errors == spec_errors, f'THIRD_PARTY_API.md error table vs spec: missing {sorted(spec_errors - doc_errors)}, '
                                  f'extra {sorted(doc_errors - spec_errors)}')
 
+# 6. The TypeScript SDK's generated table matches the spec (regenerate with `npm run gen` in sdk/).
+sdk_ops = root / 'sdk/src/operations.ts'
+if sdk_ops.exists():
+    generated = sdk_ops.read_text()
+    sdk_names = re.findall(r'^  "([a-z_]+)": \{ gate:', generated, re.M)
+    check(sdk_names == list(spec['operations']), 'sdk/src/operations.ts is out of date with the spec; run npm run gen in sdk/')
+    check(f'API_VERSION = "{spec["apiVersion"]}"' in generated, 'sdk/src/operations.ts API_VERSION differs from the spec')
+
 if failures:
     print('FAIL:\n  ' + '\n  '.join(failures))
     sys.exit(1)
