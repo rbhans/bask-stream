@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { decode, encode } from "@msgpack/msgpack";
 import WebSocket from "ws";
+import { BunSocket } from "./bun-socket.js";
 import { BaskStreamError, CLIENT_ERRORS } from "./errors.js";
 import { StationHttp, type StationHttpOptions } from "./http.js";
 import { OPERATIONS, type OperationName } from "./operations.js";
@@ -240,32 +241,43 @@ export class BaskStreamClient extends EventEmitter {
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.pathname = "/stream";
     url.search = "";
-    const ws = new WebSocket(url, {
-      headers: { Cookie: this.http.cookieHeader() },
-      origin: this.http.url.origin,
-      rejectUnauthorized: this.http.verifyTls,
-      ca: this.http.ca,
-      maxPayload: 16 * 1024 * 1024,
-      handshakeTimeout: this.http.timeoutMs
-    });
+    const ws: WebSocket = process.versions.bun
+      ? (new BunSocket(url.toString(), {
+          headers: { Cookie: this.http.cookieHeader(), Origin: this.http.url.origin },
+          rejectUnauthorized: this.http.verifyTls,
+          ca: this.http.ca
+        }) as unknown as WebSocket)
+      : new WebSocket(url, {
+          headers: { Cookie: this.http.cookieHeader() },
+          origin: this.http.url.origin,
+          rejectUnauthorized: this.http.verifyTls,
+          ca: this.http.ca,
+          maxPayload: 16 * 1024 * 1024,
+          handshakeTimeout: this.http.timeoutMs
+        });
     return new Promise<void>((resolve, reject) => {
+      let opened = false;
+      // Kept for the socket's whole life: an unhandled 'error' event would crash the process.
+      ws.on("error", (error: Error) => {
+        if (!opened) reject(new BaskStreamError(CLIENT_ERRORS.closed, `WebSocket connection to ${url} failed: ${error.message}`));
+      });
       ws.once("open", () => {
+        opened = true;
         this.ws = ws;
-        ws.removeAllListeners("error");
-        ws.on("error", () => {}); // Close handling reports failures.
         ws.on("message", (data, isBinary) => this.onFrame(data, isBinary));
         ws.on("close", (code, reason) => this.onClose(ws, code, reason.toString()));
         resolve();
       });
-      // Bun's ws shim lacks this event (and warns if it is registered); there a refused upgrade
-      // surfaces as a plain error instead. The health check before connecting catches expired sessions.
+      ws.once("close", (code) => {
+        if (!opened) reject(new BaskStreamError(CLIENT_ERRORS.closed, `WebSocket connection to ${url} closed during the handshake (${code}).`));
+      });
+      // Bun has no 'unexpected-response'; the health check before connecting catches expired sessions.
       if (!process.versions.bun) ws.once("unexpected-response", (request, response) => {
         request.destroy();
         const expired = response.statusCode === 302 || response.statusCode === 401 || response.statusCode === 403;
         reject(new BaskStreamError(expired ? CLIENT_ERRORS.sessionExpired : CLIENT_ERRORS.closed,
           `The station refused the WebSocket (HTTP ${response.statusCode}).`));
       });
-      ws.once("error", (error) => reject(new BaskStreamError(CLIENT_ERRORS.closed, error.message)));
     });
   }
 
