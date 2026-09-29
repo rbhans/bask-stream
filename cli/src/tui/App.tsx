@@ -128,7 +128,10 @@ export function App({ client, profileName, allowWrites, view: initialView, point
 
   const watchedSet = useMemo(() => new Set(watchList.points.map((p) => p.ord)), [watchList.points]);
   const unacked = [...alarmStore.alarms.values()].filter(isUnacked).length;
-  const bodyHeight = Math.max(8, size.rows - 3);
+  // One row short of the terminal: a frame as tall as the screen makes Ink clear and redraw
+  // everything on each update, which floods scrollback in some terminals.
+  const height = Math.max(11, size.rows - 1);
+  const bodyHeight = height - 3;
   const width = size.columns;
   const viewActive = !modal && !showHelp;
   const host = client.http.url.host;
@@ -152,7 +155,7 @@ export function App({ client, profileName, allowWrites, view: initialView, point
 
   return (
     <UiContext.Provider value={ui}>
-      <Box flexDirection="column" width={width} height={size.rows}>
+      <Box flexDirection="column" width={width} height={height}>
         <Box justifyContent="space-between" width={width}>
           <Text wrap="truncate-end">
             <Text backgroundColor={theme.accent} color="black" bold>

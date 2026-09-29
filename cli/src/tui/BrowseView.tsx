@@ -7,6 +7,8 @@ import { Panel, clip, padEnd, statusTone, theme, useUi, windowStart } from "./ui
 interface Row {
   node: BrowseNode;
   level: number;
+  /** Placeholder under an opened node that returned no children. */
+  empty?: boolean;
 }
 
 const ICON: Record<string, string> = { point: "◉", schedule: "◷", container: "▣", component: "◇" };
@@ -49,7 +51,10 @@ export function BrowseView(props: { client: BaskStreamClient; active: boolean; w
         const node = nodes.get(child);
         if (!node) continue;
         out.push({ node, level });
-        if (expanded.has(child)) walk(child, level + 1);
+        if (expanded.has(child)) {
+          walk(child, level + 1);
+          if (children.get(child)?.length === 0) out.push({ node, level: level + 1, empty: true });
+        }
       }
     };
     walk("slot:/", 0);
@@ -126,9 +131,16 @@ export function BrowseView(props: { client: BaskStreamClient; active: boolean; w
     <Box height={height}>
       <Panel title={`Station  ${rows.length ? `${cursor + 1}/${rows.length}` : ""}`} width={treeWidth} height={height}>
         {rows.length === 0 && <Text color={theme.muted}>{loading.size ? "Loading…" : "Nothing here."}</Text>}
-        {visible.map(({ node, level }, i) => {
+        {visible.map(({ node, level, empty }, i) => {
           const index = start + i;
           const isSelected = index === cursor;
+          if (empty) {
+            return (
+              <Text key={`${node.ord}#empty`} color={theme.muted} backgroundColor={isSelected ? theme.selection : undefined}>
+                {padEnd(`${"  ".repeat(level)}  (empty or not readable)`, inner)}
+              </Text>
+            );
+          }
           const kind = node.kind ?? "component";
           const arrow = node.hasChildren ? (loading.has(node.ord) ? "◌" : expanded.has(node.ord) ? "▾" : "▸") : " ";
           const label = `${"  ".repeat(level)}${arrow} ${ICON[kind] ?? "·"} ${node.display ?? node.name}`;
