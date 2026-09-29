@@ -852,6 +852,31 @@ public final class BBaskStreamService extends BWebServlet
     op.getResponse().sendError(404);
   }
 
+  /**
+   * Records a change in the station's audit history. Niagara audits component changes made with
+   * a user Context by itself; this covers the APIs that take no Context (tags and relations).
+   * Auditing never fails the change it describes.
+   */
+  void auditChange(String operation, javax.baja.sys.BComponent target, String slot, String oldValue, String newValue,
+      javax.baja.sys.Context context)
+  {
+    try
+    {
+      javax.baja.security.Auditor auditor = Sys.getAuditor();
+      if (auditor == null || target == null)
+      {
+        return;
+      }
+      String user = context == null || context.getUser() == null ? null : context.getUser().getUsername();
+      String where = target.getSlotPath() == null ? target.getName() : target.getSlotPath().toString();
+      auditor.audit(new javax.baja.security.AuditEvent(operation, where, slot, oldValue, newValue, user));
+    }
+    catch (RuntimeException e)
+    {
+      LOG.log(Level.WARNING, "baskStream could not record an audit event", e);
+    }
+  }
+
   /** Copies the runtime's traffic counters onto the read-only properties. */
   synchronized void setTrafficMetrics(BaskStreamMetrics metrics)
   {

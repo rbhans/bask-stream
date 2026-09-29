@@ -37,6 +37,15 @@ These unsolicited frames have no `id`. Clients should tolerate (and may act on) 
 - `request_timeout` — a request has been running for more than 10 minutes. Shape: `{ "op": "request_timeout", "requestOp": "write", "elapsedMillis": 600000 }`. The server closes the session (close code `1011`) right after. Split very large batches. Added 2026-09-28.
 - `session_revoked` — emitted just before the server closes the socket (close code `1008`) because the connected user is no longer present in the station. Shape: `{ "op": "session_revoked", "reason": "<text>" }`. Clients should re-authenticate before reconnecting.
 
+### Audit trail
+
+Changes made through baskStream are recorded in the station's audit history under the connected user:
+
+- Point writes, alarm acknowledge and force-clear, and model-edit changes use the user's Niagara context, so Niagara audits them itself as property changes and invoked actions. baskStream does not add duplicate records for them.
+- Schedule edits (`write_schedule`) are applied with Niagara's `auditableCopyFrom`, which audits them.
+- Tag and relation edits (`write_tags`, `write_relations`) go through Niagara APIs that do not audit, so baskStream records them itself: tag set as `Changed`, tag removal and relation removal as `Removed`, relation add as `Added`. The slot is `tag:<id>` or `relation:<id>`.
+- Connect, disconnect, rejected upgrades, timeouts and model plans are also written to the station log with the `AUDIT baskStream` prefix.
+
 ### Metrics
 
 `GET https://<station>/stream/metrics` (after station login, like `/stream/health`) returns counters since the service started, in Prometheus/OpenMetrics text format:

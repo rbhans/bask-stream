@@ -131,14 +131,18 @@ final class BaskStreamTagResolver
     {
       for (Map<String, Object> setSpec : sets)
       {
-        opResults.add(applyTagSet(tags, setSpec));
+        Map<String, Object> result = applyTagSet(tags, setSpec);
+        opResults.add(result);
+        audit(result, javax.baja.security.AuditEvent.CHANGED, "tag:", component, null, String.valueOf(setSpec.get("value")), context);
       }
     }
     if (removes != null)
     {
       for (Object removeSpec : removes)
       {
-        opResults.add(applyTagRemove(tags, removeSpec));
+        Map<String, Object> result = applyTagRemove(tags, removeSpec);
+        opResults.add(result);
+        audit(result, javax.baja.security.AuditEvent.REMOVED, "tag:", component, null, null, context);
       }
     }
 
@@ -146,6 +150,17 @@ final class BaskStreamTagResolver
     entry.put("results", opResults);
     entry.put("tags", tagsToWire(component, null));
     return entry;
+  }
+
+  /** Audits one successful tag or relation change; the Tags/Relations APIs are not audited by Niagara. */
+  private void audit(Map<String, Object> result, String operation, String prefix, BComponent component,
+      String oldValue, String newValue, Context context)
+  {
+    if (!Boolean.TRUE.equals(result.get("ok")) || Boolean.FALSE.equals(result.get("changed")))
+    {
+      return;
+    }
+    service.auditChange(operation, component, prefix + result.get("id"), oldValue, newValue, context);
   }
 
   private Map<String, Object> applyTagSet(Tags tags, Map<String, Object> setSpec)
@@ -265,14 +280,19 @@ final class BaskStreamTagResolver
     {
       for (Map<String, Object> addSpec : adds)
       {
-        opResults.add(applyRelationAdd(relations, addSpec, context));
+        Map<String, Object> result = applyRelationAdd(relations, addSpec, context);
+        opResults.add(result);
+        audit(result, javax.baja.security.AuditEvent.ADDED, "relation:", component, null, String.valueOf(addSpec.get("endpoint")), context);
       }
     }
     if (removes != null)
     {
       for (Map<String, Object> removeSpec : removes)
       {
-        opResults.add(applyRelationRemove(component, removeSpec));
+        Map<String, Object> result = applyRelationRemove(component, removeSpec);
+        opResults.add(result);
+        audit(result, javax.baja.security.AuditEvent.REMOVED, "relation:", component,
+            removeSpec.get("endpoint") == null ? null : String.valueOf(removeSpec.get("endpoint")), null, context);
       }
     }
 
