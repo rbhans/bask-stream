@@ -916,7 +916,7 @@
         <div class="guide-box">
           <div class="guide-title">Quick Start</div>
           <div class="guide-text">
-            Run <code>node tools/baskstream-nav-tree-server.mjs --port=8787</code> and open <code>http://127.0.0.1:8787/</code>. Use this guide for module startup, live testing, Python tools, and optional AI setup.
+            Run <code>node tools/baskstream-nav-tree-server.mjs --port=8787</code> and open <code>http://127.0.0.1:8787/</code>. Use this guide for module startup, what's new in API 1.6, the <code>bask</code> CLI and TypeScript SDK, live testing, and optional AI setup.
           </div>
         </div>
         <div class="health-box">
@@ -947,10 +947,84 @@
               <li>Add the BASkStreamService to the station, confirm <code>servletName</code> is <code>stream</code>, then verify <code>GET /stream/health</code> responds after login.</li>
               <li>Create or choose a Niagara user with only the station permissions your external app needs.</li>
               <li>For this companion app, run <code>node tools/baskstream-nav-tree-server.mjs --port=8787</code>, open <code>http://127.0.0.1:8787/</code>, and connect from the Test Console.</li>
+              <li>For a quick check from any terminal, install the <code>bask</code> CLI (see below), run <code>bask login</code>, then <code>bask doctor</code>. It checks each step from reachability to the WebSocket and says how to fix what fails.</li>
               <li>For Python bench tests, install <code>tools/python-tools/tools/python/requirements.txt</code> and start with the smoke script.</li>
               <li>Confirm the target station, license, and customer agreement allow this integration before using AI tooling.</li>
-              <li>For AI use, run <code>cd tools/mcp &amp;&amp; npm run setup</code>, follow <code>tools/mcp/INSTALL.md</code>, and keep write, alarm, and raw-operation flags off unless mutation/debugging is intended.</li>
+              <li>For AI use, run <code>cd tools/mcp &amp;&amp; npm run setup</code>, follow <code>tools/mcp/INSTALL.md</code>, and keep write, alarm, and raw-operation flags off unless mutation/debugging is intended. The MCP server has not been updated for API 1.6 yet.</li>
               <li>Start every client with <code>capabilities</code>, then use <code>browse</code>, <code>search</code>, <code>read</code>, and subscriptions based on the screen or workflow.</li>
+            </ol>
+          </div>
+        </section>
+
+        <section class="guide-panel full">
+          <div class="guide-panel-head">
+            <h2>What's New</h2>
+          </div>
+          <div class="guide-panel-body">
+            <p>The module still reports API <code>1.6</code>. Everything below is additive unless listed under "Changed or tightened". Call <code>capabilities</code> to see what the deployed station supports.</p>
+            <div class="guide-grid">
+              <div class="guide-note"><strong>Station model editing (1.6)</strong>Describe installed types and components, then preview and apply creates, updates, renames, moves, deletes, links and hierarchy changes. Needs <code>modelEditsEnabled</code>. See <code>docs/MODEL_EDITING_API.md</code>.</div>
+              <div class="guide-note"><strong>History rollups</strong><code>read_history_rollup</code> returns fixed-width buckets (count, min, max, avg, first, last), so a month of one-hour chart points is about 720 rows instead of every record.</div>
+              <div class="guide-note"><strong>Alarm filters</strong><code>read_alarms</code> filters by alarm class, priority, ack state and time, and can return newest first. <code>ack_alarm</code> and <code>clear_alarm</code> accept the same filter, with <code>dryRun</code> to preview.</div>
+              <div class="guide-note"><strong>Schedules</strong><code>read_schedule_events</code> lists upcoming output changes. <code>write_schedule</code> replaces weekday entries through Niagara's audited schedule copy, with <code>dryRun</code>.</div>
+              <div class="guide-note"><strong>Metrics</strong><code>GET /stream/metrics</code> returns request, error, write, resync, timeout, connection and subscription counters in OpenMetrics format. The same counters appear on the service.</div>
+              <div class="guide-note"><strong>Audit trail</strong>Every change made through the stream lands in the station's audit history under the connected user, including tag and relation edits.</div>
+              <div class="guide-note"><strong>Event delivery</strong>COV is coalesced to one update per point per batch. A client that falls behind gets <code>resync_required</code> and should re-read what it shows.</div>
+              <div class="guide-note"><strong>Clients</strong>A TypeScript SDK and the <code>bask</code> CLI with a terminal dashboard are built on the machine-readable spec in <code>spec/baskstream-protocol.json</code>.</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="guide-panel full">
+          <div class="guide-panel-head">
+            <h2>bask CLI And Dashboard</h2>
+          </div>
+          <div class="guide-panel-body">
+            <p><code>bask</code> is a single executable for quick station checks, scripts and exports, with a full-screen terminal dashboard. No Node or admin rights needed.</p>
+            <pre class="raw"># macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/rbhans/bask-stream/main/cli/install.sh | sh
+
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/rbhans/bask-stream/main/cli/install.ps1 | iex
+
+bask login https://&lt;station&gt; -u &lt;user&gt; --insecure   # asks for the password; saves only the session
+bask doctor                                          # step-by-step connection check
+bask                                                 # full-screen dashboard</pre>
+            <div class="guide-grid">
+              <div class="guide-note"><strong>Dashboard</strong><code>1</code> Browse, <code>2</code> Watch (live values with trend lines), <code>3</code> Alarms, <code>4</code> History chart, <code>5</code> Status. <code>/</code> finds any point by name. <code>?</code> shows every key.</div>
+              <div class="guide-note"><strong>Commands</strong><code>read</code>, <code>watch</code>, <code>history --rollup 1h</code>, <code>alarms -f</code>, <code>schedule</code>, <code>search</code>, <code>call</code>, with <code>-o json</code> or <code>-o csv</code> output.</div>
+              <div class="guide-note"><strong>Safe by default</strong>Read-only unless started with <code>--allow-writes</code>, and every write or alarm acknowledgement asks first. The password is never saved.</div>
+              <div class="guide-note"><strong>More</strong>Full command list in <code>cli/README.md</code>. Releases: <code>github.com/rbhans/bask-stream/releases</code>.</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="guide-panel">
+          <div class="guide-panel-head">
+            <h2>TypeScript SDK</h2>
+          </div>
+          <div class="guide-panel-body">
+            <p><code>sdk/</code> handles the plumbing every app otherwise repeats: Niagara login, session reuse, reconnects with backoff, request ids and error codes, and subscription leases.</p>
+            <pre class="raw">const client = await BaskStreamClient.connect({
+  station: "https://my-jace", username: "tech",
+  password: () =&gt; ask(), verifyTls: false
+});
+const watch = await client.watch([pointOrd]);
+watch.on("change", (p) =&gt; render(p.point, p.value));</pre>
+            <p>All 45 operations are available through <code>call()</code>, with helpers such as <code>read</code>, <code>historyRollup</code>, <code>alarms</code> and <code>writeSchedule</code>. See <code>sdk/README.md</code>.</p>
+          </div>
+        </section>
+
+        <section class="guide-panel">
+          <div class="guide-panel-head">
+            <h2>Changed Or Tightened</h2>
+          </div>
+          <div class="guide-panel-body">
+            <ol class="guide-list">
+              <li>Alarms, histories, write actions and related objects are all checked against the connected user's Niagara permissions. Anything they can't read comes back as <code>{ "redacted": true }</code>.</li>
+              <li>Model-edit previews need <code>modelEditsEnabled</code>, each user may hold 8 open previews, and protected services and <code>program:</code> components can't be edited.</li>
+              <li>A reply over 8 MiB returns <code>response_too_large</code>, and a request running over 10 minutes gets <code>request_timeout</code> before the session closes.</li>
+              <li>Browse and search return full <code>local:|station:|slot:/</code> ORDs; point, history and schedule operations take the <code>slot:/</code> part.</li>
             </ol>
           </div>
         </section>
@@ -960,7 +1034,7 @@
             <h2>AI Client Setup</h2>
           </div>
           <div class="guide-panel-body">
-            <p>The MCP server is optional local tooling for AI clients. Use it only with authorized Niagara stations, keep Tridium proprietary materials out of AI prompts, and leave raw operations disabled. This standalone companion app cannot write client config files or run installers from the browser, but it can generate the commands and config snippets to paste into the target tool.</p>
+            <p>The MCP server is optional local tooling for AI clients. It has not been updated for API 1.6 yet; the plan is to rebuild it on the TypeScript SDK. Use it only with authorized Niagara stations, keep Tridium proprietary materials out of AI prompts, and leave raw operations disabled. This standalone companion app cannot write client config files or run installers from the browser, but it can generate the commands and config snippets to paste into the target tool.</p>
             <div class="setup-grid">
               <label class="setup-wide">
                 Target
@@ -1060,6 +1134,9 @@
               <li>Use grouped subscriptions for active views so the server can diff and share point listeners.</li>
               <li>Read histories and schedules on demand unless a screen actually needs them.</li>
               <li>Use <code>subscription_status</code> during commissioning to confirm point counts, groups, and leases.</li>
+              <li>For charts, use <code>read_history_rollup</code> instead of pulling every record.</li>
+              <li>On <code>resync_required</code>, re-read what the app shows; COV continues normally afterwards.</li>
+              <li>Watch <code>/stream/metrics</code> for errors, resyncs and timeouts on busy stations.</li>
             </ol>
           </div>
         </section>
@@ -1082,10 +1159,13 @@
                 <tr><td>Discover tree</td><td><code>browse</code>, <code>describe</code>, <code>search</code></td><td>Build equipment, point, schedule, history, and metadata views.</td></tr>
                 <tr><td>Live values</td><td><code>read</code>, <code>replace_subscriptions</code></td><td>Paint current values immediately, then receive COV updates for active views.</td></tr>
                 <tr><td>Write points</td><td><code>describe_write</code>, <code>write</code></td><td>Render safe controls, then set, override, auto, or emergency override writable points.</td></tr>
-                <tr><td>Alarms</td><td><code>read_alarms</code>, <code>subscribe_alarms</code></td><td>Load a bounded snapshot, then maintain client alarm state with event pushes.</td></tr>
-                <tr><td>Schedules</td><td><code>read_schedule</code></td><td>Read schedule state and weekly/calendar data for UI display.</td></tr>
-                <tr><td>Histories</td><td><code>describe_history</code>, <code>read_history</code></td><td>Find trend availability and load chart records by time range.</td></tr>
+                <tr><td>Alarms</td><td><code>read_alarms</code>, <code>subscribe_alarms</code>, <code>ack_alarm</code>, <code>clear_alarm</code></td><td>Load a filtered snapshot (newest first if asked), maintain alarm state with event pushes, and acknowledge or clear by UUID or filter with <code>dryRun</code>.</td></tr>
+                <tr><td>Schedules</td><td><code>read_schedule</code>, <code>read_schedule_events</code>, <code>write_schedule</code></td><td>Read schedule state, list upcoming output changes, and replace weekday entries (audited).</td></tr>
+                <tr><td>Histories</td><td><code>describe_history</code>, <code>read_history</code>, <code>read_history_rollup</code></td><td>Find trend availability, load records by time range, or summarise them into buckets for charts.</td></tr>
+                <tr><td>Tags and relations</td><td><code>read_tags</code>, <code>write_tags</code>, <code>write_relations</code></td><td>Read direct and implied tags, and edit direct tags and relations.</td></tr>
+                <tr><td>Model editing</td><td><code>describe_component</code>, <code>preview_model_changes</code>, <code>apply_model_changes</code></td><td>Preview, then apply, station model changes (needs <code>modelEditsEnabled</code>).</td></tr>
                 <tr><td>Model changes</td><td><code>subscribe_model</code></td><td>Receive branch-scoped hints, then refresh affected nodes with browse or describe.</td></tr>
+                <tr><td>Diagnostics</td><td><code>subscription_status</code>, <code>GET /stream/metrics</code></td><td>Inspect subscriptions and leases; scrape request, error, resync and connection counters.</td></tr>
               </tbody>
             </table>
           </div>
@@ -1097,7 +1177,8 @@
           </div>
           <div class="guide-panel-body">
             <p>The Test Console tab connects to a real station, browses from the typed Root ORD, shows metadata when available, reads selected point values, and subscribes to the selected point with grouped subscriptions when the module supports them.</p>
-            <p>The local helper is only for this standalone file. Production apps should implement their own Niagara login flow, trust model, and MessagePack WebSocket client.</p>
+            <p>For a richer live view (watch lists with trend lines, alarms, history charts), use the <code>bask</code> dashboard.</p>
+            <p>The local helper is only for this standalone file. Production apps should implement their own Niagara login flow, trust model, and MessagePack WebSocket client, or use the TypeScript SDK.</p>
             <p>The full protocol reference lives in <code>docs/THIRD_PARTY_API.md</code>.</p>
           </div>
         </section>
