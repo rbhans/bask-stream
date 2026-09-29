@@ -1,0 +1,34 @@
+{
+  "name": "@basidekick/baskstream-cli",
+  "version": "0.1.0",
+  "description": "Command line and terminal UI for baskStream on Niagara 4 stations.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "bask": "dist/main.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node node_modules/typescript/bin/tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "compile": "npm run build && bun scripts/compile.mjs"
+  },
+  "dependencies": {
+    "@basidekick/baskstream": "file:../sdk",
+    "chalk": "^5.4.1",
+    "commander": "^14.0.0",
+    "ink": "^6.3.0",
+    "react": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.2.0",
+    "ink-testing-library": "^4.0.0",
+    "typescript": "^5.8.3"
+  }
+}

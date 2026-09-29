@@ -90,6 +90,7 @@ export class BaskStreamClient extends EventEmitter {
     this.alarmSubscriptions.clear();
     this.ws?.close(1000, "client closed");
     this.ws = undefined;
+    this.failPending("Connection closed by the client.");
   }
 
   /**
@@ -253,7 +254,9 @@ export class BaskStreamClient extends EventEmitter {
         ws.on("close", (code, reason) => this.onClose(ws, code, reason.toString()));
         resolve();
       });
-      ws.once("unexpected-response", (request, response) => {
+      // Bun's ws shim lacks this event (and warns if it is registered); there a refused upgrade
+      // surfaces as a plain error instead. The health check before connecting catches expired sessions.
+      if (!process.versions.bun) ws.once("unexpected-response", (request, response) => {
         request.destroy();
         const expired = response.statusCode === 302 || response.statusCode === 401 || response.statusCode === 403;
         reject(new BaskStreamError(expired ? CLIENT_ERRORS.sessionExpired : CLIENT_ERRORS.closed,
@@ -314,13 +317,17 @@ export class BaskStreamClient extends EventEmitter {
     if (this.ws !== ws) return;
     this.ws = undefined;
     this.stopKeepAlive();
-    for (const [id, entry] of this.pending) {
-      clearTimeout(entry.timer);
-      entry.reject(new BaskStreamError(CLIENT_ERRORS.closed, `Connection closed (${code}${reason ? `: ${reason}` : ""}).`, entry.op));
-      this.pending.delete(id);
-    }
+    this.failPending(`Connection closed (${code}${reason ? `: ${reason}` : ""}).`);
     this.emit("disconnected", { code, reason });
     if (!this.closedByUser && this.options.reconnect !== false) this.scheduleReconnect();
+  }
+
+  private failPending(message: string): void {
+    for (const [id, entry] of this.pending) {
+      clearTimeout(entry.timer);
+      entry.reject(new BaskStreamError(CLIENT_ERRORS.closed, message, entry.op));
+      this.pending.delete(id);
+    }
   }
 
   private scheduleReconnect(): void {
@@ -377,7 +384,15 @@ export class Watch extends EventEmitter {
 
   /** Replaces the watched points and reads their current values. */
   async update(points: string[]): Promise<PointSnapshot[]> {
+    const previous = this.points;
     this.points = [...new Set(points)];
+    for (const point of this.values.keys()) if (!this.points.includes(point)) this.values.delete(point);
+    if (this.points.length === 0) {
+      // An empty group is released on the station, so there is no lease to renew.
+      this.stopRenewing();
+      if (previous.length > 0) await this.client.call("release_subscriptions", { group: this.group }).catch(() => {});
+      return [];
+    }
     await this.client.call("replace_subscriptions", { group: this.group, points: this.points, leaseSec: this.leaseSec });
     this.startRenewing();
     return this.refresh();
@@ -407,7 +422,7 @@ export class Watch extends EventEmitter {
 
   /** @internal Re-creates the group after a reconnect. */
   async restore(): Promise<void> {
-    await this.update(this.points);
+    if (this.points.length > 0) await this.update(this.points);
   }
 
   /** @internal */

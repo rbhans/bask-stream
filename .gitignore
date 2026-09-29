@@ -16,3 +16,4 @@ sdk/node_modules/
 sdk/dist/
 cli/node_modules/
 cli/dist/
+cli/bin/

@@ -139,3 +139,18 @@ test("metrics and health over HTTP", async () => {
     client.close();
   }
 });
+
+test("an empty watch holds no group and can grow later", async () => {
+  const client = await connect();
+  try {
+    const watch = await client.watch([], { group: "w4" });
+    assert.equal(station.state.groups.has("w4"), false);
+    await watch.update(["slot:/A"]);
+    assert.deepEqual(station.state.groups.get("w4"), ["slot:/A"]);
+    await watch.update([]);
+    assert.equal(station.state.groups.has("w4"), false);
+    assert.equal(watch.values.size, 0);
+  } finally {
+    client.close();
+  }
+});

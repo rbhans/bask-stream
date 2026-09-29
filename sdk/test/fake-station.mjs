@@ -10,6 +10,22 @@ export const PASSWORD = "secret-pass";
 const SALT = crypto.randomBytes(16);
 const ITERATIONS = 4096;
 
+const node = (name, kind, extra = {}) => ({ name, display: name, kind, typeSpec: kind === "point" ? "control:NumericWritable" : "baja:Folder", hasChildren: kind !== "point", status: "{ok}", ...extra });
+const TREE = {
+  "slot:/": { ...node("station", "container"), children: ["slot:/Drivers", "slot:/Services"] },
+  "slot:/Drivers": { ...node("Drivers", "container"), children: ["slot:/Drivers/Net"] },
+  "slot:/Services": { ...node("Services", "container"), children: [] },
+  "slot:/Drivers/Net": { ...node("Net", "container"), children: ["slot:/Drivers/Net/VAV_01"] },
+  "slot:/Drivers/Net/VAV_01": { ...node("VAV_01", "component"), children: ["slot:/Drivers/Net/VAV_01/points"] },
+  "slot:/Drivers/Net/VAV_01/points": { ...node("points", "container"), children: ["slot:/Drivers/Net/VAV_01/points/SpaceTemp", "slot:/Drivers/Net/VAV_01/points/DamperPos"] },
+  "slot:/Drivers/Net/VAV_01/points/SpaceTemp": node("SpaceTemp", "point", { writable: true }),
+  "slot:/Drivers/Net/VAV_01/points/DamperPos": node("DamperPos", "point", { writable: true })
+};
+const ALARMS = [
+  { uuid: "a-1", timestamp: Date.now() - 60000, priority: 50, alarmClass: "critical", sourceState: "offnormal", ackState: "unacked", sources: ["slot:/Drivers/Net/VAV_01/points/SpaceTemp"], data: { msgText: "Space temp high" } },
+  { uuid: "a-2", timestamp: Date.now() - 3600000, priority: 150, alarmClass: "default", sourceState: "normal", ackState: "unacked", sources: ["slot:/Drivers/Net/VAV_01/points/DamperPos"], data: { msgText: "Damper stuck" } }
+];
+
 export async function startFakeStation() {
   const sessions = new Set();
   const scram = new Map();
@@ -105,6 +121,27 @@ export async function startFakeStation() {
         return send(ws, { op: "subscriptions_released", id, group: request.group });
       case "write":
         return send(ws, { op: "error", id, code: "writes_disabled", message: "Writes are disabled on this service." });
+      case "browse": {
+        const base = request.base ?? "slot:/";
+        return send(ws, { op: "browse_result", id, node: { ...TREE[base], ord: base, children: (TREE[base]?.children ?? []).map((ord) => ({ ...TREE[ord], ord, children: undefined })) } });
+      }
+      case "search":
+        return send(ws, { op: "search_result", id, result: { count: 1, nodes: [{ ...TREE["slot:/Drivers/Net/VAV_01/points/SpaceTemp"], ord: "slot:/Drivers/Net/VAV_01/points/SpaceTemp" }] } });
+      case "read_alarms":
+      case "subscribe_alarms":
+        return send(ws, { op: op === "read_alarms" ? "alarms_result" : "alarms_subscribed", id, alarms: { count: ALARMS.length, alarms: ALARMS } });
+      case "ack_alarms":
+        return send(ws, { op: "alarm_action_result", id, alarms: { action: "ack", matched: (request.uuids ?? []).length, count: (request.uuids ?? []).length, dryRun: request.dryRun, alarms: (request.uuids ?? []).map((uuid) => ({ uuid, ok: true })) } });
+      case "read_history_rollup": {
+        const buckets = [];
+        for (let t = request.start; t < request.end; t += request.interval) {
+          const v = 70 + 3 * Math.sin((t / 3600000) * 0.5);
+          buckets.push({ start: t, count: 4, min: v - 0.5, max: v + 0.5, sum: v * 4, avg: v, first: v, last: v });
+        }
+        return send(ws, { op: "history_rollup_result", id, rollup: { interval: request.interval, histories: [{ historyId: "/Station/SpaceTemp", buckets, bucketCount: buckets.length, truncated: false }] } });
+      }
+      case "subscription_status":
+        return send(ws, { op: "subscription_status_result", id, session: { pointSubscriptions: 2, subscriptionGroups: state.groups.size }, limits: {}, groups: [] });
       case "slow":
         return; // never replies
       default:
@@ -131,6 +168,7 @@ export async function startFakeStation() {
     },
     async close() {
       for (const ws of state.sockets) ws.terminate();
+      server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
     }
   };
