@@ -783,6 +783,47 @@
         ]
       }
     },
+    "read_history_rollup": {
+      "summary": "Summarise history records into fixed-width time buckets (count, min, max, sum, avg, first, last). Numeric and boolean (as 0/1) records aggregate; others report counts and first/last values.",
+      "gate": "none",
+      "reply": "history_rollup_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "ord": {
+            "type": "string",
+            "description": "slot:/ point ORD (its readable history extensions) or history: ORD."
+          },
+          "start": {
+            "type": "number",
+            "description": "Epoch ms; default end - 24 h."
+          },
+          "end": {
+            "type": "number",
+            "description": "Epoch ms; default now."
+          },
+          "interval": {
+            "type": "number",
+            "minimum": 1000,
+            "description": "Bucket width in ms. (end - start) / interval + 1 must not exceed 5000 buckets."
+          },
+          "includeInvalid": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include records whose status is fault, down, stale, disabled or null."
+          }
+        },
+        "required": [
+          "ord",
+          "interval"
+        ]
+      },
+      "response": {
+        "keys": [
+          "rollup"
+        ]
+      }
+    },
     "read_alarms": {
       "summary": "Bounded alarm snapshot filtered by alarm-class read permission.",
       "gate": "none",

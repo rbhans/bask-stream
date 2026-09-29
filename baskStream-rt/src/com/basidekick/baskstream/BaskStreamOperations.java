@@ -59,6 +59,7 @@ final class BaskStreamOperations
     add("describe_write", Gate.NONE);
     add("read_history", Gate.NONE);
     add("describe_history", Gate.NONE);
+    add("read_history_rollup", Gate.NONE);
     add("read_alarms", Gate.NONE);
     add("ack_alarm", Gate.WRITES);
     add("ack_alarms", Gate.WRITES);

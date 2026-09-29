@@ -624,6 +624,38 @@ Response:
 }
 ```
 
+### `read_history_rollup`
+
+Summarises history records into fixed-width time buckets, so a chart of a month at one-hour resolution needs about 720 rows instead of every record. It uses the same ORD rules and permission checks as `read_history`.
+
+```json
+{ "op": "read_history_rollup", "id": "r1", "ord": "slot:/Drivers/.../Space_Temp", "start": 1790000000000, "end": 1790086400000, "interval": 3600000 }
+```
+
+Response:
+
+```json
+{
+  "op": "history_rollup_result",
+  "id": "r1",
+  "rollup": {
+    "interval": 3600000,
+    "histories": [
+      {
+        "historyId": "/Dev/Space_Temp",
+        "buckets": [ { "start": 1790000000000, "count": 720, "min": 70.1, "max": 72.4, "sum": 51230.5, "avg": 71.15, "first": 70.2, "last": 71.9 } ],
+        "bucketCount": 24, "examined": 17280, "skippedInvalid": 0, "truncated": false
+      }
+    ]
+  }
+}
+```
+
+- `interval` is required, in milliseconds (at least 1000). The range may produce at most 5,000 buckets.
+- Numeric records aggregate directly. Boolean records count as 1/0, so `avg` is the fraction of time true. Enum and string records report `count`, `first` and `last` only.
+- Records whose status is not valid (fault, down, stale, disabled, null) are skipped unless `includeInvalid: true`; `skippedInvalid` counts them. NaN values are ignored.
+- Empty buckets are omitted. Each history examines at most 1,000,000 records or 20 seconds; if it stops early, `truncated` is true with `truncatedReason` `record_limit` or `time_limit`.
+
 ### `read_schedule`
 
 Reads a Niagara schedule.

@@ -199,6 +199,7 @@ final class BaskStreamClientSession
     bound.put("describe_write", (id, op, request) -> requests.handleDescribeWrite(id, request));
     bound.put("read_history", (id, op, request) -> requests.handleReadHistory(id, request));
     bound.put("describe_history", (id, op, request) -> requests.handleDescribeHistory(id, request));
+    bound.put("read_history_rollup", (id, op, request) -> requests.handleReadHistoryRollup(id, request));
     bound.put("read_alarms", (id, op, request) -> requests.handleReadAlarms(id, request));
     bound.put("ack_alarm", (id, op, request) -> requests.handleAckAlarms(id, request));
     bound.put("ack_alarms", (id, op, request) -> requests.handleAckAlarms(id, request));

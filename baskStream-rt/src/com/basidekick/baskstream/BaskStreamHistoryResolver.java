@@ -30,6 +30,9 @@ final class BaskStreamHistoryResolver
   private static final long DEFAULT_WINDOW_MILLIS = 24L * 60L * 60L * 1000L;
   private static final int DEFAULT_LIMIT = 500;
   private static final int MAX_LIMIT = 5000;
+  private static final long MAX_ROLLUP_BUCKETS = 5000L;
+  private static final long MAX_ROLLUP_RECORDS = 1000000L;
+  private static final long ROLLUP_TIME_BUDGET_MILLIS = 20000L;
 
   private final BBaskStreamService service;
   private final BaskStreamAuthorizer authorizer;
@@ -53,9 +56,11 @@ final class BaskStreamHistoryResolver
       throw new BaskStreamProtocolException("bad_request", "History start must be less than or equal to end.");
     }
 
-    List<Object> histories = candidate.startsWith("history:")
-        ? resolveDirectHistory(candidate, start, end, limit, context)
-        : resolvePointHistory(candidate, start, end, limit, context);
+    List<Object> histories = new ArrayList<Object>();
+    for (Source source : readableHistories(candidate, context))
+    {
+      histories.add(readSingleHistory(source.history, source.ext, start, end, limit, context));
+    }
 
     Map<String, Object> result = new LinkedHashMap<String, Object>();
     result.put("requestOrd", candidate);
@@ -143,71 +148,280 @@ final class BaskStreamHistoryResolver
     return histories;
   }
 
-  private List<Object> resolveDirectHistory(String ord, long start, long end, int limit, Context context)
-      throws BaskStreamProtocolException
+  /** A history the user may read and, when reached through a point, the extension that records it. */
+  private static final class Source
   {
+    final BIHistory history;
+    final BHistoryExt ext;
+
+    Source(BIHistory history, BHistoryExt ext)
+    {
+      this.history = history;
+      this.ext = ext;
+    }
+  }
+
+  /**
+   * The histories behind a history: ORD or a point's history extensions, with every access check
+   * in one place so reads and rollups cannot drift apart.
+   */
+  private List<Source> readableHistories(String ord, Context context) throws BaskStreamProtocolException
+  {
+    List<Source> sources = new ArrayList<Source>();
+    if (ord.startsWith("history:"))
+    {
+      try
+      {
+        OrdTarget target = BOrd.make(ord).resolve(service, context);
+        if (!target.canRead())
+        {
+          throw new BaskStreamProtocolException("forbidden_point", "History is not readable for the authenticated user.");
+        }
+        BObject object = target.get();
+        if (!(object instanceof BIHistory))
+        {
+          throw new BaskStreamProtocolException("invalid_point", "Resolved target is not a Niagara history.");
+        }
+        ensureDirectHistoryAllowed((BIHistory) object);
+        sources.add(new Source((BIHistory) object, null));
+        return sources;
+      }
+      catch (BaskStreamProtocolException e)
+      {
+        throw e;
+      }
+      catch (Exception e)
+      {
+        throw new BaskStreamProtocolException("history_failed",
+            e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+      }
+    }
+
+    BaskStreamPointResolver.ResolvedPoint point = new BaskStreamPointResolver(service).resolve(ord, context);
+    if (point.getComponent() == null)
+    {
+      throw new BaskStreamProtocolException("history_failed", "Resolved point has no backing component.");
+    }
+    BHistoryExt[] historyExts = point.getComponent().getChildren(BHistoryExt.class);
+    if (historyExts.length == 0)
+    {
+      throw new BaskStreamProtocolException("history_failed", "Point does not have any attached history extensions.");
+    }
+    for (int i = 0; i < historyExts.length; i++)
+    {
+      BIHistory history = historyExts[i].getHistory();
+      if (history != null && authorizer.canReadHistory(history, context))
+      {
+        sources.add(new Source(history, historyExts[i]));
+      }
+    }
+    if (sources.isEmpty())
+    {
+      throw new BaskStreamProtocolException("history_failed", "Attached history extensions did not resolve to readable histories.");
+    }
+    return sources;
+  }
+
+  /**
+   * Summarises records into fixed-width time buckets: count, min, max, sum, avg, first and last.
+   * Numeric and boolean (as 0/1, so avg is the duty cycle) records are aggregated; other record
+   * types report counts and the last value. Records whose status is not valid are skipped unless
+   * includeInvalid is true.
+   */
+  Map<String, Object> rollupHistory(String ord, Object startValue, Object endValue, Object intervalValue,
+      Object includeInvalidValue, Context context) throws BaskStreamProtocolException
+  {
+    String candidate = normalizeOrd(ord);
+    long end = normalizeMillis(endValue, Clock.millis());
+    long start = normalizeMillis(startValue, end - DEFAULT_WINDOW_MILLIS);
+    if (start > end)
+    {
+      throw new BaskStreamProtocolException("bad_request", "History start must be less than or equal to end.");
+    }
+    if (!(intervalValue instanceof Number) || ((Number) intervalValue).longValue() < 1000L)
+    {
+      throw new BaskStreamProtocolException("bad_request", "Field 'interval' is required: bucket width in milliseconds, at least 1000.");
+    }
+    long interval = ((Number) intervalValue).longValue();
+    long bucketCount = (end - start) / interval + 1;
+    if (bucketCount > MAX_ROLLUP_BUCKETS)
+    {
+      throw new BaskStreamProtocolException("bad_request", "That range and interval make " + bucketCount
+          + " buckets; the limit is " + MAX_ROLLUP_BUCKETS + ". Use a larger interval or a shorter range.");
+    }
+    if (includeInvalidValue != null && !(includeInvalidValue instanceof Boolean))
+    {
+      throw new BaskStreamProtocolException("bad_request", "Field 'includeInvalid' must be a boolean.");
+    }
+    boolean includeInvalid = Boolean.TRUE.equals(includeInvalidValue);
+
+    List<Object> histories = new ArrayList<Object>();
+    for (Source source : readableHistories(candidate, context))
+    {
+      histories.add(rollupSingleHistory(source.history, start, end, interval, includeInvalid, context));
+    }
+
+    Map<String, Object> result = new LinkedHashMap<String, Object>();
+    result.put("requestOrd", candidate);
+    result.put("start", Long.valueOf(start));
+    result.put("end", Long.valueOf(end));
+    result.put("interval", Long.valueOf(interval));
+    result.put("includeInvalid", Boolean.valueOf(includeInvalid));
+    result.put("histories", histories);
+    return result;
+  }
+
+  private Map<String, Object> rollupSingleHistory(BIHistory history, long start, long end, long interval,
+      boolean includeInvalid, Context context) throws BaskStreamProtocolException
+  {
+    java.util.TreeMap<Long, Bucket> buckets = new java.util.TreeMap<Long, Bucket>();
+    long examined = 0L;
+    long skipped = 0L;
+    String truncatedReason = null;
+    long deadline = System.currentTimeMillis() + ROLLUP_TIME_BUDGET_MILLIS;
+    HistorySpaceConnection connection = null;
+    Cursor<BHistoryRecord> cursor = null;
     try
     {
-      OrdTarget target = BOrd.make(ord).resolve(service, context);
-      if (!target.canRead())
+      connection = openConnection(context);
+      cursor = connection.timeQuery(history, BAbsTime.make(start), BAbsTime.make(end)).cursor();
+      while (cursor.next())
       {
-        throw new BaskStreamProtocolException("forbidden_point", "History is not readable for the authenticated user.");
+        if (++examined > MAX_ROLLUP_RECORDS) { truncatedReason = "record_limit"; break; }
+        if ((examined & 1023L) == 0L && System.currentTimeMillis() > deadline) { truncatedReason = "time_limit"; break; }
+        BHistoryRecord record = cursor.get();
+        BStatus status = record instanceof BTrendRecord ? ((BTrendRecord) record).getStatus() : null;
+        if (!includeInvalid && status != null && !status.isValid())
+        {
+          skipped++;
+          continue;
+        }
+        long time = record.getTimestamp().getMillis();
+        Long key = Long.valueOf(start + ((time - start) / interval) * interval);
+        Bucket bucket = buckets.get(key);
+        if (bucket == null)
+        {
+          bucket = new Bucket();
+          buckets.put(key, bucket);
+        }
+        bucket.add(numericValue(record), lastValue(record, context));
       }
-
-      BObject object = target.get();
-      if (!(object instanceof BIHistory))
-      {
-        throw new BaskStreamProtocolException("invalid_point", "Resolved target is not a Niagara history.");
-      }
-      ensureDirectHistoryAllowed((BIHistory) object);
-
-      List<Object> histories = new ArrayList<Object>(1);
-      histories.add(readSingleHistory((BIHistory) object, null, start, end, limit, context));
-      return histories;
-    }
-    catch (BaskStreamProtocolException e)
-    {
-      throw e;
     }
     catch (Exception e)
     {
       throw new BaskStreamProtocolException("history_failed",
           e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
     }
+    finally
+    {
+      if (cursor != null)
+      {
+        cursor.close();
+      }
+      if (connection != null)
+      {
+        connection.close();
+      }
+    }
+
+    List<Object> rows = new ArrayList<Object>(buckets.size());
+    for (Map.Entry<Long, Bucket> entry : buckets.entrySet())
+    {
+      rows.add(entry.getValue().toWire(entry.getKey().longValue()));
+    }
+    Map<String, Object> wire = new LinkedHashMap<String, Object>();
+    wire.put("historyOrd", history.getNavOrd() == null ? history.getOrdInSpace().toString() : history.getNavOrd().toString());
+    wire.put("historyId", history.getId() == null ? null : history.getId().toString());
+    wire.put("recordType", history.getRecordType().toString());
+    wire.put("buckets", rows);
+    wire.put("bucketCount", Long.valueOf(rows.size()));
+    wire.put("examined", Long.valueOf(Math.min(examined, MAX_ROLLUP_RECORDS)));
+    wire.put("skippedInvalid", Long.valueOf(skipped));
+    wire.put("truncated", Boolean.valueOf(truncatedReason != null));
+    if (truncatedReason != null)
+    {
+      wire.put("truncatedReason", truncatedReason);
+    }
+    return wire;
   }
 
-  private List<Object> resolvePointHistory(String ord, long start, long end, int limit, Context context)
-      throws BaskStreamProtocolException
+  /** The record's value as a number for aggregation, or null when it has none. */
+  private static Double numericValue(BHistoryRecord record)
   {
-    BaskStreamPointResolver.ResolvedPoint point = new BaskStreamPointResolver(service).resolve(ord, context);
-    if (point.getComponent() == null)
+    if (record instanceof javax.baja.history.BNumericTrendRecord)
     {
-      throw new BaskStreamProtocolException("history_failed", "Resolved point has no backing component.");
+      double value = ((javax.baja.history.BNumericTrendRecord) record).getValue();
+      return Double.isNaN(value) || Double.isInfinite(value) ? null : Double.valueOf(value);
     }
-
-    BHistoryExt[] historyExts = point.getComponent().getChildren(BHistoryExt.class);
-    if (historyExts.length == 0)
+    if (record instanceof javax.baja.history.BBooleanTrendRecord)
     {
-      throw new BaskStreamProtocolException("history_failed", "Point does not have any attached history extensions.");
+      return Double.valueOf(((javax.baja.history.BBooleanTrendRecord) record).getValue() ? 1.0 : 0.0);
     }
+    return null;
+  }
 
-    List<Object> histories = new ArrayList<Object>(historyExts.length);
-    for (int i = 0; i < historyExts.length; i++)
+  /** The value to report as first/last for records that are not aggregated numerically. */
+  private static Object lastValue(BHistoryRecord record, Context context)
+  {
+    if (record instanceof javax.baja.history.BEnumTrendRecord)
     {
-      BIHistory history = historyExts[i].getHistory();
-      if (history == null || !authorizer.canReadHistory(history, context))
+      javax.baja.history.BEnumTrendRecord en = (javax.baja.history.BEnumTrendRecord) record;
+      return en.getValue() == null ? null : en.getValue().toString(context);
+    }
+    if (record instanceof javax.baja.history.BStringTrendRecord)
+    {
+      return ((javax.baja.history.BStringTrendRecord) record).getValue();
+    }
+    return null;
+  }
+
+  private static final class Bucket
+  {
+    long count;
+    long numericCount;
+    double min = Double.POSITIVE_INFINITY;
+    double max = Double.NEGATIVE_INFINITY;
+    double sum;
+    Object first;
+    Object last;
+    boolean hasFirst;
+
+    void add(Double numeric, Object other)
+    {
+      count++;
+      Object value = numeric != null ? numeric : other;
+      if (!hasFirst)
       {
-        continue;
+        first = value;
+        hasFirst = true;
       }
-      histories.add(readSingleHistory(history, historyExts[i], start, end, limit, context));
+      last = value;
+      if (numeric != null)
+      {
+        numericCount++;
+        double v = numeric.doubleValue();
+        min = Math.min(min, v);
+        max = Math.max(max, v);
+        sum += v;
+      }
     }
 
-    if (histories.isEmpty())
+    Map<String, Object> toWire(long bucketStart)
     {
-      throw new BaskStreamProtocolException("history_failed", "Attached history extensions did not resolve to readable histories.");
+      Map<String, Object> wire = new LinkedHashMap<String, Object>();
+      wire.put("start", Long.valueOf(bucketStart));
+      wire.put("count", Long.valueOf(count));
+      if (numericCount > 0)
+      {
+        wire.put("min", Double.valueOf(min));
+        wire.put("max", Double.valueOf(max));
+        wire.put("sum", Double.valueOf(sum));
+        wire.put("avg", Double.valueOf(sum / numericCount));
+      }
+      wire.put("first", first);
+      wire.put("last", last);
+      return wire;
     }
-
-    return histories;
   }
 
   private void ensureDirectHistoryAllowed(BIHistory history) throws BaskStreamProtocolException

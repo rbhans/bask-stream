@@ -130,6 +130,19 @@ final class BaskStreamRequests
     session.send(response);
   }
 
+  void handleReadHistoryRollup(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("history_rollup_result", id);
+    response.put("rollup", runtime.getHistoryResolver().rollupHistory(
+        runtime.getCodec().optionalString(request, "ord"),
+        request.get("start"),
+        request.get("end"),
+        request.get("interval"),
+        request.get("includeInvalid"),
+        context));
+    session.send(response);
+  }
+
   void handleDescribeHistory(String id, Map<String, Object> request) throws BaskStreamProtocolException
   {
     String ord = runtime.getCodec().optionalString(request, "ord");
