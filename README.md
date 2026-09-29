@@ -13,6 +13,8 @@ The repository's own code and documentation are open source under the [Apache Li
 ## Current API highlights
 
 - The current source advertises API version `1.6`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
+- New since the first 1.6 release, all additive: `read_history_rollup` (time-bucketed min/max/avg for charts), alarm filters with newest-first reads and filtered acknowledge/clear with `dryRun`, `read_schedule_events` and `write_schedule`, OpenMetrics counters at `/stream/metrics`, and audit-trail records for every change made through the stream.
+- A [TypeScript SDK](sdk/README.md) and the [`bask` CLI and terminal dashboard](cli/README.md) are the first clients built on the shared protocol spec.
 - API 1.6 adds [station model editing](docs/MODEL_EDITING_API.md): installed component types, properties, clone/rename/move/delete, hierarchy configuration, slots, links and actions, with preview/apply and recorded outcomes.
 - `BASkStreamService.writesEnabled=false` turns off all writes through the module while reads continue. It defaults to true for compatibility. New model-plan application additionally requires `modelEditsEnabled=true` (default false).
 - `read` is the batch point snapshot operation for point/value ORDs.
@@ -29,9 +31,39 @@ The repository's own code and documentation are open source under the [Apache Li
 | Niagara module | The actual station runtime API. Install this when another app needs authenticated WebSocket access to live station data. | [Station Setup](#station-setup) |
 | Companion app | Guided startup, live station testing, API inspection, and setup snippets for external tools. | [Companion guide and demo app](#companion-guide-and-demo-app) |
 | WebSocket protocol | Production apps, graphics, dashboards, and integrations that should talk directly to the station. | [docs/THIRD_PARTY_API.md](docs/THIRD_PARTY_API.md) |
+| TypeScript SDK | JavaScript/TypeScript apps (Node, Electron, tooling) that want login, reconnects and live subscriptions handled for them. | [TypeScript SDK](#typescript-sdk) |
+| `bask` CLI | Quick station checks, scripts and exports from a terminal, plus a full-screen live dashboard. | [bask CLI and dashboard](#bask-cli-and-dashboard) |
 | Integration direction | Compatibility rules and the future adapter strategy for Grafana, REST, OpenMetrics, and exporters. | [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) |
 | Python tools | Bench tests, quick station checks, and scripting experiments. | [Python test tools](#python-test-tools) |
-| MCP server | An optional local bridge for AI clients and agent workflows. It sits around the module; it is not the main runtime API. | [AI tooling: MCP server](#ai-tooling-mcp-server) |
+| MCP server | An optional local bridge for AI clients and agent workflows. It sits around the module; it is not the main runtime API. It has not been updated for API 1.6 yet; the plan is to rebuild it on the SDK. | [AI tooling: MCP server](#ai-tooling-mcp-server) |
+
+## TypeScript SDK
+
+[`sdk/`](sdk/README.md) is a typed client for the WebSocket API (Node 20+). It handles the connection plumbing every app otherwise repeats:
+
+- Niagara SCRAM-SHA-256 login with the station's signature verified, session reuse, and re-login when a session expires.
+- `call()` for all 45 operations, generated from [spec/baskstream-protocol.json](spec/baskstream-protocol.json), with protocol error codes on every failure, plus helpers such as `read`, `browse`, `historyRollup`, `alarms` and `writeSchedule`.
+- `watch()` subscription groups that renew their lease, re-read after `resync_required`, and come back after a reconnect.
+- Keepalive pings and reconnect with backoff.
+
+```ts
+const client = await BaskStreamClient.connect({ station: "https://my-jace", username: "tech", password: () => ask() });
+const watch = await client.watch(["slot:/Drivers/.../ZoneTemp"]);
+watch.on("change", (point) => console.log(point.point, point.value));
+```
+
+## bask CLI and dashboard
+
+[`cli/`](cli/README.md) is a command-line tool built on the SDK. Run `bask` with no command for a full-screen terminal dashboard: a station tree with live details, a watch list with sparklines, live alarms, history charts, and station status.
+
+```bash
+bask login https://my-jace -u tech --insecure
+bask read Drivers/.../ZoneTemp
+bask history Drivers/.../ZoneTemp --since 7d --rollup 1h -o csv
+bask alarms --unacked -f
+```
+
+It is read-only unless started with `--allow-writes`, and every write or alarm action asks before sending. Only the session cookies are saved; the password never is. `npm run compile` builds a single executable with Bun.
 
 ## Grafana integration
 
@@ -64,6 +96,8 @@ docs/INTEGRATIONS.md             Integration adapter direction and compatibility
 docs/LEGAL_AND_SAFETY.md         EULA, AI-tool, and distribution checklist
 docs/PRIVACY.md                  Local data-handling notes
 docs/TERMS.md                    Open-source terms and third-party boundaries
+sdk/                             TypeScript SDK (login, calls, live watches, reconnects)
+cli/                             bask CLI and terminal dashboard, built on the SDK
 tools/baskstream-nav-tree.html   Companion guide and demo/test app
 tools/baskstream-nav-tree-server.mjs
                                  Local helper for the companion app
@@ -97,6 +131,10 @@ python3 tests/protocol_regression.py
 python3 tests/transport_regression.py
 python3 tests/model_plan_regression.py
 python3 tests/model_adapter_regression.py
+python3 tests/event_lane_regression.py
+python3 tests/typecheck.py /path/to/niagara_home   # javac against the SDK jars; not a module build
+(cd sdk && npm install && npm test)
+(cd cli && npm install && npm test)
 ```
 
 Build artifacts, generated jars, screenshots, local editor settings, and macOS AppleDouble sidecar files are intentionally ignored.
@@ -187,12 +225,24 @@ Recommended external app flow:
 | Subscribe to graphic values | `replace_subscriptions`, `renew_subscriptions`, `release_subscriptions` | Keep live COV data scoped to the active view and let the server manage diffing and leases. |
 | Simple point watches | `subscribe`, `unsubscribe` | Use for simple clients or long-lived manual watches. |
 | Write points | `describe_write`, `write` | Render safe controls, then set, override, auto, or emergency override writable points. |
-| Alarms | `read_alarms`, `ack_alarm`, `clear_alarm`, `subscribe_alarms`, `unsubscribe_alarms` | Load bounded snapshots, acknowledge or force-clear records, and maintain client alarm state with event pushes. |
-| Schedules | `read_schedule` | Read Niagara schedule state and schedule data for UI display. |
-| Histories | `describe_history`, `read_history` | Detect trend availability and load chart records by time range. |
+| Alarms | `read_alarms`, `ack_alarm`, `clear_alarm`, `subscribe_alarms`, `unsubscribe_alarms` | Load bounded snapshots (filtered by class, priority, ack state and time; newest first if asked), acknowledge or force-clear by UUID or filter with `dryRun`, and maintain client alarm state with event pushes. |
+| Schedules | `read_schedule`, `read_schedule_events`, `write_schedule` | Read schedule state, list upcoming output changes, and replace weekday entries (audited, with `dryRun`). |
+| Histories | `describe_history`, `read_history`, `read_history_rollup` | Detect trend availability, load records by time range, or summarise them into fixed-width buckets for charts. |
 | Tags and relations | `read_tags`, `write_tags`, `write_relations` | Read direct and implied tags, edit direct tags, and manage component relations. |
 | Model changes | `subscribe_model`, `unsubscribe_model` | Receive branch-scoped structure-change hints, then refresh affected nodes. |
-| Diagnostics | `subscription_status` | Inspect active point subscriptions, groups, leases, and counts. |
+| Model editing | `describe_component_types`, `describe_component`, `preview_model_changes`, `apply_model_changes`, and convenience previews | Preview, then apply, station model changes. See [docs/MODEL_EDITING_API.md](docs/MODEL_EDITING_API.md). |
+| Diagnostics | `subscription_status`, `GET /stream/metrics` | Inspect subscriptions, groups and leases; scrape request, error, resync and connection counters. |
+
+## Changed, tightened, or removed
+
+Most changes since API 1.5 are additive, but some requests that used to succeed now return less or are refused. Details are in the [compatibility notes](docs/THIRD_PARTY_API.md#compatibility-notes).
+
+- **Permissions are enforced everywhere.** Alarms are filtered by alarm-class permission (acknowledge needs operator write, force-clear admin write). Histories reached through a point are hidden if the user cannot read the history. Each write action checks invoke permission on that action slot.
+- **Related objects are redacted, not leaked.** Parents, ancestors, driver objects, history extensions, alarm sources and relation endpoints the user cannot read come back as `{ "redacted": true }`. Navigation children without an ORD are omitted.
+- **Model editing is stricter.** Previews now need `modelEditsEnabled` (not only apply), and each user may hold 8 open previews. Link and relation values are rejected inside `add_slot`/`update`; use `create_link`/`delete_link` and `write_relations`. Protected services and `program:` components cannot be edited, and actions flagged confirm-required need explicit confirmation.
+- **Limits replace failures.** A reply over 8 MiB returns `response_too_large` instead of closing the session. Alarm reads stop after examining 50,000 records (`truncatedReason: "examined_limit"`). A request running over 10 minutes gets `request_timeout` and the session closes. A client that falls behind gets `resync_required` instead of an unbounded backlog.
+- **COV is coalesced.** Each point appears once per batch with its latest value.
+- **Not updated:** the MCP server still targets the API before 1.6, and the Python tools cover read-only health, tree and values only.
 
 ## Metadata and discovery
 
@@ -228,6 +278,10 @@ A practical pattern is:
 5. Socket close or client crash: server-side connection cleanup and leases release orphaned subscriptions.
 
 For alarms, use `subscribe_alarms` when the app needs global alarm awareness. On large stations, prefer event mode, maintain a client-side alarm map keyed by alarm UUID, and call `read_alarms` only for initial load or resync.
+
+When the station sends `resync_required`, re-read whatever the client shows. The SDK's `watch()` does this for you.
+
+Tested at bench scale against a BACnet simulator: about 32 VAVs plus AHUs and hot- and chilled-water plants.
 
 ## Python test tools
 
