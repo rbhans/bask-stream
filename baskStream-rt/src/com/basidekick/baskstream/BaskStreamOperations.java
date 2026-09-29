@@ -68,6 +68,8 @@ final class BaskStreamOperations
     add("subscribe_alarms", Gate.NONE);
     add("unsubscribe_alarms", Gate.NONE);
     add("read_schedule", Gate.NONE);
+    add("read_schedule_events", Gate.NONE);
+    add("write_schedule", Gate.WRITES);
     add("subscribe_model", Gate.NONE);
     add("unsubscribe_model", Gate.NONE);
     add("read_tags", Gate.NONE);

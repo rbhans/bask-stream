@@ -208,6 +208,8 @@ final class BaskStreamClientSession
     bound.put("subscribe_alarms", (id, op, request) -> alarms.handleSubscribeAlarms(id, request));
     bound.put("unsubscribe_alarms", (id, op, request) -> alarms.handleUnsubscribeAlarms(id, request));
     bound.put("read_schedule", (id, op, request) -> requests.handleReadSchedule(id, request));
+    bound.put("read_schedule_events", (id, op, request) -> requests.handleReadScheduleEvents(id, request));
+    bound.put("write_schedule", (id, op, request) -> requests.handleWriteSchedule(id, request));
     bound.put("subscribe_model", (id, op, request) -> models.handleSubscribeModel(id, request));
     bound.put("unsubscribe_model", (id, op, request) -> models.handleUnsubscribeModel(id, request));
     bound.put("read_tags", (id, op, request) -> requests.handleReadTags(id, request));

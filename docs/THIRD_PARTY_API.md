@@ -685,6 +685,35 @@ Reads a Niagara schedule.
 }
 ```
 
+### `read_schedule_events`
+
+Lists when a schedule's output changes over a window: the output at `start`, then each time it may change, with the new output.
+
+```json
+{ "op": "read_schedule_events", "id": "s2", "ord": "slot:/Schedules/OfficeHours", "start": 1790000000000, "end": 1790604800000 }
+```
+
+Response: `{ "op": "schedule_events_result", "id": "s2", "schedule": { "events": [ { "time": 1790000000000, "value": { ... } }, ... ], "count": 11, "truncated": false } }`. The window defaults to 7 days and may be at most 366; `limit` defaults to 100 (max 1,000).
+
+### `write_schedule`
+
+Replaces the entries of the listed weekdays on a weekly schedule. Days you leave out are untouched. It requires `writesEnabled` and write permission on the schedule.
+
+```json
+{
+  "op": "write_schedule", "id": "s3", "ord": "slot:/Schedules/OfficeHours", "dryRun": true,
+  "days": {
+    "monday":   [ { "start": "07:00", "finish": "18:00", "value": true } ],
+    "saturday": []
+  }
+}
+```
+
+- Times are `"HH:MM"` or `"HH:MM:SS"`; `"24:00"` means the end of the day. Up to 48 entries per day; overlapping entries are rejected.
+- `value` follows the schedule's output type: `true`/`false`, a number, an enum ordinal or tag, or a string.
+- The reply lists `before` and `after` for each day. With `dryRun: true` nothing changes. Otherwise the edit is applied with Niagara's `auditableCopyFrom`, the same path its Scheduler uses, so it is recorded in the station's audit history.
+- Special events are not edited by this operation.
+
 ### `read_alarms`
 
 Reads a bounded alarm snapshot.

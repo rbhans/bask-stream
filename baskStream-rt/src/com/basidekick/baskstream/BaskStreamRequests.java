@@ -247,6 +247,22 @@ final class BaskStreamRequests
     session.send(response);
   }
 
+  void handleReadScheduleEvents(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("schedule_events_result", id);
+    response.put("schedule", runtime.getScheduleResolver().readScheduleEvents(
+        runtime.getCodec().optionalString(request, "ord"), request.get("start"), request.get("end"), request.get("limit"), context));
+    session.send(response);
+  }
+
+  void handleWriteSchedule(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("schedule_write_result", id);
+    response.put("schedule", runtime.getScheduleResolver().writeSchedule(
+        runtime.getCodec().optionalString(request, "ord"), request.get("days"), request.get("dryRun"), context));
+    session.send(response);
+  }
+
   void handleReadTags(String id, Map<String, Object> request) throws BaskStreamProtocolException
   {
     Map<String, Object> response = session.baseMessage("tags_result", id);

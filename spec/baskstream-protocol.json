@@ -1549,6 +1549,94 @@
         ]
       }
     },
+    "read_schedule_events": {
+      "summary": "Upcoming output changes of a schedule within a window: the output at start, then each time it may change with the new output.",
+      "gate": "none",
+      "reply": "schedule_events_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "ord": {
+            "type": "string",
+            "description": "slot:/ ORD of a schedule."
+          },
+          "start": {
+            "type": "number",
+            "description": "Epoch ms; default now."
+          },
+          "end": {
+            "type": "number",
+            "description": "Epoch ms; default start + 7 days; at most 366 days after start."
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 1000,
+            "default": 100,
+            "description": "Maximum events, including the first."
+          }
+        },
+        "required": [
+          "ord"
+        ]
+      },
+      "response": {
+        "keys": [
+          "schedule"
+        ]
+      }
+    },
+    "write_schedule": {
+      "summary": "Replace the entries of the given weekdays on a weekly schedule, applied through Niagara's audited schedule copy. dryRun returns before/after without applying.",
+      "gate": "writes",
+      "reply": "schedule_write_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "ord": {
+            "type": "string",
+            "description": "slot:/ ORD of a weekly schedule; needs write permission."
+          },
+          "days": {
+            "type": "object",
+            "description": "Keys sunday..saturday; each a list (max 48) of {start: \"HH:MM[:SS]\", finish: \"HH:MM[:SS]\" or \"24:00\", value}. Value type follows the schedule: boolean, number, enum ordinal or tag, or string. Listed days are replaced; others are untouched.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "start": {
+                    "type": "string"
+                  },
+                  "finish": {
+                    "type": "string"
+                  },
+                  "value": {}
+                },
+                "required": [
+                  "start",
+                  "finish",
+                  "value"
+                ]
+              }
+            }
+          },
+          "dryRun": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "ord",
+          "days"
+        ]
+      },
+      "response": {
+        "keys": [
+          "schedule"
+        ]
+      }
+    },
     "subscribe_model": {
       "summary": "Subscribe to structural component events (model_cov hints) for branches down to depth.",
       "gate": "none",
