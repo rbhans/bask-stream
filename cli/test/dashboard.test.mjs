@@ -23,7 +23,12 @@ const settle = (ms = 150) => new Promise((resolve) => setTimeout(resolve, ms));
 async function until(frame, pattern, timeoutMs = 3000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (pattern.test(frame())) return frame();
+    if (pattern.test(frame())) {
+      // Ink re-binds key handlers in an effect after the frame is drawn; let that run
+      // before the test presses the next key (slow CI runners otherwise race it).
+      await settle(100);
+      return frame();
+    }
     await settle(25);
   }
   assert.fail(`timed out waiting for ${pattern}\n${frame()}`);
