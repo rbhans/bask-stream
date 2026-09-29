@@ -172,8 +172,8 @@ public final class BBaskStreamService extends BWebServlet
 
 //region /*+ ------------ BEGIN BAJA AUTO GENERATED CODE ------------ +*/
 //@formatter:off
-/*@ $com.basidekick.baskstream.BBaskStreamService(2116518806)1.0$ @*/
-/* Generated Mon Sep 21 05:57:05 MST 2026 by Slot-o-Matic (c) Tridium, Inc. 2012-2026 */
+/*@ $com.basidekick.baskstream.BBaskStreamService(3979930858)1.0$ @*/
+/* Generated Mon Sep 28 21:50:08 MST 2026 by Slot-o-Matic (c) Tridium, Inc. 2012-2026 */
 
   //region Property "writesEnabled"
 
@@ -616,11 +616,10 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Slot for the {@code requestCount} property.
-   * Requests handled since the service started.
    * @see #getRequestCount
    * @see #setRequestCount
    */
-  public static final Property requestCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0L, null);
+  public static final Property requestCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0, null);
 
   /**
    * Get the {@code requestCount} property.
@@ -640,11 +639,10 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Slot for the {@code errorCount} property.
-   * Requests answered with an error.
    * @see #getErrorCount
    * @see #setErrorCount
    */
-  public static final Property errorCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0L, null);
+  public static final Property errorCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0, null);
 
   /**
    * Get the {@code errorCount} property.
@@ -664,11 +662,10 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Slot for the {@code writeRequestCount} property.
-   * Requests that change station data (writes, alarm actions, model plans).
    * @see #getWriteRequestCount
    * @see #setWriteRequestCount
    */
-  public static final Property writeRequestCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0L, null);
+  public static final Property writeRequestCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0, null);
 
   /**
    * Get the {@code writeRequestCount} property.
@@ -688,11 +685,10 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Slot for the {@code resyncCount} property.
-   * Times a slow client was told to resync after its event backlog overflowed.
    * @see #getResyncCount
    * @see #setResyncCount
    */
-  public static final Property resyncCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0L, null);
+  public static final Property resyncCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0, null);
 
   /**
    * Get the {@code resyncCount} property.
@@ -712,11 +708,10 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Slot for the {@code requestTimeoutCount} property.
-   * Sessions closed by the request watchdog.
    * @see #getRequestTimeoutCount
    * @see #setRequestTimeoutCount
    */
-  public static final Property requestTimeoutCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0L, null);
+  public static final Property requestTimeoutCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0, null);
 
   /**
    * Get the {@code requestTimeoutCount} property.
