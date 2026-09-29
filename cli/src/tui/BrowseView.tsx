@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
-import type { BaskStreamClient, BrowseNode, Json, PointSnapshot } from "@basidekick/baskstream";
+import { toSlotOrd, type BaskStreamClient, type BrowseNode, type Json, type PointSnapshot } from "@basidekick/baskstream";
 import { ago, fmtPoint, fmtTime, fmtValue } from "../format.js";
 import { Panel, clip, padEnd, statusTone, theme, useUi, windowStart } from "./ui.js";
 
@@ -31,12 +31,13 @@ export function BrowseView(props: { client: BaskStreamClient; active: boolean; w
       return next;
     });
     if (!node) return;
+    const kids = (node.children ?? []).map((c) => ({ ...c, ord: toSlotOrd(c.ord) }));
     setNodes((map) => {
-      const next = new Map(map).set(node.ord, node);
-      for (const child of node.children ?? []) next.set(child.ord, child);
+      const next = new Map(map);
+      for (const child of kids) next.set(child.ord, child);
       return next;
     });
-    setChildren((map) => new Map(map).set(ord, (node.children ?? []).map((c) => c.ord)));
+    setChildren((map) => new Map(map).set(ord, kids.map((c) => c.ord)));
   };
 
   useEffect(() => void load("slot:/"), []);
@@ -177,7 +178,7 @@ function Details({ node, detail, width }: { node: BrowseNode; detail?: { snapsho
           <Text> </Text>
           <Text>
             <Text color={theme.muted}>{"value".padEnd(9)}</Text>
-            <Text bold color={s.ok === false ? theme.bad : "white"}>
+            <Text bold color={s.code ? theme.bad : s.ok === false ? statusTone(s.status) : "white"}>
               {fmtPoint(s)}
             </Text>
           </Text>

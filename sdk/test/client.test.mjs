@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { once } from "node:events";
-import { BaskStreamClient, BaskStreamError, OPERATIONS } from "../dist/index.js";
+import { BaskStreamClient, BaskStreamError, OPERATIONS, toSlotOrd } from "../dist/index.js";
 import { PASSWORD, USER, startFakeStation } from "./fake-station.mjs";
 
 let station;
@@ -150,6 +150,19 @@ test("an empty watch holds no group and can grow later", async () => {
     await watch.update([]);
     assert.equal(station.state.groups.has("w4"), false);
     assert.equal(watch.values.size, 0);
+  } finally {
+    client.close();
+  }
+});
+
+test("full station ORDs are reduced to slot ORDs", async () => {
+  assert.equal(toSlotOrd("local:|station:|slot:/Drivers/A"), "slot:/Drivers/A");
+  assert.equal(toSlotOrd("slot:/Drivers/A"), "slot:/Drivers/A");
+  assert.equal(toSlotOrd("hierarchy:/x"), "hierarchy:/x");
+  const client = await connect();
+  try {
+    const [snapshot] = await client.read(["local:|station:|slot:/Drivers/A"]);
+    assert.equal(snapshot.point, "slot:/Drivers/A");
   } finally {
     client.close();
   }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { BaskStreamClient, Json, PointSnapshot, Watch } from "@basidekick/baskstream";
+import { toSlotOrd, type BaskStreamClient, type Json, type PointSnapshot, type Watch } from "@basidekick/baskstream";
 
 export interface WatchedPoint {
   ord: string;
@@ -15,6 +15,7 @@ const numeric = (value: unknown): number | undefined =>
 /** The dashboard's watch list: one subscription group, live values and short trends. */
 export function useWatchList(client: BaskStreamClient, initial: string[]) {
   const watchRef = useRef<Promise<Watch> | null>(null);
+  initial = initial.map(toSlotOrd);
   const [points, setPoints] = useState<WatchedPoint[]>(initial.map((ord) => ({ ord, trend: [] })));
   const pointsRef = useRef(points);
   pointsRef.current = points;
@@ -44,6 +45,7 @@ export function useWatchList(client: BaskStreamClient, initial: string[]) {
   }, [client]);
 
   const setOrds = useCallback((next: string[]) => {
+    next = next.map(toSlotOrd);
     const list = pointsRef.current;
     pointsRef.current = next.map((ord) => list.find((p) => p.ord === ord) ?? { ord, trend: [] });
     setPoints(pointsRef.current);
@@ -51,11 +53,12 @@ export function useWatchList(client: BaskStreamClient, initial: string[]) {
   }, []);
 
   const add = useCallback((ord: string) => {
+    ord = toSlotOrd(ord);
     const current = pointsRef.current.map((p) => p.ord);
     return current.includes(ord) ? undefined : setOrds([...current, ord]);
   }, [setOrds]);
 
-  const remove = useCallback((ord: string) => setOrds(pointsRef.current.map((p) => p.ord).filter((o) => o !== ord)), [setOrds]);
+  const remove = useCallback((ord: string) => setOrds(pointsRef.current.map((p) => p.ord).filter((o) => o !== toSlotOrd(ord))), [setOrds]);
 
   return { points, add, remove };
 }
@@ -70,7 +73,8 @@ export function useAlarms(client: BaskStreamClient) {
 
   const reload = useCallback(async () => {
     try {
-      const reply = await client.alarms({ scope: "open", limit: 500, order: "newest" });
+      // Oldest-first then sorted locally: works on modules built before the newest-order fix.
+      const reply = await client.alarms({ scope: "open", limit: 500 });
       setAlarms(new Map(((reply.alarms ?? []) as Json[]).map((a) => [String(a.uuid), a])));
       setLoadedAt(Date.now());
       setError(undefined);

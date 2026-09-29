@@ -77,7 +77,7 @@ export function WatchView(props: { client: BaskStreamClient; active: boolean; wi
             return (
               <Text key={p.ord} backgroundColor={isSelected ? theme.selection : undefined} wrap="truncate-end">
                 <Text bold={isSelected}>{padEnd(shortOrd(p.ord, 3), nameWidth)} </Text>
-                <Text bold color={fresh ? theme.warn : s?.ok === false ? theme.bad : "white"} inverse={fresh}>
+                <Text bold color={fresh ? theme.warn : s?.code ? theme.bad : s?.ok === false ? statusTone(s?.status) : "white"} inverse={fresh}>
                   {padEnd(s ? fmtPoint(s) : "…", 18)}
                 </Text>
                 <Text> </Text>

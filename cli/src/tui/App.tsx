@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
-import { BaskStreamError, type BaskStreamClient } from "@basidekick/baskstream";
+import { BaskStreamError, toSlotOrd, type BaskStreamClient } from "@basidekick/baskstream";
+import { isUnacked } from "../format.js";
 import { AlarmsView } from "./AlarmsView.js";
 import { BrowseView } from "./BrowseView.js";
 import { HistoryView } from "./HistoryView.js";
@@ -106,7 +107,7 @@ export function App({ client, profileName, allowWrites, view: initialView, point
         }
       },
       openHistory: (ord) => {
-        setHistoryOrd(ord);
+        setHistoryOrd(toSlotOrd(ord));
         setView("history");
       }
     }),
@@ -126,7 +127,7 @@ export function App({ client, profileName, allowWrites, view: initialView, point
   );
 
   const watchedSet = useMemo(() => new Set(watchList.points.map((p) => p.ord)), [watchList.points]);
-  const unacked = [...alarmStore.alarms.values()].filter((a) => a.ackState === "unacked").length;
+  const unacked = [...alarmStore.alarms.values()].filter(isUnacked).length;
   const bodyHeight = Math.max(8, size.rows - 3);
   const width = size.columns;
   const viewActive = !modal && !showHelp;

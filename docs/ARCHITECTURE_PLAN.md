@@ -187,6 +187,13 @@ What needs fixing (Phase 2–3 unless noted):
 
 Environment notes: when the simulator ran on the Mac and the station in a Parallels VM, BACnet needed the adapter set in Workbench (see 1). We also added inbound and outbound Windows firewall rules for UDP 47808; it is not confirmed whether they were needed.
 
+## Findings from the first live CLI run (2026-09-28)
+
+- **`read_alarms` with `order: "newest"` repeated one alarm.** Symptom: every row had the same UUID. Cause: the alarm database cursor reuses one `BAlarmRecord` instance per `get()`, and the newest-first window stored references. Fix: store `record.newCopy()` (`BaskStreamAlarmResolver`). Verified: type-checks against 4.15.3.28; live check pending the next module build. Oldest-first reads were never affected because they convert each record immediately.
+- **Browse/search return `local:|station:|slot:/…` ORDs, but point, history and schedule operations accept only `slot:/…`.** The SDK now reduces ORDs with `toSlotOrd` before those calls. Verified live with `bask read` on a full ORD.
+- Stations report alarm `sourceState`/`ackState` capitalised (`Normal`, `Unacked`), and `msgText` may be an unresolved `%lexicon(module:key)%`; clients should compare case-insensitively.
+- A point snapshot's `ok: false` means a non-ok status (e.g. `{stale}`); it is an error entry only when `code` is present.
+
 ## Housekeeping to fold in along the way
 
 - Stop tracking the stale root `baskStream-rt.jar` and add `*.jar` to `.gitignore`. Publish releases with a checksum and a version.

@@ -113,7 +113,8 @@ final class BaskStreamAlarmResolver
           {
             // Keep the most recent `limit` matches; older ones fall out of the window.
             if (newestWindow.size() >= spec.limit) { newestWindow.pollFirst(); truncated = true; truncatedReason = "limit"; }
-            newestWindow.addLast(record);
+            // The cursor reuses one record instance per get(), so keep a copy.
+            newestWindow.addLast((BAlarmRecord) record.newCopy());
             continue;
           }
           if (count >= spec.limit) { truncated = true; truncatedReason = "limit"; break; }

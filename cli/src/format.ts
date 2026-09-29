@@ -18,7 +18,7 @@ export function fmtValue(value: unknown): string {
 
 /** The best display for a point snapshot: its display value, else value + units. */
 export function fmtPoint(snapshot: Record<string, unknown>): string {
-  if (snapshot.ok === false) return String(snapshot.code ?? "error");
+  if (snapshot.code) return String(snapshot.code); // an error entry; ok:false alone just means a non-ok status
   if (typeof snapshot.displayValue === "string") return snapshot.displayValue;
   const units = (snapshot.facets as Record<string, unknown> | undefined)?.units;
   return `${fmtValue(snapshot.value)}${units ? ` ${units}` : ""}`;
@@ -75,8 +75,18 @@ export function parseValue(text: string): boolean | number | string {
 
 /** The last one or two path segments of an ORD, for compact labels. */
 export function shortOrd(ord: string, segments = 2): string {
-  const parts = ord.replace(/^slot:\//, "").split("/").filter(Boolean);
+  const parts = ord.replace(/^.*slot:\//, "").split("/").filter(Boolean);
   return parts.slice(-segments).join("/") || ord;
+}
+
+/** Case-insensitive alarm state checks (stations report "Unacked", "Normal", …). */
+export const isUnacked = (alarm: Record<string, unknown>) => String(alarm.ackState ?? "").toLowerCase() === "unacked";
+export const alarmState = (alarm: Record<string, unknown>) => String(alarm.sourceState ?? "").toLowerCase();
+
+/** An alarm's message text, with unresolved "%lexicon(module:key)%" references shown as the key. */
+export function alarmMessage(alarm: Record<string, unknown>): string {
+  const text = String(((alarm.data ?? {}) as Record<string, unknown>).msgText ?? alarm.summary ?? "");
+  return text.replace(/%lexicon\([^:)]*:([^)]*)\)%/g, (_m, key: string) => key.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase());
 }
 
 const BARS = "▁▂▃▄▅▆▇█";

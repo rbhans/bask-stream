@@ -4,6 +4,7 @@ import WebSocket from "ws";
 import { BaskStreamError, CLIENT_ERRORS } from "./errors.js";
 import { StationHttp, type StationHttpOptions } from "./http.js";
 import { OPERATIONS, type OperationName } from "./operations.js";
+import { toSlotOrd } from "./ords.js";
 import type { AlarmFilter, BrowseNode, Json, PointSnapshot, ScheduleEntry, Weekday } from "./types.js";
 
 export interface ClientOptions extends StationHttpOptions {
@@ -135,36 +136,37 @@ export class BaskStreamClient extends EventEmitter {
   }
 
   async browse(base = "slot:/", options: { depth?: number; metadata?: "none" | "full" } = {}): Promise<BrowseNode> {
-    return (await this.call("browse", { base, ...options })).node as BrowseNode;
+    return (await this.call("browse", { base: toSlotOrd(base), ...options })).node as BrowseNode;
   }
 
   async describe(ord: string, metadata: "none" | "full" = "full"): Promise<BrowseNode> {
-    return (await this.call("describe", { ord, metadata })).node as BrowseNode;
+    return (await this.call("describe", { ord: toSlotOrd(ord), metadata })).node as BrowseNode;
   }
 
   search(base: string, query: string, options: Json = {}): Promise<Json> {
-    return this.call("search", { base, query, ...options });
+    return this.call("search", { base: toSlotOrd(base), query, ...options });
   }
 
   async read(points: string[], fields?: string[]): Promise<PointSnapshot[]> {
-    return (await this.call("read", fields ? { points, fields } : { points })).points as PointSnapshot[];
+    const ords = points.map(toSlotOrd);
+    return (await this.call("read", fields ? { points: ords, fields } : { points: ords })).points as PointSnapshot[];
   }
 
   async write(point: string, action: string, value?: unknown, options: Json = {}): Promise<PointSnapshot> {
-    const reply = await this.call("write", { point, action, ...(value === undefined ? {} : { value }), ...options });
+    const reply = await this.call("write", { point: toSlotOrd(point), action, ...(value === undefined ? {} : { value }), ...options });
     return (reply.points as PointSnapshot[])[0];
   }
 
   describeWrite(points: string[]): Promise<Json> {
-    return this.call("describe_write", { points });
+    return this.call("describe_write", { points: points.map(toSlotOrd) });
   }
 
   async history(ord: string, options: { start?: number; end?: number; limit?: number } = {}): Promise<Json> {
-    return (await this.call("read_history", { ord, ...options })).history as Json;
+    return (await this.call("read_history", { ord: toSlotOrd(ord), ...options })).history as Json;
   }
 
   async historyRollup(ord: string, options: { start?: number; end?: number; interval: number; includeInvalid?: boolean }): Promise<Json> {
-    return (await this.call("read_history_rollup", { ord, ...options })).rollup as Json;
+    return (await this.call("read_history_rollup", { ord: toSlotOrd(ord), ...options })).rollup as Json;
   }
 
   async alarms(options: { scope?: "open" | "ack_pending" | "all"; limit?: number; order?: "newest" | "oldest"; filter?: AlarmFilter; source?: string } = {}): Promise<Json> {
@@ -180,15 +182,16 @@ export class BaskStreamClient extends EventEmitter {
   }
 
   async schedule(ord: string, at?: number): Promise<Json> {
-    return (await this.call("read_schedule", at === undefined ? { ord } : { ord, at })).schedule as Json;
+    const target = toSlotOrd(ord);
+    return (await this.call("read_schedule", at === undefined ? { ord: target } : { ord: target, at })).schedule as Json;
   }
 
   async scheduleEvents(ord: string, options: { start?: number; end?: number; limit?: number } = {}): Promise<Json> {
-    return (await this.call("read_schedule_events", { ord, ...options })).schedule as Json;
+    return (await this.call("read_schedule_events", { ord: toSlotOrd(ord), ...options })).schedule as Json;
   }
 
   async writeSchedule(ord: string, days: Partial<Record<Weekday, ScheduleEntry[]>>, dryRun = false): Promise<Json> {
-    return (await this.call("write_schedule", { ord, days, dryRun })).schedule as Json;
+    return (await this.call("write_schedule", { ord: toSlotOrd(ord), days, dryRun })).schedule as Json;
   }
 
   subscriptionStatus(includePoints = false): Promise<Json> {
@@ -385,7 +388,7 @@ export class Watch extends EventEmitter {
   /** Replaces the watched points and reads their current values. */
   async update(points: string[]): Promise<PointSnapshot[]> {
     const previous = this.points;
-    this.points = [...new Set(points)];
+    this.points = [...new Set(points.map(toSlotOrd))];
     for (const point of this.values.keys()) if (!this.points.includes(point)) this.values.delete(point);
     if (this.points.length === 0) {
       // An empty group is released on the station, so there is no lease to renew.

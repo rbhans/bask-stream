@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import chalk from "chalk";
 import { Command, Option } from "commander";
-import { BaskStreamError, OPERATIONS, StationHttp, type AlarmFilter, type BrowseNode, type Json } from "@basidekick/baskstream";
+import { BaskStreamError, OPERATIONS, StationHttp, toSlotOrd, type AlarmFilter, type BrowseNode, type Json } from "@basidekick/baskstream";
 import { getProfile, loadStore, putProfile, removeProfile, setCurrent, updateProfile } from "./config.js";
-import { csv, fmtPoint, fmtTime, fmtValue, parseDuration, parseTime, parseValue, shortOrd, sparkline, statusColor, table } from "./format.js";
+import { alarmMessage, alarmState, csv, isUnacked, fmtPoint, fmtTime, fmtValue, parseDuration, parseTime, parseValue, shortOrd, sparkline, statusColor, table } from "./format.js";
 import { confirm, promptHidden } from "./prompt.js";
 import { connect, type Connection } from "./session.js";
 
@@ -283,8 +283,7 @@ function alarmFilter(opts: AlarmOptions): AlarmFilter | undefined {
   return Object.keys(filter).length ? filter : undefined;
 }
 
-const alarmMessage = (a: Json) => String(((a.data ?? {}) as Json).msgText ?? a.summary ?? "");
-const alarmRow = (a: Json): unknown[] => [fmtTime(a.timestamp), a.priority, a.alarmClass, a.sourceState, a.ackState, shortOrd(String(((a.sources ?? []) as string[])[0] ?? ""), 3), alarmMessage(a), a.uuid];
+const alarmRow = (a: Json): unknown[] => [fmtTime(a.timestamp), a.priority, a.alarmClass, alarmState(a), isUnacked(a) ? "unacked" : String(a.ackState ?? "").toLowerCase(), shortOrd(String(((a.sources ?? []) as string[])[0] ?? ""), 3), alarmMessage(a), a.uuid];
 const alarmPlain = (r: unknown[]): string[] => {
   const state = String(r[3]);
   const colour = state === "normal" ? chalk.green : state === "fault" ? chalk.magenta : chalk.red;
@@ -396,6 +395,7 @@ async function runTui(g: Globals, start: { view?: "watch"; points?: string[] }):
 }
 
 function normalizeOrd(ord: string): string {
+  ord = toSlotOrd(ord);
   if (/^(slot|hierarchy|history|station|local):/.test(ord)) return ord;
   return `slot:/${ord.replace(/^\/+/, "")}`;
 }

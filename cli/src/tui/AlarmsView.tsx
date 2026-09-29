@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import type { BaskStreamClient, Json } from "@basidekick/baskstream";
-import { fmtTime, fmtValue, shortOrd } from "../format.js";
+import { alarmMessage, alarmState, fmtTime, fmtValue, isUnacked, shortOrd } from "../format.js";
 import type { AlarmMap } from "./stores.js";
 import { Panel, clip, padEnd, theme, useUi, windowStart } from "./ui.js";
 
-const stateColor = (state: unknown) => (state === "normal" ? theme.good : state === "fault" ? theme.accent2 : theme.bad);
-const message = (a: Json) => String(((a.data ?? {}) as Json).msgText ?? a.summary ?? "");
+const stateColor = (state: string) => (state === "normal" ? theme.good : state === "fault" ? theme.accent2 : theme.bad);
+const message = alarmMessage;
 const source = (a: Json) => shortOrd(String(((a.sources ?? []) as string[])[0] ?? ""), 3);
 
 export function AlarmsView(props: { client: BaskStreamClient; active: boolean; width: number; height: number; alarms: AlarmMap; error?: string; reload: () => Promise<void> }) {
@@ -17,7 +17,7 @@ export function AlarmsView(props: { client: BaskStreamClient; active: boolean; w
   const [showDetail, setShowDetail] = useState(false);
 
   const list = useMemo(
-    () => [...alarms.values()].filter((a) => !unackedOnly || a.ackState === "unacked").sort((a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0)),
+    () => [...alarms.values()].filter((a) => !unackedOnly || isUnacked(a)).sort((a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0)),
     [alarms, unackedOnly]
   );
   useEffect(() => setCursor((c) => Math.min(c, Math.max(0, list.length - 1))), [list.length]);
@@ -41,8 +41,8 @@ export function AlarmsView(props: { client: BaskStreamClient; active: boolean; w
       else if (input === "u") setUnackedOnly((v) => !v);
       else if (input === "r") void reload().then(() => ui.toast("Alarms reloaded", "info"));
       else if (key.return) setShowDetail((v) => !v);
-      else if (input === "a" && selected) ack(selected.ackState === "unacked" ? [String(selected.uuid)] : []);
-      else if (input === "A") ack(list.filter((a) => a.ackState === "unacked").map((a) => String(a.uuid)));
+      else if (input === "a" && selected) ack(isUnacked(selected) ? [String(selected.uuid)] : []);
+      else if (input === "A") ack(list.filter(isUnacked).map((a) => String(a.uuid)));
       else if (input === "t" && selected && (selected.sources as string[] | undefined)?.[0]) ui.openHistory((selected.sources as string[])[0]);
     },
     { isActive: active }
@@ -53,7 +53,7 @@ export function AlarmsView(props: { client: BaskStreamClient; active: boolean; w
   const start = windowStart(cursor, list.length, listHeight);
   const inner = width - 4;
   const msgWidth = Math.max(10, inner - 72);
-  const unacked = list.filter((a) => a.ackState === "unacked").length;
+  const unacked = list.filter(isUnacked).length;
 
   return (
     <Box flexDirection="column" height={height}>
@@ -68,17 +68,17 @@ export function AlarmsView(props: { client: BaskStreamClient; active: boolean; w
         )}
         {list.slice(start, start + listHeight).map((a, i) => {
           const isSelected = start + i === cursor;
-          const isUnacked = a.ackState === "unacked";
+          const unackedRow = isUnacked(a);
           return (
             <Text key={String(a.uuid)} backgroundColor={isSelected ? theme.selection : undefined} wrap="truncate-end">
               <Text color={theme.muted}>{padEnd(fmtTime(a.timestamp).slice(5), 14)} </Text>
               <Text bold={Number(a.priority) < 100}>{padEnd(fmtValue(a.priority), 3)} </Text>
               <Text>{padEnd(String(a.alarmClassDisplay ?? a.alarmClass ?? ""), 12)} </Text>
-              <Text color={stateColor(a.sourceState)} bold>
-                {padEnd(String(a.sourceState ?? ""), 9)}{" "}
+              <Text color={stateColor(alarmState(a))} bold>
+                {padEnd(alarmState(a), 9)}{" "}
               </Text>
-              <Text color={isUnacked ? theme.warn : theme.muted} bold={isUnacked}>
-                {padEnd(String(a.ackState ?? ""), 7)}{" "}
+              <Text color={unackedRow ? theme.warn : theme.muted} bold={unackedRow}>
+                {padEnd(String(a.ackState ?? "").toLowerCase(), 7)}{" "}
               </Text>
               <Text color={theme.info}>{padEnd(source(a), 20)} </Text>
               <Text>{clip(message(a), msgWidth)}</Text>
