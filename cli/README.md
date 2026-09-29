@@ -27,7 +27,7 @@ bask                                                   # full-screen dashboard
 
 ## Dashboard
 
-`1 Browse` station tree with live details · `2 Watch` live values with sparklines · `3 Alarms` open alarms, live · `4 History` rollup chart · `5 Status` station, limits and traffic. `?` shows every key; `q` quits.
+`1 Browse` station tree with live details · `2 Watch` live values with sparklines · `3 Alarms` open alarms, live · `4 History` rollup chart · `5 Status` station, limits and traffic. Press `/` anywhere to find a point by name: `⏎` shows it in the tree, `tab` adds it to Watch. `?` shows every key; `q` quits.
 
 It is read-only unless started with `--allow-writes`; then `o`/`s`/`a` command watched points and `a`/`A` acknowledge alarms, each after a y/N confirmation.
 
@@ -37,6 +37,7 @@ It is read-only unless started with `--allow-writes`; then `o`/`s`/`a` command w
 |---|---|
 | `bask login <station> -u <user> [--insecure] [--name <profile>]` | Log in and save a profile |
 | `bask profiles` · `bask use <profile>` · `bask logout [--remove]` | Manage saved stations |
+| `bask doctor [station]` | Step-by-step connection check (reachable, certificate, login page, session, service, WebSocket) with a fix for whatever fails |
 | `bask status` | Station, user, limits, traffic |
 | `bask browse [ord] [-d depth]` · `bask search <text> [--kind point]` | Explore |
 | `bask read <ords...>` | Current values |

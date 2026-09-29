@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { toSlotOrd, type BaskStreamClient, type BrowseNode, type Json, type PointSnapshot } from "@basidekick/baskstream";
 import { ago, fmtPoint, fmtTime, fmtValue } from "../format.js";
+import { quip } from "../quips.js";
 import { Panel, clip, padEnd, statusTone, theme, useUi, windowStart } from "./ui.js";
 
 interface Row {
@@ -14,8 +15,17 @@ interface Row {
 const ICON: Record<string, string> = { point: "◉", schedule: "◷", container: "▣", component: "◇" };
 const KIND_COLOR: Record<string, string> = { point: theme.info, schedule: theme.accent2, container: theme.accent, component: "white" };
 
-export function BrowseView(props: { client: BaskStreamClient; active: boolean; width: number; height: number; watched: Set<string>; onWatch: (ord: string) => void }) {
-  const { client, active, width, height, watched, onWatch } = props;
+export function BrowseView(props: {
+  client: BaskStreamClient;
+  active: boolean;
+  width: number;
+  height: number;
+  watched: Set<string>;
+  onWatch: (ord: string) => void;
+  /** Open the tree down to this ORD and select it (n changes for each request). */
+  reveal?: { ord: string; n: number };
+}) {
+  const { client, active, width, height, watched, onWatch, reveal } = props;
   const ui = useUi();
   const [nodes, setNodes] = useState(new Map<string, BrowseNode>());
   const [children, setChildren] = useState(new Map<string, string[]>());
@@ -44,6 +54,30 @@ export function BrowseView(props: { client: BaskStreamClient; active: boolean; w
 
   useEffect(() => void load("slot:/"), []);
 
+  const childrenRef = useRef(children);
+  childrenRef.current = children;
+  const [pendingSelect, setPendingSelect] = useState<string>();
+
+  // Load and open each parent folder of a revealed ORD, then select it once its row exists.
+  useEffect(() => {
+    if (!reveal) return;
+    let cancelled = false;
+    void (async () => {
+      const parts = reveal.ord.replace(/^slot:\//, "").split("/").filter(Boolean);
+      const ancestors = parts.slice(0, -1).map((_, i) => `slot:/${parts.slice(0, i + 1).join("/")}`);
+      for (const ord of ["slot:/", ...ancestors]) {
+        if (cancelled) return;
+        if (!childrenRef.current.has(ord)) await load(ord);
+      }
+      if (cancelled) return;
+      setExpanded((set) => new Set([...set, ...ancestors]));
+      setPendingSelect(reveal.ord);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [reveal?.n]);
+
   const rows = useMemo(() => {
     const out: Row[] = [];
     const walk = (ord: string, level: number) => {
@@ -60,6 +94,21 @@ export function BrowseView(props: { client: BaskStreamClient; active: boolean; w
     walk("slot:/", 0);
     return out;
   }, [nodes, children, expanded]);
+
+  useEffect(() => {
+    if (!pendingSelect) return;
+    const index = rows.findIndex((row) => !row.empty && row.node.ord === pendingSelect);
+    if (index >= 0) {
+      setCursor(index);
+      setPendingSelect(undefined);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setPendingSelect(undefined);
+      ui.toast("Couldn't show that one in the tree (a parent may be hidden from this user).", "warn");
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [rows, pendingSelect]);
 
   const selected = rows[Math.min(cursor, rows.length - 1)]?.node;
 
@@ -130,7 +179,7 @@ export function BrowseView(props: { client: BaskStreamClient; active: boolean; w
   return (
     <Box height={height}>
       <Panel title={`Station  ${rows.length ? `${cursor + 1}/${rows.length}` : ""}`} width={treeWidth} height={height}>
-        {rows.length === 0 && <Text color={theme.muted}>{loading.size ? "Loading…" : "Nothing here."}</Text>}
+        {rows.length === 0 && <Text color={theme.muted}>{loading.size ? quip("browsing") : "Nothing here."}</Text>}
         {visible.map(({ node, level, empty }, i) => {
           const index = start + i;
           const isSelected = index === cursor;

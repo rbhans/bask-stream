@@ -88,6 +88,7 @@ It asks for the password and saves only the session, never the password. Use `--
 
 ```bash
 bask                                                     # full-screen dashboard (? for keys, q to quit)
+bask doctor                                              # can't connect? checks each step and says how to fix it
 bask status                                              # station, user, limits, traffic
 bask browse Drivers -d 2                                 # station tree
 bask read Drivers/.../ZoneTemp                           # current values
@@ -96,7 +97,7 @@ bask history Drivers/.../ZoneTemp --since 7d --rollup 1h -o csv > zonetemp.csv
 bask alarms --unacked -f                                 # alarms, then follow new ones
 ```
 
-In the dashboard: `1`–`5` switch between Browse, Watch, Alarms, History and Status. In Browse, arrow keys move and open branches, `w` adds a point to Watch, and `t` opens its trend.
+In the dashboard: `1`–`5` switch between Browse, Watch, Alarms, History and Status. Press `/` to find any point by name. In Browse, arrow keys move and open branches, `w` adds a point to Watch, and `t` opens its trend.
 
 Everything is read-only unless you add `--allow-writes`, and every write or alarm acknowledgement asks before sending. The full command list is in [cli/README.md](cli/README.md).
 

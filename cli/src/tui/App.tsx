@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { BaskStreamError, toSlotOrd, type BaskStreamClient } from "@basidekick/baskstream";
 import { isUnacked } from "../format.js";
@@ -9,6 +9,7 @@ import { StatusView } from "./StatusView.js";
 import { useAlarms, useWatchList } from "./stores.js";
 import { Hint, ModalBox, UiContext, theme, toneColor, type Modal, type Tone, type Ui } from "./ui.js";
 import { WatchView } from "./WatchView.js";
+import { Finder } from "./Finder.js";
 
 const VIEWS = ["browse", "watch", "alarms", "history", "status"] as const;
 export type ViewName = (typeof VIEWS)[number];
@@ -20,6 +21,8 @@ const HINTS: Record<ViewName, [string, string][]> = {
   history: [["+ -", "zoom"], ["← →", "pan"], ["n", "now"], ["r", "reload"]],
   status: []
 };
+
+const FIND_HINTS: [string, string][] = [["↑↓", "move"], ["⏎", "show in tree"], ["tab", "watch point"], ["esc", "close"]];
 
 export interface AppProps {
   client: BaskStreamClient;
@@ -39,6 +42,8 @@ export function App({ client, profileName, allowWrites, view: initialView, point
   const [link, setLink] = useState<{ state: "live" | "reconnecting" | "down"; latency?: number; detail?: string }>({ state: "live" });
   const [historyOrd, setHistoryOrd] = useState<string>();
   const [showHelp, setShowHelp] = useState(false);
+  const [finding, setFinding] = useState(false);
+  const [reveal, setReveal] = useState<{ ord: string; n: number }>();
 
   const watchList = useWatchList(client, initialPoints);
   const alarmStore = useAlarms(client);
@@ -119,21 +124,30 @@ export function App({ client, profileName, allowWrites, view: initialView, point
       if (showHelp) return setShowHelp(false);
       if (input === "q" || (key.ctrl && input === "c")) return exit();
       if (input === "?") return setShowHelp(true);
+      if (input === "/") return setFinding(true);
       const index = Number(input);
       if (index >= 1 && index <= VIEWS.length) return setView(VIEWS[index - 1]);
       if (key.tab) setView((v) => VIEWS[(VIEWS.indexOf(v) + (key.shift ? VIEWS.length - 1 : 1)) % VIEWS.length]);
     },
-    { isActive: !modal }
+    { isActive: !modal && !finding }
   );
 
   const watchedSet = useMemo(() => new Set(watchList.points.map((p) => p.ord)), [watchList.points]);
   const unacked = [...alarmStore.alarms.values()].filter(isUnacked).length;
+
+  // The sidekick points out unacknowledged alarms once, after the first alarm load.
+  const greeted = useRef(false);
+  useEffect(() => {
+    if (greeted.current || alarmStore.loadedAt === undefined) return;
+    greeted.current = true;
+    if (unacked > 0 && view !== "alarms") showToast(`Found ${unacked} unacked alarm${unacked === 1 ? "" : "s"}. Press 3 to take a look.`, "info");
+  }, [alarmStore.loadedAt]);
   // One row short of the terminal: a frame as tall as the screen makes Ink clear and redraw
   // everything on each update, which floods scrollback in some terminals.
   const height = Math.max(11, size.rows - 1);
   const bodyHeight = height - 3;
   const width = size.columns;
-  const viewActive = !modal && !showHelp;
+  const viewActive = !modal && !showHelp && !finding;
   const host = client.http.url.host;
   const user = String(client.capabilities.authenticatedUser ?? "");
 
@@ -201,17 +215,30 @@ export function App({ client, profileName, allowWrites, view: initialView, point
         <Box height={bodyHeight} flexDirection="column">
           {showHelp ? (
             <Help />
+          ) : finding && !modal ? (
+            <Finder
+              client={client}
+              width={width}
+              height={bodyHeight}
+              onClose={() => setFinding(false)}
+              onReveal={(ord) => {
+                setFinding(false);
+                setView("browse");
+                setReveal((r) => ({ ord, n: (r?.n ?? 0) + 1 }));
+              }}
+              onWatch={addWatch}
+            />
           ) : modal ? (
             <Box height={bodyHeight} justifyContent="center" alignItems="center" flexDirection="column">
               <ModalBox modal={modal} close={() => setModal(undefined)} />
             </Box>
           ) : null}
-          <Box display={showHelp || modal ? "none" : "flex"} flexDirection="column">
+          <Box display={showHelp || modal || finding ? "none" : "flex"} flexDirection="column">
             <Box display={view === "browse" ? "flex" : "none"}>
-              <BrowseView client={client} active={viewActive && view === "browse"} width={width} height={bodyHeight} watched={watchedSet} onWatch={addWatch} />
+              <BrowseView client={client} active={viewActive && view === "browse"} width={width} height={bodyHeight} watched={watchedSet} onWatch={addWatch} reveal={reveal} />
             </Box>
             {view === "watch" && <WatchView client={client} active={viewActive} width={width} height={bodyHeight} points={watchList.points} onRemove={(ord) => void watchList.remove(ord)} />}
-            {view === "alarms" && <AlarmsView client={client} active={viewActive} width={width} height={bodyHeight} alarms={alarmStore.alarms} error={alarmStore.error} reload={alarmStore.reload} />}
+            {view === "alarms" && <AlarmsView client={client} active={viewActive} width={width} height={bodyHeight} alarms={alarmStore.alarms} error={alarmStore.error} loaded={alarmStore.loadedAt !== undefined} reload={alarmStore.reload} />}
             {view === "history" && <HistoryView client={client} active={viewActive} width={width} height={bodyHeight} ord={historyOrd} />}
             {view === "status" && <StatusView client={client} active={viewActive} width={width} height={bodyHeight} profileName={profileName} allowWrites={allowWrites} />}
           </Box>
@@ -225,12 +252,17 @@ export function App({ client, profileName, allowWrites, view: initialView, point
             </Text>
           ) : (
             <Text wrap="truncate-end">
-              {HINTS[view].map(([k, label]) => (
+              {(finding ? FIND_HINTS : HINTS[view]).map(([k, label]) => (
                 <Hint key={k} k={k} label={label} />
               ))}
-              <Hint k="1-5" label="views" />
-              <Hint k="?" label="help" />
-              <Hint k="q" label="quit" />
+              {!finding && (
+                <>
+                  <Hint k="/" label="find" />
+                  <Hint k="1-5" label="views" />
+                  <Hint k="?" label="help" />
+                  <Hint k="q" label="quit" />
+                </>
+              )}
             </Text>
           )}
         </Box>
@@ -258,7 +290,8 @@ function Help() {
   return (
     <Box flexDirection="column" paddingX={2}>
       <Box flexWrap="wrap">
-        {section("Everywhere", [["1-5", "switch view"], ["tab", "next view"], ["?", "this help"], ["q", "quit"]])}
+        {section("Everywhere", [["/", "find a point"], ["1-5", "switch view"], ["tab", "next view"], ["?", "this help"], ["q", "quit"]])}
+        {section("Find", [["type", "search the station"], ["⏎", "show in tree"], ["tab", "watch point"], ["esc", "close"]])}
         {section("Browse", HINTS.browse)}
         {section("Watch", HINTS.watch)}
         {section("Alarms", HINTS.alarms)}

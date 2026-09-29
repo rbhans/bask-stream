@@ -13,13 +13,14 @@ export interface Connection {
  * Connects with a saved profile. The saved session is reused; if it has expired the password
  * comes from BASKSTREAM_PASSWORD or a prompt, and is kept in memory only for later reconnects.
  */
-export async function connect(profileName?: string): Promise<Connection> {
+export async function connect(profileName?: string, options: { beforePrompt?: () => void } = {}): Promise<Connection> {
   const { name, profile } = getProfile(profileName);
   let typed: string | undefined = process.env.BASKSTREAM_PASSWORD;
   let mayPrompt = true;
   const password = async () => {
     if (typed !== undefined) return typed;
     if (!mayPrompt) throw new Error("The station session expired. Quit and run bask again to log in.");
+    options.beforePrompt?.();
     typed = await promptHidden(`Password for ${profile.username}@${new URL(profile.station).host}: `);
     return typed;
   };

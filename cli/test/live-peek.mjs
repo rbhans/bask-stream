@@ -10,7 +10,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 await wait(1500);
 for (const key of (process.argv[2] ?? "").split(",").filter(Boolean)) {
   view.stdin.write({ down: "\u001B[B", up: "\u001B[A", right: "\u001B[C", enter: "\r" }[key] ?? key);
-  await wait(key === "right" || key === "enter" ? 1200 : 150);
+  await wait(key === "right" || key === "enter" || key.length > 1 ? 2500 : 150);
 }
 await wait(1000);
 console.log(view.lastFrame().split("\n").filter((l) => !/^│ *││ *│$|^│ *│$/.test(l)).join("\n"));

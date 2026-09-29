@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import type { BaskStreamClient, Json } from "@basidekick/baskstream";
 import { fmtDuration, fmtTime, fmtValue, shortOrd } from "../format.js";
+import { quip } from "../quips.js";
 import { Panel, theme, useUi } from "./ui.js";
 
 const RANGES = [3600000, 6 * 3600000, 86400000, 3 * 86400000, 7 * 86400000, 30 * 86400000];
@@ -13,7 +14,7 @@ export function HistoryView(props: { client: BaskStreamClient; active: boolean; 
   const ui = useUi();
   const [rangeIndex, setRangeIndex] = useState(2);
   const [endOffset, setEndOffset] = useState(0);
-  const [data, setData] = useState<{ key: string; rollup?: Json; loading: boolean }>({ key: "", loading: false });
+  const [data, setData] = useState<{ key: string; rollup?: Json; loading: boolean; line?: string }>({ key: "", loading: false });
 
   const range = RANGES[rangeIndex];
   const chartWidth = Math.max(20, width - 14);
@@ -24,7 +25,7 @@ export function HistoryView(props: { client: BaskStreamClient; active: boolean; 
 
   useEffect(() => {
     if (!ord || !active || data.key === key) return;
-    setData({ key, loading: true, rollup: data.rollup });
+    setData({ key, loading: true, rollup: data.rollup, line: quip("history") });
     void ui.attempt("history", () => client.historyRollup(ord, { start, end, interval })).then((rollup) => setData({ key, rollup, loading: false }));
   }, [key, active]);
 
@@ -60,7 +61,7 @@ export function HistoryView(props: { client: BaskStreamClient; active: boolean; 
       {!history && !data.loading ? (
         <Text color={theme.muted}>No history for this point (no history extension, or nothing readable).</Text>
       ) : buckets.length === 0 ? (
-        <Text color={theme.muted}>{data.loading ? "Loading…" : "No numeric records in this window."}</Text>
+        <Text color={theme.muted}>{data.loading ? data.line : "No numeric records in this window."}</Text>
       ) : (
         <Chart buckets={buckets} start={start} interval={interval} columns={chartWidth} rows={chartHeight} range={range} />
       )}

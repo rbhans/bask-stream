@@ -3,14 +3,16 @@ import { Box, Text, useInput } from "ink";
 import type { BaskStreamClient, Json } from "@basidekick/baskstream";
 import { alarmMessage, alarmState, fmtTime, fmtValue, isUnacked, shortOrd } from "../format.js";
 import type { AlarmMap } from "./stores.js";
+import { quip } from "../quips.js";
 import { Panel, clip, padEnd, theme, useUi, windowStart } from "./ui.js";
 
 const stateColor = (state: string) => (state === "normal" ? theme.good : state === "fault" ? theme.accent2 : theme.bad);
 const message = alarmMessage;
 const source = (a: Json) => shortOrd(String(((a.sources ?? []) as string[])[0] ?? ""), 3);
 
-export function AlarmsView(props: { client: BaskStreamClient; active: boolean; width: number; height: number; alarms: AlarmMap; error?: string; reload: () => Promise<void> }) {
-  const { client, active, width, height, alarms, error, reload } = props;
+export function AlarmsView(props: { client: BaskStreamClient; active: boolean; width: number; height: number; alarms: AlarmMap; error?: string; loaded: boolean; reload: () => Promise<void> }) {
+  const { client, active, width, height, alarms, error, loaded, reload } = props;
+  const [loadingLine] = useState(() => quip("alarms"));
   const ui = useUi();
   const [cursor, setCursor] = useState(0);
   const [unackedOnly, setUnackedOnly] = useState(false);
@@ -59,7 +61,9 @@ export function AlarmsView(props: { client: BaskStreamClient; active: boolean; w
     <Box flexDirection="column" height={height}>
       <Panel title={`Open alarms ${list.length}${unacked ? ` · ${unacked} unacked` : ""}${unackedOnly ? " · filter: unacked" : ""}`} width={width} height={height - detailHeight}>
         {error && <Text color={theme.bad}>{error}</Text>}
-        {list.length === 0 && !error ? (
+        {!loaded && !error ? (
+          <Text color={theme.muted}>{loadingLine}</Text>
+        ) : list.length === 0 && !error ? (
           <Text color={theme.good}>✓ No open alarms{unackedOnly ? " awaiting acknowledgement" : ""}.</Text>
         ) : (
           <Text color={theme.muted}>

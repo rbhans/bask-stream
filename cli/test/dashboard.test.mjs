@@ -115,3 +115,24 @@ test("status view shows station and traffic", async () => {
     unmount();
   }
 });
+
+test("finder searches, reveals in the tree, and watches with tab", async () => {
+  const { lastFrame, stdin, unmount } = mount();
+  try {
+    await until(lastFrame, /Drivers/);
+    stdin.write("/");
+    await until(lastFrame, /Find/);
+    stdin.write("Space");
+    await until(lastFrame, /1 found/);
+    stdin.write("\t");
+    await until(lastFrame, /Watching SpaceTemp/);
+    stdin.write("\r");
+    const frame = await until(lastFrame, /▾ ▣ points/);
+    // The found point is selected in the tree (row 5 of 7) and shown in Details.
+    assert.match(frame, /Station {2}5\/7/);
+    assert.match(frame, /slot:\/Drivers\/Net\/VAV_01\/points\/SpaceT/);
+    console.log(frame);
+  } finally {
+    unmount();
+  }
+});

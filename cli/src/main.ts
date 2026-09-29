@@ -7,6 +7,7 @@ import { alarmMessage, alarmState, csv, isUnacked, fmtPoint, fmtTime, fmtValue, 
 import { confirm, promptHidden } from "./prompt.js";
 import { connect, type Connection } from "./session.js";
 import { VERSION } from "./version.js";
+import { splash, spinner } from "./splash.js";
 
 type Output = "table" | "json" | "csv";
 interface Globals {
@@ -96,6 +97,18 @@ program
   .action((name: string) => {
     setCurrent(name);
     console.log(`${chalk.green("✓")} Using ${name}.`);
+  });
+
+program
+  .command("doctor")
+  .description("check everything bask needs, step by step, and say how to fix what fails")
+  .argument("[station]", "check a station URL without a saved profile")
+  .option("-k, --insecure", "with a station URL: accept a self-signed certificate")
+  .action(async (station: string | undefined, opts: { insecure?: boolean }, cmd: Command) => {
+    const { runDoctor } = await import("./doctor.js");
+    console.log();
+    const ok = await runDoctor(globals(cmd).profile, station, !!opts.insecure);
+    if (!ok) process.exitCode = 1;
   });
 
 // ---- Reading ----------------------------------------------------------------------------------------
@@ -389,7 +402,17 @@ program
   });
 
 async function runTui(g: Globals, start: { view?: "watch"; points?: string[] }): Promise<void> {
-  const conn = await connect(g.profile);
+  process.stderr.write(`${splash()}\n`);
+  const spin = spinner("connecting");
+  let conn: Connection;
+  try {
+    conn = await connect(g.profile, { beforePrompt: spin.stop });
+  } catch (error) {
+    spin.stop();
+    throw error;
+  }
+  const caps = conn.client.capabilities;
+  spin.done(`  ${chalk.green("✓")} Connected to ${chalk.bold(conn.client.http.url.host)} as ${caps.authenticatedUser ?? "?"} ${chalk.dim(`· API ${caps.apiVersion ?? "?"}`)}`);
   conn.stopPrompting();
   const { runDashboard } = await import("./tui/run.js");
   await runDashboard(conn, { allowWrites: !!g.allowWrites, ...start });
@@ -409,8 +432,11 @@ program.parseAsync().catch((error: unknown) => {
   if (error instanceof BaskStreamError) {
     console.error(`${chalk.red("error")} ${chalk.dim(`[${error.code}]`)} ${error.message}`);
     if (error.code === "session_expired") console.error(chalk.dim("Run: bask login <station> -u <user>"));
+    else if (error.code === "connection_closed" || error.code === "login_failed" || error.code === "timeout") console.error(chalk.dim("Run bask doctor to see where it breaks."));
   } else {
-    console.error(`${chalk.red("error")} ${error instanceof Error ? error.message : String(error)}`);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`${chalk.red("error")} ${message}`);
+    if (/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|certificate|TLS|socket hang up/i.test(message)) console.error(chalk.dim("Run bask doctor to see where it breaks."));
   }
   process.exit(1);
 });
