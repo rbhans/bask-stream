@@ -97,7 +97,7 @@ Response:
   "op": "capabilities_result",
   "id": "caps-1",
   "capabilities": {
-    "apiVersion": "1.6",
+    "apiVersion": "1.7",
     "operations": ["ping", "capabilities", "browse", "describe", "search", "read", "subscribe", "unsubscribe", "replace_subscriptions", "renew_subscriptions", "release_subscriptions", "subscription_status", "write", "describe_write", "read_history", "describe_history", "read_alarms", "ack_alarm", "ack_alarms", "clear_alarm", "clear_alarms", "subscribe_alarms", "unsubscribe_alarms", "read_schedule", "subscribe_model", "unsubscribe_model", "read_tags", "write_tags", "write_relations", "describe_component_types", "describe_component", "preview_model_changes", "apply_model_changes", "model_plan_status", "cancel_model_plan", "create_components", "update_component_properties", "rename_component", "move_components", "delete_components", "create_hierarchy", "configure_hierarchy"],
     "writesEnabled": true,
     "modelEditing": { "enabled": false, "maxChanges": 100, "previewRequired": true, "atomic": false },
@@ -1302,6 +1302,16 @@ Recommended client approach:
 The `metadata` block is additive and request-controlled. Clients can ignore it or omit it and continue using `ord`, `slotPath`, `name`, `typeSpec`, `features`, `operations`, and point read/write payloads.
 
 Third-party clients should not require every metadata subfield to be populated. Different protocols and station models expose different evidence.
+
+### API 1.7 changes
+
+`apiVersion` advanced from `1.6` to `1.7`. The new operations and endpoints are additive; the behaviour changes below them (event delivery and limits) were made in the same release:
+
+- New operations `read_history_rollup`, `read_schedule_events`, and `write_schedule`.
+- `read_alarms` accepts `filter` (alarm class, priority, ack state, time) and `order: "newest"`. `ack_alarm`/`clear_alarm` accept the same filter instead of UUIDs, with `dryRun`.
+- New `GET /stream/metrics` endpoint (OpenMetrics) and read-only traffic counters on the service.
+- Audit records for tag and relation edits; every other change made through the stream was already audited by Niagara.
+- See "Event delivery and limits" below for `resync_required`, `request_timeout`, `response_too_large`, and COV coalescing.
 
 ### Permission tightening (API 1.6 source, 2026-09-24)
 

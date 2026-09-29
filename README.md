@@ -12,10 +12,10 @@ The repository's own code and documentation are open source under the [Apache Li
 
 ## Current API highlights
 
-- The current source advertises API version `1.6`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
-- New since the first 1.6 release, all additive: `read_history_rollup` (time-bucketed min/max/avg for charts), alarm filters with newest-first reads and filtered acknowledge/clear with `dryRun`, `read_schedule_events` and `write_schedule`, OpenMetrics counters at `/stream/metrics`, and audit-trail records for every change made through the stream.
+- The current source advertises API version `1.7`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
+- API 1.7 adds, all additive: `read_history_rollup` (time-bucketed min/max/avg for charts), alarm filters with newest-first reads and filtered acknowledge/clear with `dryRun`, `read_schedule_events` and `write_schedule`, OpenMetrics counters at `/stream/metrics`, and audit-trail records for every change made through the stream.
 - A [TypeScript SDK](sdk/README.md) and the [`bask` CLI and terminal dashboard](cli/README.md) are the first clients built on the shared protocol spec.
-- API 1.6 adds [station model editing](docs/MODEL_EDITING_API.md): installed component types, properties, clone/rename/move/delete, hierarchy configuration, slots, links and actions, with preview/apply and recorded outcomes.
+- API 1.6 added [station model editing](docs/MODEL_EDITING_API.md): installed component types, properties, clone/rename/move/delete, hierarchy configuration, slots, links and actions, with preview/apply and recorded outcomes.
 - `BASkStreamService.writesEnabled=false` turns off all writes through the module while reads continue. It defaults to true for compatibility. New model-plan application additionally requires `modelEditsEnabled=true` (default false).
 - `read` is the batch point snapshot operation for point/value ORDs.
 - Point snapshots can include facets, enum metadata, status, timestamps, display values, and raw values.
@@ -35,7 +35,6 @@ The repository's own code and documentation are open source under the [Apache Li
 | `bask` CLI | Quick station checks, scripts and exports from a terminal, plus a full-screen live dashboard. | [bask CLI and dashboard](#bask-cli-and-dashboard) |
 | Integration direction | Compatibility rules and the future adapter strategy for Grafana, REST, OpenMetrics, and exporters. | [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) |
 | Python tools | Bench tests, quick station checks, and scripting experiments. | [Python test tools](#python-test-tools) |
-| MCP server | An optional local bridge for AI clients and agent workflows. It sits around the module; it is not the main runtime API. It has not been updated for API 1.6 yet; the plan is to rebuild it on the SDK. | [AI tooling: MCP server](#ai-tooling-mcp-server) |
 
 ## TypeScript SDK
 
@@ -150,13 +149,6 @@ tools/baskstream-live-smoke.mjs
 tools/python-tools/README.md     Python bench-test tooling guide
 tools/python-tools/tools/python/
                                  Read-only Python client, CLI, and smoke test
-tools/mcp/README.md              Local stdio MCP server guide
-tools/mcp/INSTALL.md             Windows-first MCP install guide
-tools/mcp/CLIENTS.md             MCP client matrix and config examples
-tools/mcp/examples/              Ready-to-edit client config templates
-tools/mcp/src/                   MCP server source for AI station workflows
-tools/codex-plugin/bask-stream/  Codex plugin template for the MCP server
-tools/claude-plugin/bask-stream/ Claude Code plugin template for the MCP server
 integrations/grafana/            Grafana integration implementation and product contract
 tools/baskstream-test.html       Lower-level standalone test harness
 tools/baskstream-test-snippet.js
@@ -198,7 +190,7 @@ This is engineering guidance, not legal advice. Review the current [Tridium Niag
 - Do not reverse engineer, decompile, disassemble, extract, modify binary behavior, or change Niagara APIs.
 - Use only licensed Niagara development tooling and authorized stations.
 - Use least-privilege Niagara users, and get explicit customer authorization before connecting AI tooling to customer systems.
-- Avoid Tridium, Honeywell, Anthropic, OpenAI, Claude, Codex, or MCP Registry branding in a way that implies partnership, certification, or endorsement.
+- Avoid Tridium, Honeywell, Anthropic, OpenAI, Claude, or Codex branding in a way that implies partnership, certification, or endorsement.
 
 ## Station setup
 
@@ -286,7 +278,7 @@ Most changes since API 1.5 are additive, but some requests that used to succeed 
 - **Model editing is stricter.** Previews now need `modelEditsEnabled` (not only apply), and each user may hold 8 open previews. Link and relation values are rejected inside `add_slot`/`update`; use `create_link`/`delete_link` and `write_relations`. Protected services and `program:` components cannot be edited, and actions flagged confirm-required need explicit confirmation.
 - **Limits replace failures.** A reply over 8 MiB returns `response_too_large` instead of closing the session. Alarm reads stop after examining 50,000 records (`truncatedReason: "examined_limit"`). A request running over 10 minutes gets `request_timeout` and the session closes. A client that falls behind gets `resync_required` instead of an unbounded backlog.
 - **COV is coalesced.** Each point appears once per batch with its latest value.
-- **Not updated:** the MCP server still targets the API before 1.6, and the Python tools cover read-only health, tree and values only.
+- **Removed:** the MCP server and its Codex and Claude plugin templates are no longer part of this repository. **Not updated:** the Python tools cover read-only health, tree and values only.
 
 ## Metadata and discovery
 
@@ -349,38 +341,6 @@ python3 baskstream_cli.py --station https://<station> --user <user> --ask-pass v
 
 For local/self-signed stations, the tools default to TLS verification off. Use `--verify-tls` only when the station certificate is trusted by the client machine. See [tools/python-tools/README.md](tools/python-tools/README.md) for platform-specific examples and PowerShell ORD quoting notes.
 
-## AI tooling: MCP server
-
-The MCP server under `tools/mcp/` is optional AI-client tooling. It does not replace the Niagara module, the WebSocket protocol, the companion app, or a production graphics/dashboard client. It wraps the same station contract used everywhere else: Niagara login, `/stream/health`, then MessagePack WebSocket calls to `/stream`.
-
-Use the MCP when an AI client should inspect a station, summarize equipment, read live values, review histories/schedules/alarms, or perform explicitly enabled point writes. Use the WebSocket protocol directly for production apps that need persistent UI sessions or long-lived COV subscriptions.
-
-Setup:
-
-```bash
-cd tools/mcp
-npm run setup
-```
-
-`npm run setup` installs dependencies, handles mounted/shared filesystem npm issues, builds the server, and verifies local MCP startup.
-
-Windows-first install guides and client-specific examples are in [tools/mcp/INSTALL.md](tools/mcp/INSTALL.md) and [tools/mcp/CLIENTS.md](tools/mcp/CLIENTS.md). Those guides cover generic MCP JSON, Claude Code, Claude Desktop/MCPB, Codex plugin, Claude Code plugin, Hermes, VS Code, Cursor, Windsurf/Cascade, Cline, and Augment. The companion app Guide tab also generates ready-to-copy setup commands and config snippets.
-
-Keep Niagara credentials in local MCP client settings, environment variables, or ignored `tools/mcp/config.json`; do not commit them. The MCP defaults to read-oriented discovery, diagnostics, values, histories, schedules, alarms, inventory, and summary tools. Point writes require `BASKSTREAM_ALLOW_WRITES=true`; alarm acknowledge/clear requires `BASKSTREAM_ALLOW_ALARM_ACTIONS=true`. Niagara permissions still apply, so use a least-privilege station user.
-
-The raw operation tool is hidden unless the MCP server starts with `BASKSTREAM_ALLOW_RAW=true`. Leave it off for normal installs and public distribution.
-
-Recommended AI-client workflow:
-
-1. Run diagnostics and `capabilities`.
-2. Browse/search shallowly before deep metadata requests.
-3. Read current values with `read`.
-4. For writes, call `describe_write` first and only expose actions that response reports as supported.
-5. Enable point writes or alarm actions only through explicit local MCP settings.
-6. Do not paste Niagara internals, Tridium docs, license files, keys, security reports, or benchmark results into AI prompts.
-
-See [tools/mcp/README.md](tools/mcp/README.md) for the full tool list and inspector workflow.
-
 ## Network and security
 
 Common blockers for real deployments:
@@ -412,7 +372,7 @@ tools/baskstream-nav-tree.html
 
 It has two tabs:
 
-- `Guide`: startup checklist, module, companion app, Python tools, optional MCP/client setup generator, scale, network/security, and operation-reference guidance.
+- `Guide`: startup checklist, what's new, the bask CLI and SDK, Python tools, scale, network/security, and operation-reference guidance.
 - `Test Console`: connect to a live station, browse the station tree, inspect metadata, read selected point values, and subscribe to the selected point.
 
 The app is intentionally standalone HTML/CSS/JS. There is no npm install, bundler, or app server requirement.

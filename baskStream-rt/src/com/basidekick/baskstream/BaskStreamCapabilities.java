@@ -11,6 +11,9 @@ import javax.baja.sys.Context;
 /** Builds the capabilities reply: API version, operations, limits, schemas and policy. */
 final class BaskStreamCapabilities
 {
+  /** The protocol version reported by capabilities and /stream/health. Keep in step with spec/baskstream-protocol.json. */
+  static final String API_VERSION = "1.7";
+
   private final BaskStreamClientSession session;
   private final BaskStreamWebSocketRuntime runtime;
   private final Context context;
@@ -25,7 +28,7 @@ final class BaskStreamCapabilities
   void handleCapabilities(String id)
   {
     Map<String, Object> capabilities = new LinkedHashMap<String, Object>();
-    capabilities.put("apiVersion", "1.6");
+    capabilities.put("apiVersion", API_VERSION);
     capabilities.put("module", "baskStream");
     capabilities.put("transport", "websocket-msgpack");
     capabilities.put("serverTime", Long.valueOf(Clock.millis()));

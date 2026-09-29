@@ -34,7 +34,7 @@ Event pipeline         Niagara callbacks only enqueue small change records.
 Supporting pieces:
 
 - **Protocol spec:** a machine-readable description of every operation, request, response and error code (JSON Schema, optionally wrapped in AsyncAPI). Contract tests check it against the operation registry.
-- **TypeScript SDK:** generated from, or checked against, the spec. It becomes the one client library for web, Node, Electron and, later, MCP.
+- **TypeScript SDK:** generated from, or checked against, the spec. It becomes the one client library for web, Node and Electron.
 
 ## Phases
 
@@ -147,7 +147,7 @@ Exit: no class over about 600 lines, and Jetty imports appear only in the adapte
 
 - Build the TypeScript SDK: connect/login, request/response matching, reconnect, lease renewal, typed errors, `truncated`/`changed` handling, and model plan helpers.
 - Move the companion app to the SDK. The Grafana front end can use it too; the Go backend follows the spec.
-- MCP: park it now (freeze it or move it to its own repository). Later, rebuild it as a thin layer over the SDK.
+- MCP: removed from this repository (2026-09-29). If it returns, build it as a thin layer over the SDK.
 - Python: keep one small smoke-test script unless there is a Python audience.
 
 ### Phase 6: expansion (after Phases 1–3)
@@ -204,7 +204,7 @@ Environment notes: when the simulator ran on the Mac and the station in a Parall
 
 ## Decisions needed from you
 
-1. Park the MCP server in this repo, or move it to its own repo?
+1. ~~Park the MCP server in this repo, or move it to its own repo?~~ Removed from this repo (2026-09-29).
 2. Target date for Niagara 5 support. This decides whether Phase 4 moves ahead of Phase 3.
 3. Should the default for `writesEnabled` become `false`?
 4. Add an optional JSON wire mode alongside MessagePack?

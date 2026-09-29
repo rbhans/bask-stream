@@ -50,8 +50,10 @@ for name in names:
     if name in spec['operations']:
         check(spec['operations'][name].get('gate') == gates[name],
               f'spec gate for {name} is {spec["operations"][name].get("gate")}, table says {gates[name]}')
-check('"' + str(spec.get('apiVersion')) + '"' in java('BaskStreamCapabilities'),
-      'spec apiVersion does not match the version BaskStreamCapabilities reports')
+check('API_VERSION = "' + str(spec.get('apiVersion')) + '"' in java('BaskStreamCapabilities'),
+      'spec apiVersion does not match BaskStreamCapabilities.API_VERSION')
+check(not re.search(r'apiVersion\\"\s*:\s*\\?"\d', java('BBaskStreamService')) and 'BaskStreamCapabilities.API_VERSION' in java('BBaskStreamService'),
+      '/stream/health must report BaskStreamCapabilities.API_VERSION, not a literal version')
 
 # 4. Error codes: every code raised in source is in the spec, and every spec code exists in source.
 sources = '\n'.join(p.read_text() for p in src.glob('*.java') if not p.name.startswith('._'))

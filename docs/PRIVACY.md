@@ -17,16 +17,16 @@ Depending on enabled features and station permissions, clients may process:
 - The Niagara module runs on the user's Niagara station.
 - The companion app talks to the configured station through the local helper
   server when used outside the station origin.
-- The MCP server runs as a local stdio process and sends tool results to the
-  MCP client selected by the user.
-- If the MCP client is connected to a hosted AI model, station data returned by
-  tools may be transmitted to that AI service under that service's terms.
+- The bask CLI and apps built on the TypeScript SDK talk directly to the
+  configured station. bask stores only session cookies, in
+  `~/.config/baskstream/profiles.json` (Windows: `%APPDATA%\baskstream`), and
+  never the password.
 
 ## Credentials
 
 Do not commit real station credentials. Store credentials in local environment
-variables, MCP client settings, operating-system secret storage where supported,
-or ignored local files such as `tools/mcp/config.json`.
+variables, operating-system secret storage where supported, or ignored local
+files.
 
 ## Operator Responsibilities
 

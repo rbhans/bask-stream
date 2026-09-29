@@ -23,7 +23,7 @@ test("logs in with SCRAM, loads capabilities and reads points", async () => {
   let saved;
   const client = await connect({ onSession: (cookies) => (saved = cookies) });
   try {
-    assert.equal(client.capabilities.apiVersion, "1.6");
+    assert.equal(client.capabilities.apiVersion, "1.7");
     assert.ok(saved?.JSESSIONID, "session cookies were reported");
     const [snapshot] = await client.read(["slot:/Drivers/A"]);
     assert.equal(snapshot.value, 72.5);

@@ -46,7 +46,7 @@ export async function startFakeStation() {
     }
     if (req.url === "/stream/health") {
       if (!sessions.has(sid)) return void res.writeHead(302, { Location: "/prelogin" }).end();
-      return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, apiVersion: "1.6" }));
+      return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, apiVersion: "1.7" }));
     }
     if (req.url === "/stream/metrics") {
       if (!sessions.has(sid)) return void res.writeHead(302).end();
@@ -107,7 +107,7 @@ export async function startFakeStation() {
       case "ping":
         return send(ws, { op: "pong", id });
       case "capabilities":
-        return send(ws, { op: "capabilities_result", id, capabilities: { apiVersion: "1.6", limits: { heartbeatIntervalSec: 30 } } });
+        return send(ws, { op: "capabilities_result", id, capabilities: { apiVersion: "1.7", limits: { heartbeatIntervalSec: 30 } } });
       case "read":
         return send(ws, { op: "read_result", id, points: request.points.map(value) });
       case "replace_subscriptions":

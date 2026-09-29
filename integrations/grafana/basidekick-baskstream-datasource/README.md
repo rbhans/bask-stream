@@ -7,7 +7,7 @@ This is the first Grafana backend data source implementation for baskStream. It 
 Implemented:
 
 - Data source settings for station URL, Niagara username/password, TLS mode, timeout, history record limit, point count limit, and live lease limit.
-- Backend Niagara SCRAM login flow, matching the existing baskStream MCP client behavior.
+- Backend Niagara SCRAM login flow, matching the TypeScript SDK and bask CLI.
 - `/stream/health` and WebSocket `capabilities` checks for Grafana Save & Test.
 - `history` query mode backed by `read_history`.
 - Numeric history records mapped into Grafana time-series data frames.

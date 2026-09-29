@@ -386,67 +386,6 @@
       color: #33424b;
     }
 
-    .setup-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(180px, 1fr));
-      gap: 10px;
-      margin: 12px 0;
-    }
-
-    .setup-wide {
-      grid-column: span 2;
-    }
-
-    .setup-options {
-      display: flex;
-      gap: 14px;
-      align-items: center;
-      flex-wrap: wrap;
-      margin: 2px 0 12px;
-    }
-
-    .check-row {
-      display: flex;
-      grid-template-columns: none;
-      gap: 8px;
-      align-items: center;
-      color: #3a4650;
-      font-size: 12px;
-      font-weight: 750;
-    }
-
-    .check-row input {
-      width: 16px;
-      min-height: 16px;
-      padding: 0;
-      accent-color: var(--accent);
-    }
-
-    .setup-actions {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      flex-wrap: wrap;
-      margin: 8px 0 10px;
-    }
-
-    .setup-actions button {
-      padding: 0 12px;
-      font-size: 12px;
-      font-weight: 800;
-    }
-
-    .setup-output {
-      min-height: 240px;
-      max-height: 460px;
-      border: 1px solid var(--line);
-    }
-
-    .copy-status {
-      color: var(--muted);
-      font-size: 12px;
-    }
-
     .ops-table {
       width: 100%;
       border-collapse: collapse;
@@ -846,7 +785,6 @@
       .guide,
       .guide-layout,
       .guide-grid,
-      .setup-grid,
       .connection,
       .test-strip,
       .test-view {
@@ -916,7 +854,7 @@
         <div class="guide-box">
           <div class="guide-title">Quick Start</div>
           <div class="guide-text">
-            Run <code>node tools/baskstream-nav-tree-server.mjs --port=8787</code> and open <code>http://127.0.0.1:8787/</code>. Use this guide for module startup, what's new in API 1.6, the <code>bask</code> CLI and TypeScript SDK, live testing, and optional AI setup.
+            Run <code>node tools/baskstream-nav-tree-server.mjs --port=8787</code> and open <code>http://127.0.0.1:8787/</code>. Use this guide for module startup, what's new in API 1.7, the <code>bask</code> CLI and TypeScript SDK, and live testing.
           </div>
         </div>
         <div class="health-box">
@@ -949,8 +887,7 @@
               <li>For this companion app, run <code>node tools/baskstream-nav-tree-server.mjs --port=8787</code>, open <code>http://127.0.0.1:8787/</code>, and connect from the Test Console.</li>
               <li>For a quick check from any terminal, install the <code>bask</code> CLI (see below), run <code>bask login</code>, then <code>bask doctor</code>. It checks each step from reachability to the WebSocket and says how to fix what fails.</li>
               <li>For Python bench tests, install <code>tools/python-tools/tools/python/requirements.txt</code> and start with the smoke script.</li>
-              <li>Confirm the target station, license, and customer agreement allow this integration before using AI tooling.</li>
-              <li>For AI use, run <code>cd tools/mcp &amp;&amp; npm run setup</code>, follow <code>tools/mcp/INSTALL.md</code>, and keep write, alarm, and raw-operation flags off unless mutation/debugging is intended. The MCP server has not been updated for API 1.6 yet.</li>
+              <li>Confirm the target station, license, and customer agreement allow this integration.</li>
               <li>Start every client with <code>capabilities</code>, then use <code>browse</code>, <code>search</code>, <code>read</code>, and subscriptions based on the screen or workflow.</li>
             </ol>
           </div>
@@ -961,7 +898,7 @@
             <h2>What's New</h2>
           </div>
           <div class="guide-panel-body">
-            <p>The module still reports API <code>1.6</code>. Everything below is additive unless listed under "Changed or tightened". Call <code>capabilities</code> to see what the deployed station supports.</p>
+            <p>The module now reports API <code>1.7</code>. It adds history rollups, alarm filters, schedule events and edits, metrics and the audit trail; API 1.6 added model editing. Everything below is additive unless listed under "Changed or tightened". Call <code>capabilities</code> to see what the deployed station supports.</p>
             <div class="guide-grid">
               <div class="guide-note"><strong>Station model editing (1.6)</strong>Describe installed types and components, then preview and apply creates, updates, renames, moves, deletes, links and hierarchy changes. Needs <code>modelEditsEnabled</code>. See <code>docs/MODEL_EDITING_API.md</code>.</div>
               <div class="guide-note"><strong>History rollups</strong><code>read_history_rollup</code> returns fixed-width buckets (count, min, max, avg, first, last), so a month of one-hour chart points is about 720 rows instead of every record.</div>
@@ -1029,55 +966,6 @@ watch.on("change", (p) =&gt; render(p.point, p.value));</pre>
           </div>
         </section>
 
-        <section class="guide-panel full">
-          <div class="guide-panel-head">
-            <h2>AI Client Setup</h2>
-          </div>
-          <div class="guide-panel-body">
-            <p>The MCP server is optional local tooling for AI clients. It has not been updated for API 1.6 yet; the plan is to rebuild it on the TypeScript SDK. Use it only with authorized Niagara stations, keep Tridium proprietary materials out of AI prompts, and leave raw operations disabled. This standalone companion app cannot write client config files or run installers from the browser, but it can generate the commands and config snippets to paste into the target tool.</p>
-            <div class="setup-grid">
-              <label class="setup-wide">
-                Target
-                <select id="mcpTarget">
-                  <option value="windows">Windows quick start</option>
-                  <option value="generic">Generic MCP JSON</option>
-                  <option value="claude-code">Claude Code command</option>
-                  <option value="codex-plugin">Codex plugin folder</option>
-                  <option value="claude-plugin">Claude Code plugin folder</option>
-                  <option value="mcpb">Claude Desktop MCPB folder</option>
-                  <option value="vscode">VS Code / Copilot</option>
-                  <option value="cursor">Cursor</option>
-                  <option value="windsurf">Windsurf / Cascade</option>
-                  <option value="cline">Cline</option>
-                  <option value="hermes">Hermes Agent</option>
-                  <option value="augment">Augment import</option>
-                </select>
-              </label>
-              <label>
-                Verify TLS
-                <select id="mcpVerifyTls">
-                  <option value="false">false, self-signed dev station</option>
-                  <option value="true">true, trusted certificate</option>
-                </select>
-              </label>
-              <label class="setup-wide">
-                Repo Path
-                <input id="mcpRepoPath" value="C:\path\to\NiagaraFalls" spellcheck="false">
-              </label>
-            </div>
-            <div class="setup-options" aria-label="MCP permission flags">
-              <label class="check-row"><input id="mcpAllowWrites" type="checkbox"> Enable point writes</label>
-              <label class="check-row"><input id="mcpAllowAlarms" type="checkbox"> Enable alarm ack and clear</label>
-            </div>
-            <div class="setup-actions">
-              <button id="mcpUseStation" type="button">Use Current Station Fields</button>
-              <button id="mcpCopy" type="button">Copy Snippet</button>
-              <span id="mcpCopyStatus" class="copy-status">Credentials stay as placeholders in generated snippets.</span>
-            </div>
-            <pre id="mcpInstallOutput" class="raw setup-output" aria-label="Generated MCP setup snippet"></pre>
-          </div>
-        </section>
-
         <section class="guide-panel">
           <div class="guide-panel-head">
             <h2>Legal And AI Boundary</h2>
@@ -1087,7 +975,7 @@ watch.on("change", (p) =&gt; render(p.point, p.value));</pre>
               <li>Use baskStream only with stations and Niagara licenses you are authorized to access.</li>
               <li>Do not put Tridium source, decompiled code, binary internals, license files, keys, proprietary docs, vulnerability findings, or benchmark results into AI prompts.</li>
               <li>Do not reverse engineer, reproduce, modify, or bypass Niagara Framework behavior, APIs, licensing, security devices, or access controls.</li>
-              <li>Do not imply endorsement by Tridium, Honeywell, Anthropic, OpenAI, Claude, Codex, or an MCP client vendor.</li>
+              <li>Do not imply endorsement by Tridium, Honeywell, or any AI tool vendor.</li>
               <li>Review <code>docs/LEGAL_AND_SAFETY.md</code>, <code>docs/PRIVACY.md</code>, and <code>docs/TERMS.md</code> before distribution.</li>
             </ol>
           </div>
@@ -1241,15 +1129,6 @@ watch.on("change", (p) =&gt; render(p.point, p.value));</pre>
         status: document.getElementById("status"),
         healthGrid: document.getElementById("healthGrid"),
         testCopy: document.getElementById("testCopy"),
-        mcpTarget: document.getElementById("mcpTarget"),
-        mcpVerifyTls: document.getElementById("mcpVerifyTls"),
-        mcpRepoPath: document.getElementById("mcpRepoPath"),
-        mcpAllowWrites: document.getElementById("mcpAllowWrites"),
-        mcpAllowAlarms: document.getElementById("mcpAllowAlarms"),
-        mcpUseStation: document.getElementById("mcpUseStation"),
-        mcpCopy: document.getElementById("mcpCopy"),
-        mcpCopyStatus: document.getElementById("mcpCopyStatus"),
-        mcpInstallOutput: document.getElementById("mcpInstallOutput"),
         tree: document.getElementById("tree"),
         treeCount: document.getElementById("treeCount"),
         details: document.getElementById("details"),
@@ -1511,261 +1390,6 @@ watch.on("change", (p) =&gt; render(p.point, p.value));</pre>
           .replace(/>/g, "&gt;")
           .replace(/"/g, "&quot;")
           .replace(/'/g, "&#039;");
-      }
-
-      function boolText(value) {
-        return value ? "true" : "false";
-      }
-
-      function cleanRepoPath() {
-        return (els.mcpRepoPath.value.trim() || "C:\\path\\to\\NiagaraFalls").replace(/[\\/]+$/, "");
-      }
-
-      function pathJoin(root, parts) {
-        const sep = root.includes("\\") ? "\\" : "/";
-        return [root.replace(/[\\/]+$/, ""), ...parts].join(sep);
-      }
-
-      function mcpRootPath() {
-        return pathJoin(cleanRepoPath(), ["tools", "mcp"]);
-      }
-
-      function mcpServerPath() {
-        return pathJoin(cleanRepoPath(), ["tools", "mcp", "dist", "index.js"]);
-      }
-
-      function pluginPath(kind) {
-        return pathJoin(cleanRepoPath(), ["tools", kind + "-plugin", "bask-stream"]);
-      }
-
-      function quotePs(value) {
-        return '"' + String(value).replace(/`/g, "``").replace(/"/g, '`"') + '"';
-      }
-
-      function quoteYaml(value) {
-        return "'" + String(value).replace(/'/g, "''") + "'";
-      }
-
-      function mcpEnv() {
-        return {
-          BASKSTREAM_STATION_URL: els.stationUrl.value.trim() || "https://<station>",
-          BASKSTREAM_USER: els.username.value.trim() || "<niagara-user>",
-          BASKSTREAM_PASSWORD: "<niagara-password>",
-          BASKSTREAM_VERIFY_TLS: els.mcpVerifyTls.value,
-          BASKSTREAM_ALLOW_WRITES: boolText(els.mcpAllowWrites.checked),
-          BASKSTREAM_ALLOW_ALARM_ACTIONS: boolText(els.mcpAllowAlarms.checked),
-          BASKSTREAM_ALLOW_RAW: "false"
-        };
-      }
-
-      function mcpServerConfig(extra) {
-        return Object.assign({
-          command: "node",
-          args: [mcpServerPath()],
-          env: mcpEnv()
-        }, extra || {});
-      }
-
-      function mcpJsonConfig(rootKey, extra) {
-        const config = {};
-        config[rootKey] = { baskstream: mcpServerConfig(extra) };
-        return JSON.stringify(config, null, 2);
-      }
-
-      function vscodeConfig() {
-        const env = mcpEnv();
-        return JSON.stringify({
-          inputs: [
-            {
-              id: "baskstream-station-url",
-              type: "promptString",
-              description: "Niagara station URL",
-              default: env.BASKSTREAM_STATION_URL
-            },
-            {
-              id: "baskstream-user",
-              type: "promptString",
-              description: "Niagara username",
-              default: env.BASKSTREAM_USER
-            },
-            {
-              id: "baskstream-password",
-              type: "promptString",
-              description: "Niagara password",
-              password: true
-            }
-          ],
-          servers: {
-            baskstream: {
-              type: "stdio",
-              command: "node",
-              args: [mcpServerPath()],
-              env: {
-                BASKSTREAM_STATION_URL: "${input:baskstream-station-url}",
-                BASKSTREAM_USER: "${input:baskstream-user}",
-                BASKSTREAM_PASSWORD: "${input:baskstream-password}",
-                BASKSTREAM_VERIFY_TLS: env.BASKSTREAM_VERIFY_TLS,
-                BASKSTREAM_ALLOW_WRITES: env.BASKSTREAM_ALLOW_WRITES,
-                BASKSTREAM_ALLOW_ALARM_ACTIONS: env.BASKSTREAM_ALLOW_ALARM_ACTIONS,
-                BASKSTREAM_ALLOW_RAW: env.BASKSTREAM_ALLOW_RAW
-              }
-            }
-          }
-        }, null, 2);
-      }
-
-      function hermesConfig() {
-        const env = mcpEnv();
-        return [
-          "mcp_servers:",
-          "  baskstream:",
-          "    command: 'node'",
-          "    args:",
-          "      - " + quoteYaml(mcpServerPath()),
-          "    env:",
-          "      BASKSTREAM_STATION_URL: " + quoteYaml(env.BASKSTREAM_STATION_URL),
-          "      BASKSTREAM_USER: " + quoteYaml(env.BASKSTREAM_USER),
-          "      BASKSTREAM_PASSWORD: " + quoteYaml(env.BASKSTREAM_PASSWORD),
-          "      BASKSTREAM_VERIFY_TLS: " + quoteYaml(env.BASKSTREAM_VERIFY_TLS),
-          "      BASKSTREAM_ALLOW_WRITES: " + quoteYaml(env.BASKSTREAM_ALLOW_WRITES),
-          "      BASKSTREAM_ALLOW_ALARM_ACTIONS: " + quoteYaml(env.BASKSTREAM_ALLOW_ALARM_ACTIONS),
-          "      BASKSTREAM_ALLOW_RAW: " + quoteYaml(env.BASKSTREAM_ALLOW_RAW),
-          "    enabled: true",
-          "    timeout: 120",
-          "    connect_timeout: 60"
-        ].join("\n");
-      }
-
-      function windowsQuickStart() {
-        const env = mcpEnv();
-        return [
-          "PowerShell",
-          "",
-          "cd " + quotePs(mcpRootPath()),
-          "npm run setup",
-          "",
-          "$env:BASKSTREAM_STATION_URL = " + quotePs(env.BASKSTREAM_STATION_URL),
-          "$env:BASKSTREAM_USER = " + quotePs(env.BASKSTREAM_USER),
-          "$env:BASKSTREAM_PASSWORD = " + quotePs(env.BASKSTREAM_PASSWORD),
-          "$env:BASKSTREAM_VERIFY_TLS = " + quotePs(env.BASKSTREAM_VERIFY_TLS),
-          "$env:BASKSTREAM_ALLOW_WRITES = " + quotePs(env.BASKSTREAM_ALLOW_WRITES),
-          "$env:BASKSTREAM_ALLOW_ALARM_ACTIONS = " + quotePs(env.BASKSTREAM_ALLOW_ALARM_ACTIONS),
-          "$env:BASKSTREAM_ALLOW_RAW = " + quotePs(env.BASKSTREAM_ALLOW_RAW),
-          "",
-          "npm run doctor",
-          "npm run print-config",
-          "",
-          "Client-specific guides:",
-          pathJoin(cleanRepoPath(), ["tools", "mcp", "INSTALL.md"]),
-          pathJoin(cleanRepoPath(), ["tools", "mcp", "CLIENTS.md"])
-        ].join("\n");
-      }
-
-      function claudeCodeCommand() {
-        const env = mcpEnv();
-        return [
-          "PowerShell",
-          "",
-          "claude mcp add `",
-          "  --env BASKSTREAM_STATION_URL=" + quotePs(env.BASKSTREAM_STATION_URL) + " `",
-          "  --env BASKSTREAM_USER=" + quotePs(env.BASKSTREAM_USER) + " `",
-          "  --env BASKSTREAM_PASSWORD=" + quotePs(env.BASKSTREAM_PASSWORD) + " `",
-          "  --env BASKSTREAM_VERIFY_TLS=" + quotePs(env.BASKSTREAM_VERIFY_TLS) + " `",
-          "  --env BASKSTREAM_ALLOW_WRITES=" + quotePs(env.BASKSTREAM_ALLOW_WRITES) + " `",
-          "  --env BASKSTREAM_ALLOW_ALARM_ACTIONS=" + quotePs(env.BASKSTREAM_ALLOW_ALARM_ACTIONS) + " `",
-          "  --env BASKSTREAM_ALLOW_RAW=" + quotePs(env.BASKSTREAM_ALLOW_RAW) + " `",
-          "  --transport stdio `",
-          "  baskstream -- node " + quotePs(mcpServerPath()),
-          "",
-          "claude mcp list",
-          "claude mcp get baskstream"
-        ].join("\n");
-      }
-
-      function pluginInstructions(kind, title) {
-        const folder = pluginPath(kind);
-        const launcher = pathJoin(folder, ["bin", "launch-mcp.mjs"]);
-        return [
-          title,
-          "",
-          "1. Build the shared MCP server:",
-          "   cd " + quotePs(mcpRootPath()),
-          "   npm run setup",
-          "",
-          "2. Use this local plugin folder:",
-          "   " + folder,
-          "",
-          "3. The plugin launcher delegates to:",
-          "   node " + quotePs(launcher),
-          "",
-          "4. Keep these MCP environment values in the local client/plugin settings:",
-          JSON.stringify(mcpEnv(), null, 2),
-          "",
-          "Direct plugin installation depends on the client UI. If the client cannot import a folder directly, use the generic MCP JSON target instead."
-        ].join("\n");
-      }
-
-      function mcpbInstructions() {
-        return [
-          "Claude Desktop MCPB folder",
-          "",
-          "cd " + quotePs(mcpRootPath()),
-          "npm run build",
-          "npm run prepare:mcpb",
-          "",
-          "Generated folder:",
-          pathJoin(mcpRootPath(), [".mcpb-build", "bask-stream"]),
-          "",
-          "Import or package that folder with the Claude Desktop MCPB flow. Keep station credentials in the client/user config, not in git.",
-          "",
-          "Environment values to use:",
-          JSON.stringify(mcpEnv(), null, 2)
-        ].join("\n");
-      }
-
-      function buildMcpInstallText() {
-        switch (els.mcpTarget.value) {
-          case "windows":
-            return windowsQuickStart();
-          case "generic":
-            return mcpJsonConfig("mcpServers");
-          case "claude-code":
-            return claudeCodeCommand();
-          case "codex-plugin":
-            return pluginInstructions("codex", "Codex plugin folder");
-          case "claude-plugin":
-            return pluginInstructions("claude", "Claude Code plugin folder");
-          case "mcpb":
-            return mcpbInstructions();
-          case "vscode":
-            return vscodeConfig();
-          case "cursor":
-          case "windsurf":
-          case "augment":
-            return mcpJsonConfig("mcpServers", { type: "stdio" });
-          case "cline":
-            return mcpJsonConfig("mcpServers", { type: "stdio", disabled: false, autoApprove: [] });
-          case "hermes":
-            return hermesConfig();
-          default:
-            return windowsQuickStart();
-        }
-      }
-
-      function renderMcpInstall() {
-        els.mcpInstallOutput.textContent = buildMcpInstallText();
-        els.mcpCopyStatus.textContent = "Credentials stay as placeholders in generated snippets.";
-      }
-
-      async function copyMcpInstall() {
-        const text = els.mcpInstallOutput.textContent || "";
-        try {
-          await navigator.clipboard.writeText(text);
-          els.mcpCopyStatus.textContent = "Snippet copied.";
-        }
-        catch (error) {
-          els.mcpCopyStatus.textContent = "Copy failed. Select the snippet and copy manually.";
-        }
       }
 
       function ordOf(node) {
@@ -2598,20 +2222,6 @@ watch.on("change", (p) =&gt; render(p.point, p.value));</pre>
       els.reload.addEventListener("click", browseRoot);
       els.capabilities.addEventListener("click", () => loadCapabilities(true));
       els.subStatus.addEventListener("click", () => refreshSubscriptionStatus(true));
-      [
-        els.stationUrl,
-        els.username,
-        els.mcpTarget,
-        els.mcpVerifyTls,
-        els.mcpRepoPath,
-        els.mcpAllowWrites,
-        els.mcpAllowAlarms
-      ].forEach((input) => {
-        input.addEventListener("input", renderMcpInstall);
-        input.addEventListener("change", renderMcpInstall);
-      });
-      els.mcpUseStation.addEventListener("click", renderMcpInstall);
-      els.mcpCopy.addEventListener("click", copyMcpInstall);
 
       document.querySelectorAll("[data-action='preset-root']").forEach((button) => {
         button.addEventListener("click", async () => {
@@ -2668,7 +2278,6 @@ watch.on("change", (p) =&gt; render(p.point, p.value));</pre>
       renderTree();
       renderDetails();
       renderHealth();
-      renderMcpInstall();
       setActiveView("guide");
       if (location.protocol === "file:") {
         logEvent("File mode will use local proxy ws://127.0.0.1:8787/app-ws");

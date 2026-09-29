@@ -19,7 +19,7 @@ systems you are authorized to access and administer.
 ## Niagara And Third-Party Terms
 
 This project does not grant any right to Niagara Framework, Tridium, Honeywell,
-Anthropic, OpenAI, Claude, Codex, MCP clients, or third-party services. Users
+Anthropic, OpenAI, Claude, Codex, or third-party services. Users
 must comply with all applicable third-party licenses, EULAs, service terms,
 customer agreements, and laws.
 
@@ -44,7 +44,7 @@ Niagara users.
 ## No Affiliation
 
 baskStream is not affiliated with, endorsed by, sponsored by, or certified by
-Tridium, Honeywell, Anthropic, OpenAI, Claude, Codex, or any MCP client vendor.
+Tridium, Honeywell, Anthropic, OpenAI, or any AI tool vendor.
 
 ## No Warranty
 

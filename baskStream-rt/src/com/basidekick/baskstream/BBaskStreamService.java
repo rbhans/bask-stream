@@ -1052,7 +1052,7 @@ public final class BBaskStreamService extends BWebServlet
       + "\"service\":\"BASkStreamService\","
       + "\"enabled\":" + getEnabled() + ","
       + "\"wsPath\":\"" + escapeJson(getWsPath()) + "\","
-      + "\"apiVersion\":\"1.6\","
+      + "\"apiVersion\":\"" + BaskStreamCapabilities.API_VERSION + "\","
       + "\"writesEnabled\":" + writesAllowed() + ","
       + "\"modelEditsEnabled\":" + modelEditsAllowed() + ","
       + "\"servletName\":\"" + escapeJson(getServletName()) + "\","

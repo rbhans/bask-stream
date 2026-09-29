@@ -16,11 +16,11 @@ law before distributing or using this project on third-party systems.
   license keys, vulnerability findings, benchmark results, or confidential
   evaluation results into this repository or AI prompts.
 - Do not imply endorsement, certification, sponsorship, or partnership with
-  Tridium, Honeywell, Anthropic, OpenAI, Claude, Codex, the Official MCP
-  Registry, or any MCP client vendor.
-- Use least-privilege Niagara users for external clients and AI workflows.
-- Keep MCP point writes, alarm actions, and raw operations disabled unless an
-  authorized operator explicitly intends that access.
+  Tridium, Honeywell, Anthropic, OpenAI, or any AI tool vendor.
+- Use least-privilege Niagara users for external clients.
+- Keep point writes, alarm actions, and model edits disabled in clients (for
+  example, run bask without `--allow-writes`) unless an authorized operator
+  explicitly intends that access.
 
 ## Distribution Review
 
@@ -31,12 +31,10 @@ Before public distribution or marketplace submission:
   distribution model.
 - Confirm no Tridium/Honeywell proprietary files, license keys, generated
   binary internals, or confidential security/performance materials are included.
-- Confirm plugin and MCP descriptions avoid third-party endorsement language.
-- Run MCP startup checks with raw operations disabled.
+- Confirm project and release descriptions avoid third-party endorsement
+  language.
 
 ## References
 
 - Tridium Niagara EULA: https://www.tridium.com/us/en/eula
-- MCP security best practices: https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices
-- MCP Registry Terms: https://modelcontextprotocol.io/registry/terms-of-service
 - DOJ CFAA guidance: https://www.justice.gov/jm/jm-9-48000-computer-fraud

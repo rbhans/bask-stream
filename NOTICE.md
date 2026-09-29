@@ -1,10 +1,10 @@
 # Notices
 
 baskStream is not affiliated with, endorsed by, sponsored by, or certified by
-Tridium, Honeywell, Anthropic, OpenAI, Claude, Codex, or any MCP client vendor.
+Tridium, Honeywell, Anthropic, OpenAI, or any AI tool vendor.
 
-Niagara Framework, Tridium, Honeywell, Claude, Codex, OpenAI, Anthropic, and
-Model Context Protocol names may be trademarks or service marks of their
+Niagara Framework, Tridium, Honeywell, Claude, Codex, OpenAI, and Anthropic
+names may be trademarks or service marks of their
 respective owners. They are used descriptively only.
 
 This repository does not include or license Niagara Framework. Users are
@@ -24,10 +24,12 @@ tools. Building, installing, or running that module still requires a valid
 Niagara development/runtime environment and compliance with the applicable
 Tridium/Honeywell terms.
 
-The MCP server under `tools/mcp/` depends on npm packages whose licenses are
-recorded in `tools/mcp/package-lock.json`. At the time this notice was added,
-those dependencies reported permissive licenses: MIT, ISC, BSD-2-Clause,
-BSD-3-Clause, and Apache-2.0.
+The TypeScript SDK (`sdk/`) and the bask CLI (`cli/`) depend on npm packages
+whose licenses are recorded in their `package-lock.json` files. At the time
+this notice was updated, those runtime dependencies reported permissive
+licenses: MIT, ISC, Apache-2.0, and MIT OR CC0-1.0. The released bask
+executables also contain the Bun runtime, which is distributed under its own
+licenses.
 
 See also:
 
