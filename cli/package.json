@@ -14,7 +14,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "node node_modules/typescript/bin/tsc -p tsconfig.json",
+    "build": "node scripts/gen-version.mjs && node node_modules/typescript/bin/tsc -p tsconfig.json",
     "test": "npm run build && node --test test/*.test.mjs",
     "compile": "npm run build && bun scripts/compile.mjs"
   },

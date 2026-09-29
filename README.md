@@ -56,6 +56,13 @@ watch.on("change", (point) => console.log(point.point, point.value));
 
 [`cli/`](cli/README.md) is a command-line tool built on the SDK. Run `bask` with no command for a full-screen terminal dashboard: a station tree with live details, a watch list with sparklines, live alarms, history charts, and station status.
 
+Install (no Node needed):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rbhans/bask-stream/main/cli/install.sh | sh     # macOS / Linux
+irm https://raw.githubusercontent.com/rbhans/bask-stream/main/cli/install.ps1 | iex           # Windows PowerShell
+```
+
 ```bash
 bask login https://my-jace -u tech --insecure
 bask read Drivers/.../ZoneTemp
@@ -98,6 +105,9 @@ docs/PRIVACY.md                  Local data-handling notes
 docs/TERMS.md                    Open-source terms and third-party boundaries
 sdk/                             TypeScript SDK (login, calls, live watches, reconnects)
 cli/                             bask CLI and terminal dashboard, built on the SDK
+cli/install.sh, cli/install.ps1  One-line installers for the released executables
+.github/workflows/release-bask.yml
+                                 Builds and publishes bask releases on bask-v* tags
 tools/baskstream-nav-tree.html   Companion guide and demo/test app
 tools/baskstream-nav-tree-server.mjs
                                  Local helper for the companion app

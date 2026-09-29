@@ -6,6 +6,7 @@ import { getProfile, loadStore, putProfile, removeProfile, setCurrent, updatePro
 import { alarmMessage, alarmState, csv, isUnacked, fmtPoint, fmtTime, fmtValue, parseDuration, parseTime, parseValue, shortOrd, sparkline, statusColor, table } from "./format.js";
 import { confirm, promptHidden } from "./prompt.js";
 import { connect, type Connection } from "./session.js";
+import { VERSION } from "./version.js";
 
 type Output = "table" | "json" | "csv";
 interface Globals {
@@ -18,7 +19,7 @@ interface Globals {
 const program = new Command()
   .name("bask")
   .description("Browse, watch and query Niagara stations over baskStream.\nRun with no command in a terminal to open the dashboard.")
-  .version("0.1.0")
+  .version(VERSION)
   .option("-p, --profile <name>", "saved station profile (default: current)")
   .addOption(new Option("-o, --output <format>", "output format").choices(["table", "json", "csv"]).default("table"))
   .option("--allow-writes", "permit commands that change the station")
