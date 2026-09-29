@@ -161,8 +161,14 @@ final class BaskStreamRequests
     String source = runtime.getCodec().optionalString(request, "source");
     String scope = runtime.getCodec().optionalString(request, "scope");
 
+    Object order = request.get("order");
+    if (order != null && !"newest".equals(order) && !"oldest".equals(order))
+    {
+      throw new BaskStreamProtocolException("bad_request", "Field 'order' must be 'newest' or 'oldest'.");
+    }
     Map<String, Object> response = session.baseMessage("alarms_result", id);
-    response.put("alarms", runtime.getAlarmResolver().readAlarms(source, scope, request.get("limit"), context));
+    response.put("alarms", runtime.getAlarmResolver().readAlarms(source, scope, request.get("limit"),
+        BaskStreamAlarmResolver.AlarmFilter.parse(request.get("filter")), "newest".equals(order), context));
     session.send(response);
   }
 
@@ -170,7 +176,9 @@ final class BaskStreamRequests
   {
     String source = runtime.getCodec().optionalString(request, "source");
     Map<String, Object> response = session.baseMessage("alarm_action_result", id);
-    response.put("alarms", runtime.getAlarmResolver().acknowledgeAlarms(alarmUuidValue(request), source, context, session.user.getUsername()));
+    response.put("alarms", runtime.getAlarmResolver().alarmActionRequest("ack_alarm", alarmUuidValue(request),
+        request.get("filter"), runtime.getCodec().optionalString(request, "scope"), request.get("limit"), source,
+        request.get("dryRun"), context, session.user.getUsername()));
     session.send(response);
   }
 
@@ -178,7 +186,9 @@ final class BaskStreamRequests
   {
     String source = runtime.getCodec().optionalString(request, "source");
     Map<String, Object> response = session.baseMessage("alarm_action_result", id);
-    response.put("alarms", runtime.getAlarmResolver().clearAlarms(alarmUuidValue(request), source, context, session.user.getUsername()));
+    response.put("alarms", runtime.getAlarmResolver().alarmActionRequest("clear_alarm", alarmUuidValue(request),
+        request.get("filter"), runtime.getCodec().optionalString(request, "scope"), request.get("limit"), source,
+        request.get("dryRun"), context, session.user.getUsername()));
     session.send(response);
   }
 

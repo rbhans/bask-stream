@@ -851,6 +851,59 @@
             "minimum": 1,
             "maximum": 5000,
             "description": "Max records; <=0 uses the default, values above 5000 are capped."
+          },
+          "filter": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Optional narrowing.",
+            "properties": {
+              "alarmClass": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ],
+                "description": "Alarm class name(s)."
+              },
+              "minPriority": {
+                "type": "number",
+                "description": "Lowest priority number to include (Niagara: lower number = more urgent)."
+              },
+              "maxPriority": {
+                "type": "number",
+                "description": "Highest priority number to include."
+              },
+              "ackState": {
+                "type": "string",
+                "enum": [
+                  "acked",
+                  "unacked"
+                ]
+              },
+              "since": {
+                "type": "number",
+                "description": "Epoch ms; alarm timestamp at or after."
+              },
+              "until": {
+                "type": "number",
+                "description": "Epoch ms; alarm timestamp at or before."
+              }
+            }
+          },
+          "order": {
+            "type": "string",
+            "enum": [
+              "oldest",
+              "newest"
+            ],
+            "default": "oldest",
+            "description": "newest returns the most recent matches first."
           }
         },
         "required": []
@@ -901,6 +954,69 @@
           "source": {
             "type": "string",
             "description": "Optional slot:/ ORD the alarm source must match (forbidden_point entry otherwise)."
+          },
+          "filter": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Act on matching alarms instead of listing uuids (not both).",
+            "properties": {
+              "alarmClass": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ],
+                "description": "Alarm class name(s)."
+              },
+              "minPriority": {
+                "type": "number",
+                "description": "Lowest priority number to include (Niagara: lower number = more urgent)."
+              },
+              "maxPriority": {
+                "type": "number",
+                "description": "Highest priority number to include."
+              },
+              "ackState": {
+                "type": "string",
+                "enum": [
+                  "acked",
+                  "unacked"
+                ]
+              },
+              "since": {
+                "type": "number",
+                "description": "Epoch ms; alarm timestamp at or after."
+              },
+              "until": {
+                "type": "number",
+                "description": "Epoch ms; alarm timestamp at or before."
+              }
+            }
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "open",
+              "ack_pending",
+              "all"
+            ],
+            "default": "open",
+            "description": "With filter: which alarms to search."
+          },
+          "limit": {
+            "type": "number",
+            "description": "With filter: at most this many matches (default 500, max 5000)."
+          },
+          "dryRun": {
+            "type": "boolean",
+            "default": false,
+            "description": "Run every check and report what would change, without acting."
           }
         },
         "required": [],
@@ -963,6 +1079,69 @@
           "source": {
             "type": "string",
             "description": "Optional slot:/ ORD the alarm source must match (forbidden_point entry otherwise)."
+          },
+          "filter": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Act on matching alarms instead of listing uuids (not both).",
+            "properties": {
+              "alarmClass": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ],
+                "description": "Alarm class name(s)."
+              },
+              "minPriority": {
+                "type": "number",
+                "description": "Lowest priority number to include (Niagara: lower number = more urgent)."
+              },
+              "maxPriority": {
+                "type": "number",
+                "description": "Highest priority number to include."
+              },
+              "ackState": {
+                "type": "string",
+                "enum": [
+                  "acked",
+                  "unacked"
+                ]
+              },
+              "since": {
+                "type": "number",
+                "description": "Epoch ms; alarm timestamp at or after."
+              },
+              "until": {
+                "type": "number",
+                "description": "Epoch ms; alarm timestamp at or before."
+              }
+            }
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "open",
+              "ack_pending",
+              "all"
+            ],
+            "default": "open",
+            "description": "With filter: which alarms to search."
+          },
+          "limit": {
+            "type": "number",
+            "description": "With filter: at most this many matches (default 500, max 5000)."
+          },
+          "dryRun": {
+            "type": "boolean",
+            "default": false,
+            "description": "Run every check and report what would change, without acting."
           }
         },
         "required": [],
@@ -1025,6 +1204,69 @@
           "source": {
             "type": "string",
             "description": "Optional slot:/ ORD the alarm source must match (forbidden_point entry otherwise)."
+          },
+          "filter": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Act on matching alarms instead of listing uuids (not both).",
+            "properties": {
+              "alarmClass": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ],
+                "description": "Alarm class name(s)."
+              },
+              "minPriority": {
+                "type": "number",
+                "description": "Lowest priority number to include (Niagara: lower number = more urgent)."
+              },
+              "maxPriority": {
+                "type": "number",
+                "description": "Highest priority number to include."
+              },
+              "ackState": {
+                "type": "string",
+                "enum": [
+                  "acked",
+                  "unacked"
+                ]
+              },
+              "since": {
+                "type": "number",
+                "description": "Epoch ms; alarm timestamp at or after."
+              },
+              "until": {
+                "type": "number",
+                "description": "Epoch ms; alarm timestamp at or before."
+              }
+            }
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "open",
+              "ack_pending",
+              "all"
+            ],
+            "default": "open",
+            "description": "With filter: which alarms to search."
+          },
+          "limit": {
+            "type": "number",
+            "description": "With filter: at most this many matches (default 500, max 5000)."
+          },
+          "dryRun": {
+            "type": "boolean",
+            "default": false,
+            "description": "Run every check and report what would change, without acting."
           }
         },
         "required": [],
@@ -1087,6 +1329,69 @@
           "source": {
             "type": "string",
             "description": "Optional slot:/ ORD the alarm source must match (forbidden_point entry otherwise)."
+          },
+          "filter": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Act on matching alarms instead of listing uuids (not both).",
+            "properties": {
+              "alarmClass": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ],
+                "description": "Alarm class name(s)."
+              },
+              "minPriority": {
+                "type": "number",
+                "description": "Lowest priority number to include (Niagara: lower number = more urgent)."
+              },
+              "maxPriority": {
+                "type": "number",
+                "description": "Highest priority number to include."
+              },
+              "ackState": {
+                "type": "string",
+                "enum": [
+                  "acked",
+                  "unacked"
+                ]
+              },
+              "since": {
+                "type": "number",
+                "description": "Epoch ms; alarm timestamp at or after."
+              },
+              "until": {
+                "type": "number",
+                "description": "Epoch ms; alarm timestamp at or before."
+              }
+            }
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "open",
+              "ack_pending",
+              "all"
+            ],
+            "default": "open",
+            "description": "With filter: which alarms to search."
+          },
+          "limit": {
+            "type": "number",
+            "description": "With filter: at most this many matches (default 500, max 5000)."
+          },
+          "dryRun": {
+            "type": "boolean",
+            "default": false,
+            "description": "Run every check and report what would change, without acting."
           }
         },
         "required": [],

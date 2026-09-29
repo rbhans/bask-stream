@@ -688,6 +688,17 @@ Common scopes:
 - `ack_pending`
 - `all`
 
+Optional `filter` narrows the read, and `order: "newest"` returns the most recent matches first:
+
+```json
+{
+  "op": "read_alarms", "id": "9a", "scope": "all", "limit": 100, "order": "newest",
+  "filter": { "alarmClass": ["hvacCritical"], "maxPriority": 100, "ackState": "unacked", "since": 1790000000000 }
+}
+```
+
+`alarmClass` is a name or list of names. `minPriority`/`maxPriority` bound Niagara's priority number (lower is more urgent). `ackState` is `acked` or `unacked`. `since`/`until` are epoch milliseconds; with `scope: "all"` they use the alarm database's time index instead of a full scan. The reply echoes the `filter`.
+
 Records are included only when the user has operator read permission on the record's alarm class. The same filter applies to `subscribe_alarms` snapshots and live `alarm_cov` events.
 
 ### `ack_alarm`
@@ -745,6 +756,8 @@ Force-clears one or more alarm records by UUID. This is intentionally separate f
   "uuid": "594379d7-2d8d-4cef-a766-8097a09d52e0"
 }
 ```
+
+Both `ack_alarms` and `clear_alarms` also accept a `filter` (same fields as `read_alarms`) instead of `uuids`, plus optional `scope` (default `open`), `limit` (default 500, max 5,000) and `dryRun`. A filter request finds the matching alarms first, then each one goes through the usual per-alarm checks. With `dryRun: true`, nothing changes and each entry reports `dryRun: true`, so a client can show "this will acknowledge 37 alarms" before doing it. The reply adds `matched`, `truncated` and the `filter`.
 
 Batch form uses `clear_alarms` with `uuids`. Prefer `ack_alarm` for ordinary operator acknowledgement and reserve `clear_alarm` for explicit force-clear workflows. Force-clearing requires admin write permission on the record's alarm class; otherwise the entry reports `forbidden_alarm`.
 
