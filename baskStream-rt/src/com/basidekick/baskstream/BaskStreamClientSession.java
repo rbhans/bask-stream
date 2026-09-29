@@ -245,6 +245,7 @@ final class BaskStreamClientSession
       id = runtime.getCodec().optionalString(request, "id");
       requestOp = op;
       requestStartedAt = System.currentTimeMillis();
+      runtime.getMetrics().requests.incrementAndGet();
 
       BaskStreamOperations.Operation operation = BaskStreamOperations.get(op);
       RequestHandler handler = operation == null ? null : handlers.get(op);
@@ -252,6 +253,10 @@ final class BaskStreamClientSession
       {
         sendError(id, "unsupported_op", "Unsupported operation: " + op);
         return;
+      }
+      if (operation.gate != BaskStreamOperations.Gate.NONE)
+      {
+        runtime.getMetrics().writeRequests.incrementAndGet();
       }
       if (operation.gate == BaskStreamOperations.Gate.WRITES)
       {
@@ -292,6 +297,7 @@ final class BaskStreamClientSession
       return;
     }
     String op = requestOp;
+    runtime.getMetrics().requestTimeouts.incrementAndGet();
     runtime.getService().audit("request_timeout", "user=" + user.getUsername() + " session=" + sessionId
         + " op=" + op + " elapsedMillis=" + (now - started));
     Map<String, Object> notice = baseMessage("request_timeout", null);
@@ -368,6 +374,7 @@ final class BaskStreamClientSession
   /** Sent after the event lane dropped a backlog: the client should re-read what it shows. */
   private void sendResync(int dropped)
   {
+    runtime.getMetrics().resyncs.incrementAndGet();
     Map<String, Object> notice = baseMessage("resync_required", null);
     notice.put("reason", "event_backlog");
     notice.put("droppedEvents", Long.valueOf(dropped));
@@ -546,6 +553,7 @@ final class BaskStreamClientSession
 
   void sendError(String id, String code, String message)
   {
+    runtime.getMetrics().errors.incrementAndGet();
     Map<String, Object> error = baseMessage("error", id);
     error.put("code", code);
     error.put("message", message);

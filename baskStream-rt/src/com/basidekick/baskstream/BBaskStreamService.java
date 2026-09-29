@@ -129,6 +129,36 @@ import javax.baja.web.WebOp;
   defaultValue = "0",
   flags = Flags.READONLY | Flags.TRANSIENT
 )
+@NiagaraProperty(
+  name = "requestCount",
+  type = "long",
+  defaultValue = "0",
+  flags = Flags.READONLY | Flags.TRANSIENT
+)
+@NiagaraProperty(
+  name = "errorCount",
+  type = "long",
+  defaultValue = "0",
+  flags = Flags.READONLY | Flags.TRANSIENT
+)
+@NiagaraProperty(
+  name = "writeRequestCount",
+  type = "long",
+  defaultValue = "0",
+  flags = Flags.READONLY | Flags.TRANSIENT
+)
+@NiagaraProperty(
+  name = "resyncCount",
+  type = "long",
+  defaultValue = "0",
+  flags = Flags.READONLY | Flags.TRANSIENT
+)
+@NiagaraProperty(
+  name = "requestTimeoutCount",
+  type = "long",
+  defaultValue = "0",
+  flags = Flags.READONLY | Flags.TRANSIENT
+)
 public final class BBaskStreamService extends BWebServlet
 {
   public static final Logger LOG = Logger.getLogger(BBaskStreamService.class.getName());
@@ -582,6 +612,126 @@ public final class BBaskStreamService extends BWebServlet
 
   //endregion Property "totalSubscriptions"
 
+  //region Property "requestCount"
+
+  /**
+   * Slot for the {@code requestCount} property.
+   * Requests handled since the service started.
+   * @see #getRequestCount
+   * @see #setRequestCount
+   */
+  public static final Property requestCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0L, null);
+
+  /**
+   * Get the {@code requestCount} property.
+   * @see #requestCount
+   */
+  public long getRequestCount() { return getLong(requestCount); }
+
+  /**
+   * Set the {@code requestCount} property.
+   * @see #requestCount
+   */
+  public void setRequestCount(long v) { setLong(requestCount, v, null); }
+
+  //endregion Property "requestCount"
+
+  //region Property "errorCount"
+
+  /**
+   * Slot for the {@code errorCount} property.
+   * Requests answered with an error.
+   * @see #getErrorCount
+   * @see #setErrorCount
+   */
+  public static final Property errorCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0L, null);
+
+  /**
+   * Get the {@code errorCount} property.
+   * @see #errorCount
+   */
+  public long getErrorCount() { return getLong(errorCount); }
+
+  /**
+   * Set the {@code errorCount} property.
+   * @see #errorCount
+   */
+  public void setErrorCount(long v) { setLong(errorCount, v, null); }
+
+  //endregion Property "errorCount"
+
+  //region Property "writeRequestCount"
+
+  /**
+   * Slot for the {@code writeRequestCount} property.
+   * Requests that change station data (writes, alarm actions, model plans).
+   * @see #getWriteRequestCount
+   * @see #setWriteRequestCount
+   */
+  public static final Property writeRequestCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0L, null);
+
+  /**
+   * Get the {@code writeRequestCount} property.
+   * @see #writeRequestCount
+   */
+  public long getWriteRequestCount() { return getLong(writeRequestCount); }
+
+  /**
+   * Set the {@code writeRequestCount} property.
+   * @see #writeRequestCount
+   */
+  public void setWriteRequestCount(long v) { setLong(writeRequestCount, v, null); }
+
+  //endregion Property "writeRequestCount"
+
+  //region Property "resyncCount"
+
+  /**
+   * Slot for the {@code resyncCount} property.
+   * Times a slow client was told to resync after its event backlog overflowed.
+   * @see #getResyncCount
+   * @see #setResyncCount
+   */
+  public static final Property resyncCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0L, null);
+
+  /**
+   * Get the {@code resyncCount} property.
+   * @see #resyncCount
+   */
+  public long getResyncCount() { return getLong(resyncCount); }
+
+  /**
+   * Set the {@code resyncCount} property.
+   * @see #resyncCount
+   */
+  public void setResyncCount(long v) { setLong(resyncCount, v, null); }
+
+  //endregion Property "resyncCount"
+
+  //region Property "requestTimeoutCount"
+
+  /**
+   * Slot for the {@code requestTimeoutCount} property.
+   * Sessions closed by the request watchdog.
+   * @see #getRequestTimeoutCount
+   * @see #setRequestTimeoutCount
+   */
+  public static final Property requestTimeoutCount = newProperty(Flags.READONLY | Flags.TRANSIENT, 0L, null);
+
+  /**
+   * Get the {@code requestTimeoutCount} property.
+   * @see #requestTimeoutCount
+   */
+  public long getRequestTimeoutCount() { return getLong(requestTimeoutCount); }
+
+  /**
+   * Set the {@code requestTimeoutCount} property.
+   * @see #requestTimeoutCount
+   */
+  public void setRequestTimeoutCount(long v) { setLong(requestTimeoutCount, v, null); }
+
+  //endregion Property "requestTimeoutCount"
+
   //region Type
 
   @Override
@@ -692,8 +842,24 @@ public final class BBaskStreamService extends BWebServlet
       return;
     }
 
+    if ("/metrics".equals(pathInfo))
+    {
+      writeMetrics(op, current.getMetrics());
+      return;
+    }
+
 
     op.getResponse().sendError(404);
+  }
+
+  /** Copies the runtime's traffic counters onto the read-only properties. */
+  synchronized void setTrafficMetrics(BaskStreamMetrics metrics)
+  {
+    setLong(requestCount, metrics.requests.get(), null);
+    setLong(errorCount, metrics.errors.get(), null);
+    setLong(writeRequestCount, metrics.writeRequests.get(), null);
+    setLong(resyncCount, metrics.resyncs.get(), null);
+    setLong(requestTimeoutCount, metrics.requestTimeouts.get(), null);
   }
 
   synchronized void setRuntimeMetrics(int active, int subscriptions)
@@ -830,6 +996,29 @@ public final class BBaskStreamService extends BWebServlet
   {
     String upgrade = op.getRequest().getHeader("Upgrade");
     return upgrade != null && "websocket".equalsIgnoreCase(upgrade.trim());
+  }
+
+  /** Prometheus/OpenMetrics text: counters since the service started, plus live gauges. */
+  private void writeMetrics(WebOp op, BaskStreamMetrics metrics) throws java.io.IOException
+  {
+    op.getResponse().setStatus(200);
+    op.setContentType("text/plain; version=0.0.4; charset=UTF-8");
+    StringBuilder out = new StringBuilder();
+    metric(out, "baskstream_requests_total", "counter", "Requests handled since the service started.", metrics.requests.get());
+    metric(out, "baskstream_errors_total", "counter", "Requests answered with an error.", metrics.errors.get());
+    metric(out, "baskstream_write_requests_total", "counter", "Requests that change station data.", metrics.writeRequests.get());
+    metric(out, "baskstream_resyncs_total", "counter", "Resync notices after an event backlog overflowed.", metrics.resyncs.get());
+    metric(out, "baskstream_request_timeouts_total", "counter", "Sessions closed by the request watchdog.", metrics.requestTimeouts.get());
+    metric(out, "baskstream_active_connections", "gauge", "Open WebSocket sessions.", getActiveConnectionsValue());
+    metric(out, "baskstream_subscriptions", "gauge", "Point, alarm and model subscriptions across sessions.", getTotalSubscriptionsValue());
+    op.getWriter().write(out.toString());
+  }
+
+  private static void metric(StringBuilder out, String name, String type, String help, long value)
+  {
+    out.append("# HELP ").append(name).append(' ').append(help).append('\n');
+    out.append("# TYPE ").append(name).append(' ').append(type).append('\n');
+    out.append(name).append(' ').append(value).append('\n');
   }
 
   private void writeHealth(WebOp op) throws java.io.IOException

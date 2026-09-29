@@ -24,6 +24,7 @@ final class BaskStreamWebSocketRuntime
   private final BaskStreamTagResolver tagResolver;
   private final BaskStreamModelResolver modelResolver;
   private final BaskStreamSubscriptionManager subscriptions;
+  private final BaskStreamMetrics metrics = new BaskStreamMetrics();
   private final ScheduledExecutorService scheduler;
   // Shared by every session's event lane: snapshots, alarm queries and notices run here, not
   // on Niagara callback threads or the scheduler.
@@ -54,6 +55,7 @@ final class BaskStreamWebSocketRuntime
       try
       {
         subscriptions.checkWatchdogs(System.currentTimeMillis());
+        service.setTrafficMetrics(metrics);
       }
       catch (Throwable e)
       {
@@ -141,6 +143,11 @@ final class BaskStreamWebSocketRuntime
   void onSubscriptionCountChanged()
   {
     subscriptions.refreshMetrics();
+  }
+
+  BaskStreamMetrics getMetrics()
+  {
+    return metrics;
   }
 
   java.util.concurrent.Executor getEventPool()

@@ -37,6 +37,22 @@ These unsolicited frames have no `id`. Clients should tolerate (and may act on) 
 - `request_timeout` — a request has been running for more than 10 minutes. Shape: `{ "op": "request_timeout", "requestOp": "write", "elapsedMillis": 600000 }`. The server closes the session (close code `1011`) right after. Split very large batches. Added 2026-09-28.
 - `session_revoked` — emitted just before the server closes the socket (close code `1008`) because the connected user is no longer present in the station. Shape: `{ "op": "session_revoked", "reason": "<text>" }`. Clients should re-authenticate before reconnecting.
 
+### Metrics
+
+`GET https://<station>/stream/metrics` (after station login, like `/stream/health`) returns counters since the service started, in Prometheus/OpenMetrics text format:
+
+```text
+baskstream_requests_total 1523
+baskstream_errors_total 12
+baskstream_write_requests_total 40
+baskstream_resyncs_total 0
+baskstream_request_timeouts_total 0
+baskstream_active_connections 3
+baskstream_subscriptions 212
+```
+
+The same counters appear as read-only properties on the BASkStreamService (`requestCount`, `errorCount`, `writeRequestCount`, `resyncCount`, `requestTimeoutCount`), updated every 15 seconds. They reset when the service restarts.
+
 ## Supported Operations
 
 API 1.6 also provides the [station model editing API](MODEL_EDITING_API.md): component/type inspection, component and hierarchy editing, dynamic slots, links, generic actions, preview/apply, plan status and cancellation. That reference includes the complete action schema and partial-result contract.
