@@ -73,9 +73,10 @@ export function useAlarms(client: BaskStreamClient) {
 
   const reload = useCallback(async () => {
     try {
-      // Oldest-first then sorted locally: works on modules built before the newest-order fix.
-      const reply = await client.alarms({ scope: "open", limit: 500 });
-      setAlarms(new Map(((reply.alarms ?? []) as Json[]).map((a) => [String(a.uuid), a])));
+      let list = (await client.alarms({ scope: "open", limit: 500, order: "newest" })).alarms as Json[];
+      // Modules built before the newest-order fix repeat one record; fall back to oldest-first.
+      if (new Set(list.map((a) => a.uuid)).size < list.length) list = (await client.alarms({ scope: "open", limit: 500 })).alarms as Json[];
+      setAlarms(new Map(list.map((a) => [String(a.uuid), a])));
       setLoadedAt(Date.now());
       setError(undefined);
     } catch (e) {
