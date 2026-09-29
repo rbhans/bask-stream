@@ -4,7 +4,7 @@ baskStream is a Niagara 4 runtime module that gives outside applications an auth
 
 The API stays close to Niagara's object model and permission system. A client can browse the station, read and subscribe to points, write writable points, work with alarms, inspect schedules and histories, and read or edit direct tags and relations. Discovery responses include the evidence an application needs to understand devices, points, parents, and likely equipment without pretending every station is modeled the same way.
 
-For the full protocol reference, see [docs/THIRD_PARTY_API.md](docs/THIRD_PARTY_API.md).
+For the full protocol reference, see [docs/THIRD_PARTY_API.md](docs/THIRD_PARTY_API.md). To try it from a terminal, [install the `bask` CLI](#bask-cli-and-dashboard).
 
 This project is not affiliated with, endorsed by, or sponsored by Tridium, Honeywell, Anthropic, OpenAI, or any AI-client vendor. Use it only with Niagara stations and software licenses you are authorized to access and administer.
 
@@ -56,21 +56,54 @@ watch.on("change", (point) => console.log(point.point, point.value));
 
 [`cli/`](cli/README.md) is a command-line tool built on the SDK. Run `bask` with no command for a full-screen terminal dashboard: a station tree with live details, a watch list with sparklines, live alarms, history charts, and station status.
 
-Install (no Node needed):
+### 1. Install
+
+No Node or admin rights needed. The installer downloads a single executable from the latest [`bask-v*` release](https://github.com/rbhans/bask-stream/releases) and checks it against the release checksums.
+
+macOS / Linux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rbhans/bask-stream/main/cli/install.sh | sh     # macOS / Linux
-irm https://raw.githubusercontent.com/rbhans/bask-stream/main/cli/install.ps1 | iex           # Windows PowerShell
+curl -fsSL https://raw.githubusercontent.com/rbhans/bask-stream/main/cli/install.sh | sh
 ```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/rbhans/bask-stream/main/cli/install.ps1 | iex
+```
+
+It installs to `~/.local/bin/bask` (Windows: `%LOCALAPPDATA%\Programs\bask\bask.exe`, added to your user PATH). If `bask` is not found afterwards, open a new terminal or follow the PATH hint the installer prints. Run `bask --version` to check.
+
+### 2. Log in to a station
+
+The station needs the baskStream module and `BASkStreamService` running (see [Station setup](#station-setup)).
 
 ```bash
-bask login https://my-jace -u tech --insecure
-bask read Drivers/.../ZoneTemp
-bask history Drivers/.../ZoneTemp --since 7d --rollup 1h -o csv
-bask alarms --unacked -f
+bask login https://<station> -u <user> --insecure
 ```
 
-It is read-only unless started with `--allow-writes`, and every write or alarm action asks before sending. Only the session cookies are saved; the password never is. `npm run compile` builds a single executable with Bun.
+It asks for the password and saves only the session, never the password. Use `--insecure` for the self-signed certificate most stations have. Add `--name <profile>` to keep several stations, then switch with `bask use <profile>` or `-p <profile>`.
+
+### 3. Use it
+
+```bash
+bask                                                     # full-screen dashboard (? for keys, q to quit)
+bask status                                              # station, user, limits, traffic
+bask browse Drivers -d 2                                 # station tree
+bask read Drivers/.../ZoneTemp                           # current values
+bask watch Drivers/.../ZoneTemp Drivers/.../ZoneSP       # live values
+bask history Drivers/.../ZoneTemp --since 7d --rollup 1h -o csv > zonetemp.csv
+bask alarms --unacked -f                                 # alarms, then follow new ones
+```
+
+In the dashboard: `1`–`5` switch between Browse, Watch, Alarms, History and Status. In Browse, arrow keys move and open branches, `w` adds a point to Watch, and `t` opens its trend.
+
+Everything is read-only unless you add `--allow-writes`, and every write or alarm acknowledgement asks before sending. The full command list is in [cli/README.md](cli/README.md).
+
+### Update or uninstall
+
+- **Update:** run the install command again.
+- **Uninstall:** delete the `bask` executable and the saved sessions in `~/.config/baskstream` (Windows: `%APPDATA%\baskstream`).
 
 ## Grafana integration
 

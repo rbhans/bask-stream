@@ -16,7 +16,7 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/rbhans/bask-stream/main/cli/install.ps1 | iex
 ```
 
-This downloads a single executable from the latest `bask-v*` [release](https://github.com/rbhans/bask-stream/releases), checks it against the release's `SHA256SUMS`, and puts it in `~/.local/bin` (Windows: `%LOCALAPPDATA%\Programs\bask`, added to your user PATH). No Node needed. Set `BASK_VERSION` for a specific version or `BASK_INSTALL_DIR` for another folder. To uninstall, delete that file and `~/.config/baskstream`.
+This downloads a single executable from the latest `bask-v*` [release](https://github.com/rbhans/bask-stream/releases), checks it against the release's `SHA256SUMS`, and puts it in `~/.local/bin` (Windows: `%LOCALAPPDATA%\Programs\bask`, added to your user PATH). No Node needed. Set `BASK_VERSION` for a specific version or `BASK_INSTALL_DIR` for another folder. To uninstall, delete that file and `~/.config/baskstream` (Windows: `%APPDATA%\baskstream`).
 
 ## Use
 
