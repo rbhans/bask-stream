@@ -30,6 +30,7 @@ final class BaskStreamWebSocketRuntime
   // on Niagara callback threads or the scheduler.
   private final java.util.concurrent.ExecutorService eventPool;
   private final BaskStreamJettyTransport transport;
+  private final BaskStreamAgents agents;
 
   BaskStreamWebSocketRuntime(BBaskStreamService service)
   {
@@ -45,6 +46,7 @@ final class BaskStreamWebSocketRuntime
     this.tagResolver = new BaskStreamTagResolver(service);
     this.modelResolver = new BaskStreamModelResolver(service);
     this.subscriptions = new BaskStreamSubscriptionManager(service);
+    this.agents = new BaskStreamAgents(this);
     java.util.concurrent.ScheduledThreadPoolExecutor scheduled =
         new java.util.concurrent.ScheduledThreadPoolExecutor(1, new BaskStreamThreadFactory("baskStream-websocket-"));
     scheduled.setRemoveOnCancelPolicy(true);
@@ -55,6 +57,7 @@ final class BaskStreamWebSocketRuntime
       try
       {
         subscriptions.checkWatchdogs(System.currentTimeMillis());
+        agents.sweep(javax.baja.sys.Clock.millis());
         service.setTrafficMetrics(metrics);
       }
       catch (Throwable e)
@@ -128,6 +131,16 @@ final class BaskStreamWebSocketRuntime
   BBaskStreamService getService()
   {
     return service;
+  }
+
+  BaskStreamAgents getAgents()
+  {
+    return agents;
+  }
+
+  void forEachSession(java.util.function.Consumer<BaskStreamClientSession> action)
+  {
+    subscriptions.forEachSession(action);
   }
 
   boolean onOpen(BaskStreamClientSession session)

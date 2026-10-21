@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import chalk from "chalk";
 import { Command, Option } from "commander";
-import { BaskStreamError, OPERATIONS, StationHttp, toSlotOrd, type AlarmFilter, type BrowseNode, type Json } from "@basidekick/baskstream";
+import { BaskStreamError, OPERATIONS, StationHttp, toSlotOrd, type Actor, type AlarmFilter, type BrowseNode, type Json, type Proposal } from "@basidekick/baskstream";
 import { getProfile, loadStore, putProfile, removeProfile, setCurrent, updateProfile } from "./config.js";
 import { alarmMessage, alarmState, csv, isUnacked, fmtPoint, fmtTime, fmtValue, parseDuration, parseTime, parseValue, shortOrd, sparkline, statusColor, table } from "./format.js";
 import { confirm, promptHidden } from "./prompt.js";
@@ -15,6 +15,10 @@ interface Globals {
   output: Output;
   allowWrites?: boolean;
   yes?: boolean;
+  agent?: string;
+  model?: string;
+  onBehalfOf?: string;
+  reason?: string;
 }
 
 const program = new Command()
@@ -24,14 +28,27 @@ const program = new Command()
   .option("-p, --profile <name>", "saved station profile (default: current)")
   .addOption(new Option("-o, --output <format>", "output format").choices(["table", "json", "csv"]).default("table"))
   .option("--allow-writes", "permit commands that change the station")
-  .option("-y, --yes", "skip confirmation prompts (with --allow-writes)");
+  .option("-y, --yes", "skip confirmation prompts (with --allow-writes)")
+  .option("--reason <text>", "why: recorded with the change (agents must give one)")
+  .option("--agent <name>", "act as an AI agent with this name (or set BASK_AGENT)")
+  .option("--model <id>", "the agent's model (or BASK_MODEL)")
+  .option("--on-behalf-of <person>", "who the agent acts for (or BASK_ON_BEHALF_OF)");
+
+/** The AI agent this run declares, from options or environment; undefined for a person. */
+function actorFrom(g: Globals): Actor | undefined {
+  const name = g.agent ?? process.env.BASK_AGENT;
+  if (!name) return undefined;
+  return { kind: "agent", name, model: g.model ?? process.env.BASK_MODEL, onBehalfOf: g.onBehalfOf ?? process.env.BASK_ON_BEHALF_OF };
+}
+
+const reasonOf = (g: Globals) => (g.reason ? { reason: g.reason } : {});
 
 const globals = (cmd: Command) => cmd.optsWithGlobals() as Globals & Record<string, unknown>;
 
 /** Runs a command body with a connection, closing it afterwards. */
 async function withClient<T>(cmd: Command, body: (conn: Connection, g: Globals & Record<string, unknown>) => Promise<T>): Promise<T> {
   const g = globals(cmd);
-  const conn = await connect(g.profile);
+  const conn = await connect(g.profile, { actor: actorFrom(g) });
   try {
     return await body(conn, g);
   } finally {
@@ -205,7 +222,7 @@ program
   .action(async (ords: string[], opts: { plain?: boolean }, cmd: Command) => {
     const g = globals(cmd);
     if (!opts.plain && g.output === "table" && process.stdout.isTTY) return runTui(g, { view: "watch", points: ords.map(normalizeOrd) });
-    const conn = await connect(g.profile);
+    const conn = await connect(g.profile, { actor: actorFrom(g) });
     const { client } = conn;
     const watch = await client.watch(ords.map(normalizeOrd), { group: "bask-cli" });
     const print = (p: Json) => {
@@ -319,7 +336,7 @@ for (const action of ["ack", "clear"] as const) {
         const filter = alarmFilter(opts);
         if (uuids.length === 0 && !filter) throw new Error("Give alarm UUIDs or at least one filter (--class, --unacked, --since).");
         const target = uuids.length ? { uuids } : { filter: filter!, scope: opts.scope, limit: 1000 };
-        const run = (dryRun: boolean) => (action === "ack" ? client.ackAlarms(target, dryRun) : client.clearAlarms(target, dryRun));
+        const run = (dryRun: boolean) => (action === "ack" ? client.ackAlarms(target, dryRun, g.reason) : client.clearAlarms(target, dryRun, g.reason));
         const preview = await run(true);
         const count = Number(preview.matched ?? preview.count ?? uuids.length);
         if (opts.dryRun) return emit(g, ["uuid", "ok"], ((preview.alarms ?? []) as Json[]).map((a) => [a.uuid, a.ok]), preview);
@@ -346,9 +363,13 @@ program
       const point = normalizeOrd(ord);
       const parsed = value === undefined ? undefined : parseValue(value);
       await requireWrite(g, `${action} ${shortOrd(point, 3)}${parsed === undefined ? "" : ` = ${parsed}`}${opts.for ? ` for ${opts.for}` : ""}?`);
-      const result = await client.write(point, action, parsed, opts.for ? { durationSec: Math.round(parseDuration(opts.for) / 1000) } : {});
+      const result = await client.write(point, action, parsed, { ...(opts.for ? { durationSec: Math.round(parseDuration(opts.for) / 1000) } : {}), ...reasonOf(g) });
       if (g.output === "json") return console.log(JSON.stringify(result, null, 2));
       if (result.ok === false) throw new BaskStreamError(String(result.code), String(result.message), "write");
+      if (result.outcome === "proposed") {
+        const proposal = result.proposal as Proposal;
+        return console.log(`${chalk.yellow("⧗")} Proposed ${chalk.bold(proposal.id)}: ${proposal.description} on ${shortOrd(point, 3)}. Waiting for a person to approve (expires ${fmtTime(proposal.expiresAt, false)}).`);
+      }
       console.log(`${chalk.green("✓")} ${shortOrd(point, 3)}: ${fmtValue(result.value)} ${statusColor(result.status)(String(result.status ?? ""))}${result.activeLevel ? chalk.dim(` (active level ${result.activeLevel})`) : ""}`);
     })
   );
@@ -379,7 +400,78 @@ program
       const gate = (OPERATIONS as Record<string, { gate: string }>)[op]?.gate;
       const fields = JSON.parse(body) as Json;
       if (gate && gate !== "none" && fields.dryRun !== true) await requireWrite(g, `Send ${op}?`);
+      if (g.reason && fields.reason === undefined) fields.reason = g.reason;
       console.log(JSON.stringify(await client.call(op, fields), null, 2));
+    })
+  );
+
+// ---- AI agents (docs/AI_AGENTS.md) ----------------------------------------------------------------
+
+const proposalRow = (p: Proposal): unknown[] => [
+  p.id,
+  p.status,
+  p.description,
+  p.point,
+  p.actor?.name ? `${p.actor.name}${p.actor.onBehalfOf ? ` for ${p.actor.onBehalfOf}` : ""}` : p.agentUser,
+  p.reason ?? "",
+  p.status === "pending" ? `expires ${fmtTime(p.expiresAt, false)}` : `${p.decidedBy ?? ""} ${fmtTime(p.decidedAt ?? undefined, false)}`.trim()
+];
+const proposalPlain = (r: unknown[]): string[] => [
+  chalk.bold(String(r[0])),
+  r[1] === "pending" ? chalk.yellow(String(r[1])) : r[1] === "approved" ? chalk.green(String(r[1])) : r[1] === "failed" ? chalk.red(String(r[1])) : chalk.dim(String(r[1])),
+  String(r[2]),
+  chalk.cyan(shortOrd(String(r[3]), 3)),
+  String(r[4]),
+  String(r[5]),
+  chalk.dim(String(r[6]))
+];
+
+program
+  .command("proposals")
+  .description("point writes AI agents proposed, waiting for a person (--all includes the last hour's decisions)")
+  .option("--all", "include approved, rejected, failed and expired proposals")
+  .action((opts: { all?: boolean }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const list = await client.proposals(opts.all ? undefined : "pending");
+      if (list.length === 0 && g.output === "table") return console.log(opts.all ? "No proposals in the last hour." : "Nothing waiting.");
+      emit(g, ["id", "status", "change", "point", "agent", "reason", "when"], list.map(proposalRow), list, proposalPlain);
+    })
+  );
+
+for (const decision of ["approve", "reject"] as const) {
+  program
+    .command(decision)
+    .description(decision === "approve" ? "approve an agent's proposal; the write runs with your permissions" : "reject an agent's proposal")
+    .argument("<id>", "proposal id, e.g. P7")
+    .option("--note <text>", "a note for the agent (reject)")
+    .action((id: string, opts: { note?: string }, cmd: Command) =>
+      withClient(cmd, async ({ client }, g) => {
+        const wanted = /^\d+$/.test(id) ? `P${id}` : id.toUpperCase();
+        const proposal = (await client.proposals()).find((p) => p.id === wanted);
+        if (!proposal) throw new BaskStreamError("proposal_not_found", `No proposal ${wanted} that you can see.`);
+        const question = `${decision === "approve" ? "Approve" : "Reject"} ${proposal.id}: ${proposal.description} on ${shortOrd(proposal.point, 3)}${proposal.reason ? ` ("${proposal.reason}")` : ""}?`;
+        if (decision === "approve") await requireWrite(g, question);
+        else if (!g.yes && !(await confirm(question))) throw new Error("Cancelled.");
+        const result = decision === "approve" ? await client.approveProposal(proposal.id) : await client.rejectProposal(proposal.id, opts.note);
+        if (g.output === "json") return console.log(JSON.stringify(result, null, 2));
+        if (result.status === "failed") throw new Error(`${result.id} was approved but the write failed: ${result.note}`);
+        console.log(`${chalk.green("✓")} ${result.id} ${result.status}.`);
+      })
+    );
+}
+
+program
+  .command("agent-log")
+  .description("what AI agents did: proposals, decisions, direct changes and refusals, from the station's audit history")
+  .option("--since <time>", "start: 24h, 7d, an ISO date or epoch ms", "24h")
+  .option("--limit <n>", "maximum records", "100")
+  .action((opts: { since: string; limit: string }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const log = await client.agentLog({ since: parseTime(opts.since), limit: Number(opts.limit) });
+      emit(g, ["time", "user", "outcome", "change", "target", "agent", "reason"],
+        log.records.map((r) => [fmtTime(r.timestamp), r.user, r.outcome ?? "", r.change ?? r.action, r.target, [r.agent, r.for && `for ${r.for}`].filter(Boolean).join(" "), r.reason ?? ""]),
+        log, (r) => [chalk.dim(String(r[0])), String(r[1]), String(r[2]), String(r[3]), chalk.cyan(shortOrd(String(r[4]), 3)), String(r[5]), String(r[6])]);
+      if (log.truncated) console.error(chalk.yellow("More records exist: narrow --since or raise --limit."));
     })
   );
 
@@ -406,7 +498,7 @@ async function runTui(g: Globals, start: { view?: "watch"; points?: string[] }):
   const spin = spinner("connecting");
   let conn: Connection;
   try {
-    conn = await connect(g.profile, { beforePrompt: spin.stop });
+    conn = await connect(g.profile, { beforePrompt: spin.stop, actor: actorFrom(g) });
   } catch (error) {
     spin.stop();
     throw error;

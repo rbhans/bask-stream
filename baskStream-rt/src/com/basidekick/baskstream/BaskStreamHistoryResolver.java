@@ -572,6 +572,95 @@ final class BaskStreamHistoryResolver
   }
 
   /** A connection to the station's history database: the public route to history records. */
+  /** Records examined per agent-log read, so a busy audit history cannot stall the request. */
+  static final int MAX_AUDIT_EXAMINED = 200000;
+
+  /**
+   * The "Agent" records baskStream added to the station's audit history, newest first. The audit
+   * history's own read permission applies; Niagara's records of the changes stay in the same history.
+   */
+  Map<String, Object> readAgentLog(Object sinceValue, Object limitValue, Context context) throws BaskStreamProtocolException
+  {
+    long now = Clock.millis();
+    long since = sinceValue instanceof Number ? ((Number) sinceValue).longValue() : now - 7L * 24L * 60L * 60L * 1000L;
+    int limit = limitValue instanceof Number ? (int) Math.max(1L, Math.min(1000L, ((Number) limitValue).longValue())) : 100;
+
+    javax.baja.history.BHistoryId id = auditHistoryId();
+    java.util.ArrayDeque<Map<String, Object>> newest = new java.util.ArrayDeque<Map<String, Object>>();
+    boolean truncated = false;
+    HistorySpaceConnection connection = null;
+    Cursor<BHistoryRecord> cursor = null;
+    try
+    {
+      connection = openConnection(context);
+      BIHistory history = id == null ? null : connection.getHistory(id);
+      if (history == null)
+      {
+        throw new BaskStreamProtocolException("history_failed", "The station's audit history was not found.");
+      }
+      if (!authorizer.canReadHistory(history, context))
+      {
+        throw new BaskStreamProtocolException("forbidden_point", "The authenticated user cannot read the audit history.");
+      }
+      cursor = connection.timeQuery(history, BAbsTime.make(since), BAbsTime.make(now)).cursor();
+      int examined = 0;
+      while (cursor.next())
+      {
+        if (++examined > MAX_AUDIT_EXAMINED) { truncated = true; break; }
+        BHistoryRecord record = cursor.get();
+        if (!BaskStreamAgents.AUDIT_OPERATION.equals(text(record.get("operation")))) continue;
+        Map<String, Object> wire = new LinkedHashMap<String, Object>();
+        wire.put("timestamp", Long.valueOf(record.getTimestamp().getMillis()));
+        wire.put("user", text(record.get("userName")));
+        wire.put("target", text(record.get("target")));
+        wire.put("action", text(record.get("slotName")));
+        wire.putAll(BaskStreamAgents.parseRecordValue(text(record.get("value"))));
+        if (newest.size() >= limit) { newest.pollFirst(); truncated = true; }
+        newest.addLast(wire);
+      }
+    }
+    catch (BaskStreamProtocolException e)
+    {
+      throw e;
+    }
+    catch (Exception e)
+    {
+      throw new BaskStreamProtocolException("history_failed", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+    }
+    finally
+    {
+      if (cursor != null) cursor.close();
+      if (connection != null) connection.close();
+    }
+
+    List<Object> records = new ArrayList<Object>();
+    for (java.util.Iterator<Map<String, Object>> it = newest.descendingIterator(); it.hasNext(); ) records.add(it.next());
+    Map<String, Object> result = new LinkedHashMap<String, Object>();
+    result.put("since", Long.valueOf(since));
+    result.put("count", Long.valueOf(records.size()));
+    result.put("truncated", Boolean.valueOf(truncated));
+    result.put("records", records);
+    return result;
+  }
+
+  /** The audit history's id, read from the station's auditor (the audit history service). */
+  private static javax.baja.history.BHistoryId auditHistoryId()
+  {
+    Object auditor = Sys.getAuditor();
+    if (auditor instanceof javax.baja.sys.BComplex)
+    {
+      javax.baja.sys.BValue config = ((javax.baja.sys.BComplex) auditor).get("historyConfig");
+      if (config instanceof BHistoryConfig) return ((BHistoryConfig) config).getId();
+    }
+    return Sys.getStation() == null ? null : javax.baja.history.BHistoryId.make(Sys.getStation().getStationName(), "AuditHistory");
+  }
+
+  private static String text(javax.baja.sys.BValue value)
+  {
+    if (value instanceof javax.baja.sys.BString) return ((javax.baja.sys.BString) value).getString();
+    return value == null ? null : value.toString();
+  }
+
   private static HistorySpaceConnection openConnection(Context context)
   {
     BHistoryService historyService = (BHistoryService) Sys.getService(BHistoryService.TYPE);

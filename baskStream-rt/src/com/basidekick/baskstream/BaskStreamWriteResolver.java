@@ -170,6 +170,98 @@ final class BaskStreamWriteResolver
     return result;
   }
 
+  /** The write objects in a request, one per point. */
+  List<Map<String, Object>> specs(Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    return normalizeSpecs(request);
+  }
+
+  /** The point ORD of one write object ({@code point}, or {@code ord}). */
+  static String specPoint(Map<String, Object> spec)
+  {
+    String pointOrd = optionalString(spec, "point");
+    return pointOrd == null || pointOrd.trim().length() == 0 ? optionalString(spec, "ord") : pointOrd;
+  }
+
+  /** Writes one point now. Used when a person approves an agent's proposal, with their context. */
+  Map<String, Object> writeSingle(String pointOrd, Map<String, Object> spec, Context context) throws BaskStreamProtocolException
+  {
+    return writeOne(pointOrd, spec, context, () -> false);
+  }
+
+  /**
+   * Checks an agent's point write without making it: the point resolves and is invokable for this
+   * user, the action and value are valid, emergency (level 1) actions are allowed, and a numeric
+   * value is inside the point's min/max facets and the first matching {@code agentBoundN} rule.
+   * Returns the summary that proposals and audit records show.
+   */
+  Map<String, Object> checkAgentWrite(String pointOrd, Map<String, Object> spec, Context context, BaskStreamAgents.Limits limits)
+      throws BaskStreamProtocolException
+  {
+    BaskStreamPointResolver.ResolvedPoint point = pointResolver.resolve(pointOrd, context);
+    OrdTarget target = point.getTarget();
+    if (!target.canInvoke())
+    {
+      throw new BaskStreamProtocolException("forbidden_point", "Point actions are not invokable for the authenticated user.");
+    }
+    BComponent component = writableComponent(target);
+    if (!(component instanceof BIWritablePoint))
+    {
+      throw new BaskStreamProtocolException("not_writable", "Resolved target is not a Niagara writable point.");
+    }
+    ActionInvocation invocation = buildInvocation(component, normalizeAction(optionalString(spec, "action")), spec);
+    if (!authorizer.canInvoke(component, invocation.action, context))
+    {
+      throw new BaskStreamProtocolException("forbidden_action",
+          "The authenticated user cannot invoke '" + invocation.name + "' on this point.");
+    }
+    if (invocation.name.startsWith("emergency") && !limits.allowEmergency)
+    {
+      throw new BaskStreamProtocolException("agent_priority_blocked",
+          "Agents cannot use emergency (level 1) actions unless agentAllowEmergency is on.");
+    }
+    Object value = invocation.name.endsWith("auto") ? null : spec.get("value");
+    if (component instanceof BNumericWritable && value != null)
+    {
+      double number = requireDouble(value);
+      BFacets facets = ((BNumericWritable) component).getFacets();
+      double min = facetNumber(facets, BFacets.MIN, Double.NEGATIVE_INFINITY);
+      double max = facetNumber(facets, BFacets.MAX, Double.POSITIVE_INFINITY);
+      if (number < min || number > max)
+      {
+        throw new BaskStreamProtocolException("agent_value_out_of_bounds",
+            "Value " + number + " is outside the point's limits (" + min + " to " + max + ").");
+      }
+      BaskStreamAgents.Bound bound = limits.boundFor(pointOrd);
+      if (bound != null && (number < bound.min || number > bound.max))
+      {
+        throw new BaskStreamProtocolException("agent_value_out_of_bounds",
+            "Value " + number + " is outside the agent limit " + bound.text + ".");
+      }
+    }
+
+    StringBuilder description = new StringBuilder(invocation.name);
+    if (value != null) description.append(' ').append(value);
+    BRelTime duration = invocation.name.endsWith("auto") ? null : optionalDuration(spec);
+    if (duration != null) description.append(" for ").append(duration.getMillis() / 60000L).append(" min");
+
+    Map<String, Object> summary = new LinkedHashMap<String, Object>();
+    summary.put("point", pointOrd);
+    summary.put("display", point.getDisplayName());
+    summary.put("action", invocation.name);
+    summary.put("value", value);
+    summary.put("description", description.toString());
+    return summary;
+  }
+
+  private static double facetNumber(BFacets facets, String key, double fallback)
+  {
+    BObject value = facets == null ? null : facets.get(key);
+    if (!(value instanceof BNumber)) return fallback;
+    double number = ((BNumber) value).getDouble();
+    return Double.isNaN(number) ? fallback : number;
+  }
+
   private PointSnapshot snapshotAfterWrite(BaskStreamPointResolver.ResolvedPoint point, Context context)
       throws BaskStreamProtocolException
   {

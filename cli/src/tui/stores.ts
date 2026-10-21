@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { toSlotOrd, type BaskStreamClient, type Json, type PointSnapshot, type Watch } from "@basidekick/baskstream";
+import { toSlotOrd, type BaskStreamClient, type Json, type PointSnapshot, type Proposal, type Watch } from "@basidekick/baskstream";
 
 export interface WatchedPoint {
   ord: string;
@@ -112,4 +112,36 @@ export function useAlarms(client: BaskStreamClient) {
   }, [client, reload]);
 
   return { alarms, error, loadedAt, reload };
+}
+
+/** Agent proposals this user may see, kept live from proposal notices and reloaded on reconnect. */
+export function useProposals(client: BaskStreamClient) {
+  const [proposals, setProposals] = useState<Map<string, Proposal>>(new Map());
+  const [error, setError] = useState<string>();
+
+  const reload = useCallback(async () => {
+    try {
+      const list = await client.proposals();
+      setProposals(new Map(list.map((p) => [p.id, p])));
+      setError(undefined);
+    } catch (e) {
+      // Stations before API 1.8 have no proposals; leave the view empty.
+      const code = (e as { code?: string }).code;
+      setError(code === "unsupported_op" ? undefined : e instanceof Error ? e.message : String(e));
+    }
+  }, [client]);
+
+  useEffect(() => {
+    const onProposal = (proposal: Proposal) => setProposals((map) => new Map(map).set(proposal.id, proposal));
+    const refresh = () => void reload();
+    client.on("proposal", onProposal);
+    client.on("reconnected", refresh);
+    void reload();
+    return () => {
+      client.off("proposal", onProposal);
+      client.off("reconnected", refresh);
+    };
+  }, [client, reload]);
+
+  return { proposals, error, reload };
 }

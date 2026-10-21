@@ -1,6 +1,6 @@
 {
   "protocol": "baskStream",
-  "apiVersion": "1.7",
+  "apiVersion": "1.8",
   "encoding": "msgpack",
   "transport": {
     "path": "/stream",
@@ -520,7 +520,7 @@
       }
     },
     "write": {
-      "summary": "Invoke writable-point actions (set/override/auto/emergency); per-point results after the settle delay.",
+      "summary": "Invoke writable-point actions (set/override/auto/emergency); per-point results after the settle delay. For agent sessions each point is checked against the agent limits and, while agentApprovalRequired is on, becomes a proposal instead (entry outcome \"proposed\" with a proposal object); direct agent writes report outcome \"written\".",
       "gate": "writes",
       "reply": "write_result",
       "request": {
@@ -650,6 +650,11 @@
               }
             ],
             "description": "Niagara relative-time string, or number of ms; used last."
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "Why the change is made. Required for agent sessions when agentRequireReason is on (the default); recorded in the station's audit history."
           }
         },
         "required": []
@@ -1017,6 +1022,11 @@
             "type": "boolean",
             "default": false,
             "description": "Run every check and report what would change, without acting."
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "Why the change is made. Required for agent sessions when agentRequireReason is on (the default); recorded in the station's audit history."
           }
         },
         "required": [],
@@ -1142,6 +1152,11 @@
             "type": "boolean",
             "default": false,
             "description": "Run every check and report what would change, without acting."
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "Why the change is made. Required for agent sessions when agentRequireReason is on (the default); recorded in the station's audit history."
           }
         },
         "required": [],
@@ -1267,6 +1282,11 @@
             "type": "boolean",
             "default": false,
             "description": "Run every check and report what would change, without acting."
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "Why the change is made. Required for agent sessions when agentRequireReason is on (the default); recorded in the station's audit history."
           }
         },
         "required": [],
@@ -1392,6 +1412,11 @@
             "type": "boolean",
             "default": false,
             "description": "Run every check and report what would change, without acting."
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "Why the change is made. Required for agent sessions when agentRequireReason is on (the default); recorded in the station's audit history."
           }
         },
         "required": [],
@@ -1624,6 +1649,11 @@
           "dryRun": {
             "type": "boolean",
             "default": false
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "Why the change is made. Required for agent sessions when agentRequireReason is on (the default); recorded in the station's audit history."
           }
         },
         "required": [
@@ -1924,6 +1954,11 @@
               "description": "Qualified tag name, or an object with id/name."
             },
             "description": "Direct tags to remove. set + remove must total 1-100 per target."
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "Why the change is made. Required for agent sessions when agentRequireReason is on (the default); recorded in the station's audit history."
           }
         },
         "required": []
@@ -2069,6 +2104,11 @@
               "required": []
             },
             "description": "Direct relations to remove. add + remove must total 1-100 per target."
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "Why the change is made. Required for agent sessions when agentRequireReason is on (the default); recorded in the station's audit history."
           }
         },
         "required": []
@@ -2227,6 +2267,11 @@
             "minLength": 1,
             "maxLength": 128,
             "description": "Client key; resubmitting the same plan+key returns the recorded outcome."
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "Why the change is made. Required for agent sessions when agentRequireReason is on (the default); recorded in the station's audit history."
           }
         },
         "required": [
@@ -2858,6 +2903,150 @@
           "result"
         ]
       }
+    },
+    "declare_actor": {
+      "summary": "Say who is behind this session: an AI agent (the default) or a person, with optional agent name, model and the person it acts for. Recorded as claims next to the Niagara user; reply describes the agent rules that now apply.",
+      "gate": "none",
+      "reply": "actor_declared",
+      "request": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "person"
+            ],
+            "default": "agent"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "Agent or tool name, e.g. Claude Code."
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "onBehalfOf": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "The person who launched the agent."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "agents"
+        ]
+      }
+    },
+    "list_proposals": {
+      "summary": "Proposals this session may see, newest first: an agent sees its own; a person sees those whose point they can read. Pending, and decided within the last hour.",
+      "gate": "none",
+      "reply": "proposals_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "expired",
+              "failed"
+            ],
+            "description": "Only proposals in this state."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "proposals",
+          "pendingProposals"
+        ]
+      }
+    },
+    "approve_proposal": {
+      "summary": "Approve a pending proposal: the proposed write runs now with the approver's Niagara permissions. Refused for agent sessions and agent users.",
+      "gate": "writes",
+      "reply": "proposal_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "proposal": {
+            "type": "string",
+            "description": "Proposal id, e.g. P7 (or 7)."
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "Why the change is made. Required for agent sessions when agentRequireReason is on (the default); recorded in the station's audit history."
+          }
+        },
+        "required": [
+          "proposal"
+        ]
+      },
+      "response": {
+        "keys": [
+          "proposal"
+        ]
+      }
+    },
+    "reject_proposal": {
+      "summary": "Reject a pending proposal. Refused for agent sessions and agent users.",
+      "gate": "writes",
+      "reply": "proposal_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "proposal": {
+            "type": "string",
+            "description": "Proposal id, e.g. P7 (or 7)."
+          },
+          "note": {
+            "type": "string",
+            "description": "Optional note shown to the agent."
+          }
+        },
+        "required": [
+          "proposal"
+        ]
+      },
+      "response": {
+        "keys": [
+          "proposal"
+        ]
+      }
+    },
+    "read_agent_log": {
+      "summary": "Agent records from the station's audit history, newest first: proposals, approvals, rejections, expiries, direct agent changes and refusals, with actor, reason and outcome. Needs read permission on the audit history.",
+      "gate": "none",
+      "reply": "agent_log_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "since": {
+            "type": "number",
+            "description": "Epoch ms; default 7 days ago."
+          },
+          "limit": {
+            "type": "number",
+            "default": 100,
+            "maximum": 1000
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "log"
+        ]
+      }
     }
   },
   "notices": {
@@ -2937,11 +3126,39 @@
         "requestOp",
         "elapsedMillis"
       ]
+    },
+    "proposal_cov": {
+      "summary": "A proposal this session may see was created or decided (approved, rejected, failed or expired).",
+      "keys": [
+        "timestamp",
+        "proposal",
+        "pendingProposals"
+      ]
     }
   },
   "errors": {
+    "agent_cannot_approve": {
+      "meaning": "Agent sessions and agent users cannot approve or reject proposals.",
+      "scope": "request"
+    },
+    "agent_priority_blocked": {
+      "meaning": "Agent used an emergency (level 1) action while agentAllowEmergency is off.",
+      "scope": "entry"
+    },
+    "agent_rate_limited": {
+      "meaning": "Agent user exceeded agentMaxChangesPerMinute, or has too many pending proposals; request or entry.",
+      "scope": "entry"
+    },
+    "agent_value_out_of_bounds": {
+      "meaning": "Agent value is outside the point's min/max facets or the matching agentBoundN rule.",
+      "scope": "entry"
+    },
     "alarm_failed": {
       "meaning": "AlarmService unavailable or alarm database/read failure; also a per-uuid entry for unexpected ack/clear failures.",
+      "scope": "request"
+    },
+    "approval_required": {
+      "meaning": "Agents can only propose point writes while agentApprovalRequired is on; other agent changes need a person or approval turned off.",
       "scope": "request"
     },
     "auth_required": {
@@ -3104,6 +3321,14 @@
       "meaning": "Plan unknown, expired, or owned by another user.",
       "scope": "request"
     },
+    "proposal_closed": {
+      "meaning": "Proposal is no longer pending: already decided or expired.",
+      "scope": "request"
+    },
+    "proposal_not_found": {
+      "meaning": "No such proposal (ids do not survive a station restart).",
+      "scope": "request"
+    },
     "protected_component": {
       "meaning": "The baskStream service and its descendants cannot be edited remotely.",
       "scope": "request"
@@ -3114,6 +3339,10 @@
     },
     "readonly": {
       "meaning": "Property is read-only.",
+      "scope": "request"
+    },
+    "reason_required": {
+      "meaning": "Agent change or proposal without a 'reason' while agentRequireReason is on.",
       "scope": "request"
     },
     "relation_failed": {

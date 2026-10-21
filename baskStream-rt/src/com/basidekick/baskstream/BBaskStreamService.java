@@ -4,9 +4,12 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import javax.baja.nre.annotations.NiagaraAction;
 import javax.baja.nre.annotations.NiagaraProperty;
 import javax.baja.nre.annotations.NiagaraType;
 import javax.baja.sys.BRelTime;
+import javax.baja.sys.BString;
+import javax.baja.sys.Context;
 import javax.baja.sys.Flags;
 import javax.baja.sys.Property;
 import javax.baja.sys.Sys;
@@ -158,6 +161,94 @@ import javax.baja.web.WebOp;
   type = "long",
   defaultValue = "0",
   flags = Flags.READONLY | Flags.TRANSIENT
+)
+/** Niagara users that are AI agents (comma separated). Agents can also declare themselves. Blank = no agent controls unless a session declares itself an agent. */
+@NiagaraProperty(
+  name = "agentUsers",
+  type = "baja:String",
+  defaultValue = "",
+  flags = Flags.SUMMARY
+)
+/** Agent point writes become proposals that a person approves; other agent changes are refused. Off = agents change things directly, within the limits below. */
+@NiagaraProperty(
+  name = "agentApprovalRequired",
+  type = "boolean",
+  defaultValue = "true",
+  flags = Flags.SUMMARY
+)
+/** Agents must give a reason with every change or proposal. */
+@NiagaraProperty(
+  name = "agentRequireReason",
+  type = "boolean",
+  defaultValue = "true",
+  flags = Flags.SUMMARY
+)
+/** Changes and proposals one agent user may make per minute. 0 = no limit. */
+@NiagaraProperty(
+  name = "agentMaxChangesPerMinute",
+  type = "int",
+  defaultValue = "10",
+  flags = Flags.SUMMARY
+)
+/** Allow agents to use emergency (priority level 1) commands. */
+@NiagaraProperty(
+  name = "agentAllowEmergency",
+  type = "boolean",
+  defaultValue = "false",
+  flags = Flags.SUMMARY
+)
+/** Value limit for agent writes: an ORD pattern and a range, e.g. slot:/Drivers/BacnetNetwork/*/ZoneSP 68..76. Points' own min/max facets always apply. */
+@NiagaraProperty(
+  name = "agentBound1",
+  type = "baja:String",
+  defaultValue = "",
+  flags = Flags.SUMMARY
+)
+@NiagaraProperty(
+  name = "agentBound2",
+  type = "baja:String",
+  defaultValue = "",
+  flags = Flags.SUMMARY
+)
+@NiagaraProperty(
+  name = "agentBound3",
+  type = "baja:String",
+  defaultValue = "",
+  flags = Flags.SUMMARY
+)
+@NiagaraProperty(
+  name = "agentBound4",
+  type = "baja:String",
+  defaultValue = "",
+  flags = Flags.SUMMARY
+)
+/** Minutes a proposal waits for a person before it expires. */
+@NiagaraProperty(
+  name = "agentProposalMinutes",
+  type = "int",
+  defaultValue = "15",
+  flags = Flags.SUMMARY
+)
+/** Proposals waiting for a person. Approve or reject them with the actions below, using the id (e.g. P7). */
+@NiagaraProperty(
+  name = "pendingProposals",
+  type = "baja:String",
+  defaultValue = "none",
+  flags = Flags.READONLY | Flags.TRANSIENT | Flags.SUMMARY
+)
+/** Approves a pending agent proposal by id (e.g. P7). The write runs with your permissions. */
+@NiagaraAction(
+  name = "approveProposal",
+  parameterType = "baja:String",
+  defaultValue = "BString.make(\"\")",
+  flags = Flags.OPERATOR
+)
+/** Rejects a pending agent proposal by id (e.g. P7). */
+@NiagaraAction(
+  name = "rejectProposal",
+  parameterType = "baja:String",
+  defaultValue = "BString.make(\"\")",
+  flags = Flags.OPERATOR
 )
 public final class BBaskStreamService extends BWebServlet
 {
@@ -869,6 +960,58 @@ public final class BBaskStreamService extends BWebServlet
     catch (RuntimeException e)
     {
       LOG.log(Level.WARNING, "baskStream could not record an audit event", e);
+    }
+  }
+
+  /** Adds one "Agent" record to the station's audit history (see BaskStreamAgents). */
+  void auditAgent(String target, String slot, String value, String user)
+  {
+    try
+    {
+      javax.baja.security.Auditor auditor = Sys.getAuditor();
+      if (auditor != null)
+        auditor.audit(new javax.baja.security.AuditEvent(BaskStreamAgents.AUDIT_OPERATION, target, slot, null, value, user));
+    }
+    catch (RuntimeException e)
+    {
+      LOG.log(Level.WARNING, "baskStream could not record an agent audit event", e);
+    }
+  }
+
+  /** Shows the pending proposals on the read-only property. */
+  void showPendingProposals(String text)
+  {
+    Property p = getProperty("pendingProposals");
+    if (p != null && !text.equals(getString(p))) setString(p, text, null);
+  }
+
+  /** Workbench action: approve a proposal; the write runs with the invoking user's permissions. */
+  public void doApproveProposal(BString id, Context cx)
+  {
+    decideProposal(id, cx, true);
+  }
+
+  /** Workbench action: reject a proposal. */
+  public void doRejectProposal(BString id, Context cx)
+  {
+    decideProposal(id, cx, false);
+  }
+
+  private void decideProposal(BString id, Context cx, boolean approve)
+  {
+    BaskStreamWebSocketRuntime current = runtime;
+    if (current == null) throw new IllegalStateException("BASkStreamService is not running.");
+    try
+    {
+      java.util.Map<String, Object> result = approve
+          ? current.getAgents().approve(id == null ? "" : id.getString(), cx, null)
+          : current.getAgents().reject(id == null ? "" : id.getString(), null, cx, null);
+      if ("failed".equals(result.get("status")))
+        throw new IllegalStateException("The proposed write failed: " + result.get("note"));
+    }
+    catch (BaskStreamProtocolException e)
+    {
+      throw new IllegalStateException(e.getMessage());
     }
   }
 

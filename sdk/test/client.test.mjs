@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { BaskStreamClient, BaskStreamError, OPERATIONS, toSlotOrd } from "../dist/index.js";
 import { PASSWORD, USER, startFakeStation } from "./fake-station.mjs";
 
@@ -15,7 +16,8 @@ after(async () => {
 const connect = (extra = {}) => BaskStreamClient.connect({ station: station.url, username: USER, password: PASSWORD, ...extra });
 
 test("generated operations match the spec count", () => {
-  assert.equal(Object.keys(OPERATIONS).length, 45);
+  const spec = JSON.parse(readFileSync(new URL("../../spec/baskstream-protocol.json", import.meta.url), "utf8"));
+  assert.deepEqual(Object.keys(OPERATIONS), Object.keys(spec.operations));
   assert.equal(OPERATIONS.write.gate, "writes");
 });
 
@@ -23,7 +25,7 @@ test("logs in with SCRAM, loads capabilities and reads points", async () => {
   let saved;
   const client = await connect({ onSession: (cookies) => (saved = cookies) });
   try {
-    assert.equal(client.capabilities.apiVersion, "1.7");
+    assert.equal(client.capabilities.apiVersion, "1.8");
     assert.ok(saved?.JSESSIONID, "session cookies were reported");
     const [snapshot] = await client.read(["slot:/Drivers/A"]);
     assert.equal(snapshot.value, 72.5);
@@ -165,5 +167,48 @@ test("full station ORDs are reduced to slot ORDs", async () => {
     assert.equal(snapshot.point, "slot:/Drivers/A");
   } finally {
     client.close();
+  }
+});
+
+test("agents declare themselves, propose writes, and a person approves", async () => {
+  const agent = await connect({ actor: { name: "Claude Code", model: "claude-opus-5-5", onBehalfOf: "ben" } });
+  const person = await connect();
+  try {
+    assert.equal(agent.capabilities.agents.isAgent, true);
+    assert.equal(person.capabilities.agents.isAgent, false);
+
+    await assert.rejects(agent.write("slot:/A", "override", 72), (error) => error.code === "reason_required");
+    const seen = once(person, "proposal");
+    const entry = await agent.write("slot:/A", "override", 72, { reason: "Room 204 is too cold" });
+    assert.equal(entry.outcome, "proposed");
+    const [created] = await seen;
+    assert.equal(created.id, entry.proposal.id);
+    assert.equal((await person.proposals("pending")).length >= 1, true);
+
+    await assert.rejects(agent.approveProposal(created.id), (error) => error.code === "agent_cannot_approve");
+    const decided = once(agent, "proposal");
+    const approved = await person.approveProposal(created.id.replace("P", ""));
+    assert.equal(approved.status, "approved");
+    assert.equal((await decided)[0].status, "approved");
+    await assert.rejects(person.approveProposal(created.id), (error) => error.code === "proposal_closed");
+
+    const log = await person.agentLog();
+    assert.match(log.records[0].outcome, /^approved P\d+ by test$/);
+    assert.match(log.records[1].outcome, /^proposed P\d+$/);
+  } finally {
+    agent.close();
+    person.close();
+  }
+});
+
+test("the actor is declared again after a reconnect", async () => {
+  const agent = await connect({ actor: { name: "Claude Code" } });
+  try {
+    const reconnected = once(agent, "reconnected");
+    station.dropAll({ forgetGroups: false });
+    await reconnected;
+    assert.equal(agent.capabilities.agents.isAgent, true);
+  } finally {
+    agent.close();
   }
 });

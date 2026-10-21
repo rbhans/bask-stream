@@ -1,17 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
-import { BaskStreamError, toSlotOrd, type BaskStreamClient } from "@basidekick/baskstream";
+import { BaskStreamError, toSlotOrd, type BaskStreamClient, type Proposal } from "@basidekick/baskstream";
 import { isUnacked } from "../format.js";
 import { AlarmsView } from "./AlarmsView.js";
 import { BrowseView } from "./BrowseView.js";
 import { HistoryView } from "./HistoryView.js";
 import { StatusView } from "./StatusView.js";
-import { useAlarms, useWatchList } from "./stores.js";
+import { useAlarms, useProposals, useWatchList } from "./stores.js";
+import { ProposalsView, proposalActor } from "./ProposalsView.js";
 import { Hint, ModalBox, UiContext, theme, toneColor, type Modal, type Tone, type Ui } from "./ui.js";
 import { WatchView } from "./WatchView.js";
 import { Finder } from "./Finder.js";
 
-const VIEWS = ["browse", "watch", "alarms", "history", "status"] as const;
+const VIEWS = ["browse", "watch", "alarms", "history", "status", "proposals"] as const;
 export type ViewName = (typeof VIEWS)[number];
 
 const HINTS: Record<ViewName, [string, string][]> = {
@@ -19,7 +20,8 @@ const HINTS: Record<ViewName, [string, string][]> = {
   watch: [["↑↓", "move"], ["t", "trend"], ["d", "remove"], ["o", "override"], ["s", "set"], ["a", "auto"]],
   alarms: [["↑↓", "move"], ["⏎", "details"], ["a", "ack"], ["A", "ack all"], ["u", "unacked only"], ["t", "trend source"]],
   history: [["+ -", "zoom"], ["← →", "pan"], ["n", "now"], ["r", "reload"]],
-  status: []
+  status: [],
+  proposals: [["↑↓", "move"], ["a", "approve"], ["x", "reject"]]
 };
 
 const FIND_HINTS: [string, string][] = [["↑↓", "move"], ["⏎", "show in tree"], ["tab", "watch point"], ["esc", "close"]];
@@ -47,6 +49,7 @@ export function App({ client, profileName, allowWrites, view: initialView, point
 
   const watchList = useWatchList(client, initialPoints);
   const alarmStore = useAlarms(client);
+  const proposalStore = useProposals(client);
 
   useEffect(() => {
     const onResize = () => setSize({ columns: stdout.columns, rows: stdout.rows });
@@ -135,6 +138,17 @@ export function App({ client, profileName, allowWrites, view: initialView, point
   const watchedSet = useMemo(() => new Set(watchList.points.map((p) => p.ord)), [watchList.points]);
   const unacked = [...alarmStore.alarms.values()].filter(isUnacked).length;
 
+  const pendingProposals = [...proposalStore.proposals.values()].filter((p) => p.status === "pending").length;
+
+  // The sidekick mentions each new proposal while you're looking at something else.
+  useEffect(() => {
+    const onProposal = (p: Proposal) => {
+      if (p.status === "pending" && view !== "proposals") showToast(`New proposal ${p.id} from ${proposalActor(p)}: ${p.description}. Press 6 to review.`, "info");
+    };
+    client.on("proposal", onProposal);
+    return () => void client.off("proposal", onProposal);
+  }, [client, view]);
+
   // The sidekick points out unacknowledged alarms once, after the first alarm load.
   const greeted = useRef(false);
   useEffect(() => {
@@ -164,7 +178,8 @@ export function App({ client, profileName, allowWrites, view: initialView, point
     ["watch", "Watch", watchList.points.length ? String(watchList.points.length) : undefined],
     ["alarms", "Alarms", alarmStore.alarms.size ? String(alarmStore.alarms.size) : undefined],
     ["history", "History"],
-    ["status", "Status"]
+    ["status", "Status"],
+    ["proposals", "Proposals", pendingProposals ? String(pendingProposals) : undefined]
   ];
 
   return (
@@ -195,14 +210,14 @@ export function App({ client, profileName, allowWrites, view: initialView, point
         <Text wrap="truncate-end">
           {tabs.map(([name, label, badge], i) => {
             const on = view === name;
-            const badgeColor = name === "alarms" && unacked ? theme.bad : theme.muted;
+            const badgeColor = name === "alarms" && unacked ? theme.bad : name === "proposals" ? theme.warn : theme.muted;
             return (
               <Text key={name}>
                 <Text color={on ? "black" : theme.muted} backgroundColor={on ? theme.accent2 : undefined} bold={on}>
                   {` ${i + 1} ${label} `}
                 </Text>
                 {badge ? (
-                  <Text color={badgeColor} bold={name === "alarms" && unacked > 0}>
+                  <Text color={badgeColor} bold={(name === "alarms" && unacked > 0) || name === "proposals"}>
                     {badge}
                   </Text>
                 ) : null}
@@ -240,6 +255,7 @@ export function App({ client, profileName, allowWrites, view: initialView, point
             {view === "watch" && <WatchView client={client} active={viewActive} width={width} height={bodyHeight} points={watchList.points} onRemove={(ord) => void watchList.remove(ord)} />}
             {view === "alarms" && <AlarmsView client={client} active={viewActive} width={width} height={bodyHeight} alarms={alarmStore.alarms} error={alarmStore.error} loaded={alarmStore.loadedAt !== undefined} reload={alarmStore.reload} />}
             {view === "history" && <HistoryView client={client} active={viewActive} width={width} height={bodyHeight} ord={historyOrd} />}
+            {view === "proposals" && <ProposalsView client={client} active={viewActive} width={width} height={bodyHeight} proposals={proposalStore.proposals} error={proposalStore.error} />}
             {view === "status" && <StatusView client={client} active={viewActive} width={width} height={bodyHeight} profileName={profileName} allowWrites={allowWrites} />}
           </Box>
         </Box>
@@ -258,7 +274,7 @@ export function App({ client, profileName, allowWrites, view: initialView, point
               {!finding && (
                 <>
                   <Hint k="/" label="find" />
-                  <Hint k="1-5" label="views" />
+                  <Hint k="1-6" label="views" />
                   <Hint k="?" label="help" />
                   <Hint k="q" label="quit" />
                 </>
@@ -290,12 +306,13 @@ function Help() {
   return (
     <Box flexDirection="column" paddingX={2}>
       <Box flexWrap="wrap">
-        {section("Everywhere", [["/", "find a point"], ["1-5", "switch view"], ["tab", "next view"], ["?", "this help"], ["q", "quit"]])}
+        {section("Everywhere", [["/", "find a point"], ["1-6", "switch view"], ["tab", "next view"], ["?", "this help"], ["q", "quit"]])}
         {section("Find", [["type", "search the station"], ["⏎", "show in tree"], ["tab", "watch point"], ["esc", "close"]])}
         {section("Browse", HINTS.browse)}
         {section("Watch", HINTS.watch)}
         {section("Alarms", HINTS.alarms)}
         {section("History", HINTS.history)}
+        {section("Proposals", HINTS.proposals)}
       </Box>
       <Text color={theme.muted}>Commands that change the station need --allow-writes and ask before sending. Press any key to close.</Text>
     </Box>

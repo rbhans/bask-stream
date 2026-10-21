@@ -96,7 +96,7 @@ final class BaskStreamAccessPolicy
     return patterns;
   }
 
-  private static String toRegex(String wildcard)
+  static String toRegex(String wildcard)
   {
     StringBuilder regex = new StringBuilder("^");
     for (int i = 0; i < wildcard.length(); i++)
