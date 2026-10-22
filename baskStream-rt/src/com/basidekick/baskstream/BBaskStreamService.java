@@ -197,7 +197,7 @@ import javax.baja.web.WebOp;
   defaultValue = "false",
   flags = Flags.SUMMARY
 )
-/** Value limit for agent writes: an ORD pattern and a range, e.g. slot:/Drivers/BacnetNetwork/*/ZoneSP 68..76. Points' own min/max facets always apply. */
+/** Value limit for agent writes: an ORD pattern (* matches anything) and a range, e.g. slot:/Floor1/VAV_01/ZoneSP 68..76. Points' own min/max facets always apply. */
 @NiagaraProperty(
   name = "agentBound1",
   type = "baja:String",
