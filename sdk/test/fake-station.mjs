@@ -29,7 +29,7 @@ const ALARMS = [
 export async function startFakeStation() {
   const sessions = new Set();
   const scram = new Map();
-  const state = { sockets: new Set(), groups: new Map(), logins: 0, requests: [] };
+  const state = { sockets: new Set(), groups: new Map(), logins: 0, requests: [], proposals: new Map(), agentLog: [] };
   const salted = crypto.pbkdf2Sync(PASSWORD, SALT, ITERATIONS, 32, "sha256");
   const hmac = (key, text) => crypto.createHmac("sha256", key).update(text).digest();
 
@@ -46,7 +46,7 @@ export async function startFakeStation() {
     }
     if (req.url === "/stream/health") {
       if (!sessions.has(sid)) return void res.writeHead(302, { Location: "/prelogin" }).end();
-      return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, apiVersion: "1.7" }));
+      return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, apiVersion: "1.8" }));
     }
     if (req.url === "/stream/metrics") {
       if (!sessions.has(sid)) return void res.writeHead(302).end();
@@ -100,6 +100,13 @@ export async function startFakeStation() {
   const value = (point) => ({ point, ok: true, valueType: "numeric", value: 72.5, status: "{ok}", timestamp: Date.now() });
   const send = (ws, frame) => ws.send(encode(frame));
 
+  const isAgent = (ws) => Boolean(ws.actor && ws.actor.kind !== "person");
+  const pendingCount = () => [...state.proposals.values()].filter((p) => p.status === "pending").length;
+  const agentRules = (ws) => ({ isAgent: isAgent(ws), actor: ws.actor ?? null, approvalRequired: true, reasonRequired: true, maxChangesPerMinute: 10, allowEmergency: false, bounds: [], proposalMinutes: 15, pendingProposals: pendingCount() });
+  const pushProposal = (proposal) => {
+    for (const socket of state.sockets) send(socket, { op: "proposal_cov", timestamp: Date.now(), proposal, pendingProposals: pendingCount() });
+  };
+
   function handle(ws, request) {
     state.requests.push(request);
     const { op, id } = request;
@@ -107,7 +114,27 @@ export async function startFakeStation() {
       case "ping":
         return send(ws, { op: "pong", id });
       case "capabilities":
-        return send(ws, { op: "capabilities_result", id, capabilities: { apiVersion: "1.7", limits: { heartbeatIntervalSec: 30 } } });
+        return send(ws, { op: "capabilities_result", id, capabilities: { apiVersion: "1.8", authenticatedUser: USER, limits: { heartbeatIntervalSec: 30 }, agents: agentRules(ws) } });
+      case "declare_actor":
+        ws.actor = { kind: request.kind ?? "agent", name: request.name, model: request.model, onBehalfOf: request.onBehalfOf };
+        return send(ws, { op: "actor_declared", id, agents: agentRules(ws) });
+      case "list_proposals": {
+        const all = [...state.proposals.values()].reverse().filter((p) => !request.status || p.status === request.status);
+        return send(ws, { op: "proposals_result", id, proposals: all, pendingProposals: pendingCount() });
+      }
+      case "approve_proposal":
+      case "reject_proposal": {
+        if (isAgent(ws)) return send(ws, { op: "error", id, code: "agent_cannot_approve", message: "Agents cannot approve or reject proposals; a person decides." });
+        const proposal = state.proposals.get(String(request.proposal).toUpperCase().replace(/^(\d)/, "P$1"));
+        if (!proposal) return send(ws, { op: "error", id, code: "proposal_not_found", message: `No proposal ${request.proposal}.` });
+        if (proposal.status !== "pending") return send(ws, { op: "error", id, code: "proposal_closed", message: `Proposal ${proposal.id} is already ${proposal.status}.` });
+        Object.assign(proposal, { status: op === "approve_proposal" ? "approved" : "rejected", decidedBy: USER, decidedAt: Date.now(), note: request.note ?? null });
+        state.agentLog.push({ timestamp: Date.now(), user: USER, target: proposal.point, action: proposal.action, outcome: `${proposal.status} ${proposal.id} by ${USER}`, reason: proposal.reason });
+        pushProposal(proposal);
+        return send(ws, { op: "proposal_result", id, proposal });
+      }
+      case "read_agent_log":
+        return send(ws, { op: "agent_log_result", id, log: { since: 0, count: state.agentLog.length, truncated: false, records: [...state.agentLog].reverse() } });
       case "read":
         return send(ws, { op: "read_result", id, points: request.points.map(value) });
       case "replace_subscriptions":
@@ -120,6 +147,18 @@ export async function startFakeStation() {
         state.groups.delete(request.group);
         return send(ws, { op: "subscriptions_released", id, group: request.group });
       case "write":
+        if (isAgent(ws)) {
+          if (!request.reason) return send(ws, { op: "error", id, code: "reason_required", message: "Agents must say why: add a 'reason' to the request." });
+          const proposal = {
+            id: `P${state.proposals.size + 1}`, status: "pending", point: request.point, action: request.action ?? "set", value: request.value,
+            description: `${request.action ?? "set"} ${request.value}`, reason: request.reason, agentUser: USER, actor: ws.actor,
+            createdAt: Date.now(), expiresAt: Date.now() + 900000, decidedBy: null, decidedAt: null, note: null, result: null
+          };
+          state.proposals.set(proposal.id, proposal);
+          state.agentLog.push({ timestamp: Date.now(), user: USER, target: proposal.point, action: proposal.action, outcome: `proposed ${proposal.id}`, agent: ws.actor.name, reason: proposal.reason });
+          pushProposal(proposal);
+          return send(ws, { op: "write_result", id, points: [{ point: request.point, ok: true, outcome: "proposed", proposal }] });
+        }
         return send(ws, { op: "error", id, code: "writes_disabled", message: "Writes are disabled on this service." });
       case "browse": {
         const base = request.base ?? "slot:/";

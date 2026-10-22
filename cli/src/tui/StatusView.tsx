@@ -29,6 +29,8 @@ export function StatusView({ client, active, width, height, profileName, allowWr
   const caps = client.capabilities;
   const limits = (caps.limits ?? {}) as Json;
   const model = (caps.modelEditing ?? {}) as Json;
+  // Absent on stations before API 1.8.
+  const agents = caps.agents as Json | undefined;
   const session = (subs?.session ?? {}) as Json;
   const row = (label: string, value: unknown, color?: string) => (
     <Text key={label} wrap="truncate-end">
@@ -48,6 +50,8 @@ export function StatusView({ client, active, width, height, profileName, allowWr
         {row("service writes", caps.writesEnabled ? "enabled" : "disabled", caps.writesEnabled ? theme.warn : theme.good)}
         {row("model edits", model.enabled ? "enabled" : "disabled", model.enabled ? theme.warn : theme.good)}
         {row("this dashboard", allowWrites ? "writes allowed" : "read-only", allowWrites ? theme.warn : theme.good)}
+        {agents && row("ai agents", `${agents.isAgent ? "you are an agent" : "you are a person"} · approval ${agents.approvalRequired ? "required" : "off"}`, agents.isAgent ? theme.warn : undefined)}
+        {agents && row("agent limits", `${agents.maxChangesPerMinute || "no"} changes/min · emergency ${agents.allowEmergency ? "allowed" : "blocked"} · ${(agents.bounds as unknown[] | undefined)?.length ?? 0} bound rules`)}
         <Text> </Text>
         {row("connections", `${fmtValue(limits.activeConnections)} / ${fmtValue(limits.maxConnections)}`)}
         {row("per user", limits.maxConnectionsPerUser)}

@@ -28,6 +28,19 @@ const open = await client.alarms({ scope: "open", order: "newest" });
 - **Live data**: `watch()` keeps a named subscription group: it renews the lease, re-reads after `resync_required`, and is restored after a reconnect. The client also emits `value`, `cov`, `alarm`, `model`, `resync`, `revoked` and `notice`.
 - **Staying connected**: keepalive pings; after a drop it reconnects with backoff (1 s → 30 s), logs in again if needed, and emits `disconnected`, `reconnecting`, `reconnected`.
 
+## AI agents
+
+Pass `actor` to declare the connection an AI agent; the station then applies its agent rules (see `docs/AI_AGENTS.md`). Give a `reason` with changes. While the station requires approval, writes come back as proposals:
+
+```ts
+const agent = await BaskStreamClient.connect({ ...options, actor: { name: "Claude Code", model: "claude-opus-5-5", onBehalfOf: "ben" } });
+const entry = await agent.write(point, "override", 72, { reason: "Room 204 is too cold" });
+// entry.outcome === "proposed"; entry.proposal.id === "P7"
+agent.on("proposal", (p) => console.log(p.id, p.status)); // approved, rejected, expired or failed
+```
+
+People use `proposals()`, `approveProposal(id)` and `rejectProposal(id, note)`; `agentLog()` reads the `Agent` records from the station's audit history.
+
 ## Develop
 
 ```bash

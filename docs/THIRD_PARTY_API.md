@@ -97,7 +97,7 @@ Response:
   "op": "capabilities_result",
   "id": "caps-1",
   "capabilities": {
-    "apiVersion": "1.7",
+    "apiVersion": "1.8",
     "operations": ["ping", "capabilities", "browse", "describe", "search", "read", "subscribe", "unsubscribe", "replace_subscriptions", "renew_subscriptions", "release_subscriptions", "subscription_status", "write", "describe_write", "read_history", "describe_history", "read_alarms", "ack_alarm", "ack_alarms", "clear_alarm", "clear_alarms", "subscribe_alarms", "unsubscribe_alarms", "read_schedule", "subscribe_model", "unsubscribe_model", "read_tags", "write_tags", "write_relations", "describe_component_types", "describe_component", "preview_model_changes", "apply_model_changes", "model_plan_status", "cancel_model_plan", "create_components", "update_component_properties", "rename_component", "move_components", "delete_components", "create_hierarchy", "configure_hierarchy"],
     "writesEnabled": true,
     "modelEditing": { "enabled": false, "maxChanges": 100, "previewRequired": true, "atomic": false },
@@ -1035,13 +1035,29 @@ Response `relations_written` echoes per-operation results (including a `removed`
 
 Tag and relation writes on subscribed model branches surface to other clients as `model_cov` hints (`facets_changed`, `relation_added`, `relation_removed`), so apps that maintain a cached model can refresh affected nodes.
 
+### AI agents
+
+Optional controls for AI agents: actor context, a `reason` on changes, rate and value limits, and point-write proposals a person approves. Setup and full details: [AI_AGENTS.md](AI_AGENTS.md).
+
+- `declare_actor` says who is behind the session (agent or person, name, model, on behalf of). Reply `actor_declared` with the rules that apply; `capabilities.agents` carries the same block.
+- `list_proposals` lists proposals the session may see.
+- `approve_proposal` runs a proposed write with the approver's permissions; `reject_proposal` declines it. People only.
+- `read_agent_log` returns the `Agent` records baskStream adds to the station's audit history.
+- Change operations accept a `reason`. For agent sessions, `write` entries carry `outcome` (`proposed` with a `proposal`, or `written`).
+- `proposal_cov` notices report proposals as they are created and decided.
+
 ## Error Codes
 
 Failures arrive in two ways. A **request** error fails the whole request with an `error` message carrying `code` and `message`. An **entry** error appears inside a batch result (per point, alarm, tag target and so on) with `ok: false`, while the other entries still succeed. Clients should branch on `code`, never on `message`. This table is generated from `spec/baskstream-protocol.json`.
 
 | Code | Scope | Meaning |
 | --- | --- | --- |
+| `agent_cannot_approve` | request | Agent sessions and agent users cannot approve or reject proposals. |
+| `agent_priority_blocked` | entry | Agent used an emergency (level 1) action while agentAllowEmergency is off. |
+| `agent_rate_limited` | entry | Agent user exceeded agentMaxChangesPerMinute, or has too many pending proposals; request or entry. |
+| `agent_value_out_of_bounds` | entry | Agent value is outside the point's min/max facets or the matching agentBoundN rule. |
 | `alarm_failed` | request | AlarmService unavailable or alarm database/read failure; also a per-uuid entry for unexpected ack/clear failures. |
+| `approval_required` | request | Agents can only propose point writes while agentApprovalRequired is on; other agent changes need a person or approval turned off. |
 | `auth_required` | request | No authenticated Niagara user at the WebSocket handshake; the socket is closed (1008), no frame is sent. |
 | `bad_reference` | request | Model @ref does not identify an earlier create/clone, or a ref is duplicated. |
 | `bad_request` | request | Malformed request or field (type, range, missing field, MessagePack decoding); also per-item in write/tag results. |
@@ -1082,9 +1098,12 @@ Failures arrive in two ways. A **request** error fails the whole request with an
 | `plan_limit` | request | Plan ledger is full (32 plans). |
 | `plan_mismatch` | request | planHash does not match the stored plan. |
 | `plan_not_found` | request | Plan unknown, expired, or owned by another user. |
+| `proposal_closed` | request | Proposal is no longer pending: already decided or expired. |
+| `proposal_not_found` | request | No such proposal (ids do not survive a station restart). |
 | `protected_component` | request | The baskStream service and its descendants cannot be edited remotely. |
 | `read_failed` | entry | Point snapshot could not be produced or the target is no longer available. |
 | `readonly` | request | Property is read-only. |
+| `reason_required` | request | Agent change or proposal without a 'reason' while agentRequireReason is on. |
 | `relation_failed` | entry | Unexpected failure adding/removing a relation. |
 | `relation_not_found` | entry | No matching direct relation to remove. |
 | `relation_rejected` | entry | Niagara rejected the relation add. |
@@ -1302,6 +1321,16 @@ Recommended client approach:
 The `metadata` block is additive and request-controlled. Clients can ignore it or omit it and continue using `ord`, `slotPath`, `name`, `typeSpec`, `features`, `operations`, and point read/write payloads.
 
 Third-party clients should not require every metadata subfield to be populated. Different protocols and station models expose different evidence.
+
+### API 1.8 changes
+
+`apiVersion` advanced from `1.7` to `1.8`. Everything is additive and inactive until an agent user is configured or a session declares itself an agent:
+
+- New operations `declare_actor`, `list_proposals`, `approve_proposal`, `reject_proposal` and `read_agent_log`, and the `proposal_cov` notice.
+- New `capabilities.agents` block and `schemas.agents = "1"`.
+- Change operations accept an optional `reason` (required for agents by default).
+- New service properties `agentUsers`, `agentApprovalRequired`, `agentRequireReason`, `agentMaxChangesPerMinute`, `agentAllowEmergency`, `agentBound1`–`agentBound4`, `agentProposalMinutes` and read-only `pendingProposals`, plus the Approve Proposal and Reject Proposal actions.
+- New error codes `reason_required`, `approval_required`, `agent_rate_limited`, `agent_priority_blocked`, `agent_value_out_of_bounds`, `agent_cannot_approve`, `proposal_not_found` and `proposal_closed`.
 
 ### API 1.7 changes
 

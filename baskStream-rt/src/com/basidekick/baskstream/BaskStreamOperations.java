@@ -90,6 +90,12 @@ final class BaskStreamOperations
     add("delete_components", Gate.MODEL_EDITS);
     add("create_hierarchy", Gate.MODEL_EDITS);
     add("configure_hierarchy", Gate.MODEL_EDITS);
+    // AI agents (all optional; see docs/AI_AGENTS.md). Approving runs the proposed write.
+    add("declare_actor", Gate.NONE);
+    add("list_proposals", Gate.NONE);
+    add("approve_proposal", Gate.WRITES);
+    add("reject_proposal", Gate.WRITES);
+    add("read_agent_log", Gate.NONE);
   }
 
   private static void add(String name, Gate gate)

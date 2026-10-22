@@ -91,6 +91,14 @@ final class BaskStreamSubscriptionManager
     }
   }
 
+  void forEachSession(java.util.function.Consumer<BaskStreamClientSession> action)
+  {
+    for (BaskStreamClientSession session : sessions.toArray(new BaskStreamClientSession[0]))
+    {
+      action.accept(session);
+    }
+  }
+
   void modelChanged(java.util.Set<String> affected)
   {
     for (BaskStreamClientSession session : sessions.toArray(new BaskStreamClientSession[0]))

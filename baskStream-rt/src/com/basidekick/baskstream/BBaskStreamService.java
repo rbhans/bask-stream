@@ -4,15 +4,19 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import javax.baja.nre.annotations.NiagaraAction;
 import javax.baja.nre.annotations.NiagaraProperty;
 import javax.baja.nre.annotations.NiagaraType;
 import javax.baja.sys.BRelTime;
+import javax.baja.sys.BString;
+import javax.baja.sys.Context;
 import javax.baja.sys.Flags;
 import javax.baja.sys.Property;
 import javax.baja.sys.Sys;
 import javax.baja.sys.Type;
 import javax.baja.web.BWebServlet;
 import javax.baja.web.WebOp;
+import javax.baja.sys.Action;
 
 @NiagaraType
 @NiagaraProperty(
@@ -159,6 +163,94 @@ import javax.baja.web.WebOp;
   defaultValue = "0",
   flags = Flags.READONLY | Flags.TRANSIENT
 )
+/** Niagara users that are AI agents (comma separated). Agents can also declare themselves. Blank = no agent controls unless a session declares itself an agent. */
+@NiagaraProperty(
+  name = "agentUsers",
+  type = "baja:String",
+  defaultValue = "",
+  flags = Flags.SUMMARY
+)
+/** Agent point writes become proposals that a person approves; other agent changes are refused. Off = agents change things directly, within the limits below. */
+@NiagaraProperty(
+  name = "agentApprovalRequired",
+  type = "boolean",
+  defaultValue = "true",
+  flags = Flags.SUMMARY
+)
+/** Agents must give a reason with every change or proposal. */
+@NiagaraProperty(
+  name = "agentRequireReason",
+  type = "boolean",
+  defaultValue = "true",
+  flags = Flags.SUMMARY
+)
+/** Changes and proposals one agent user may make per minute. 0 = no limit. */
+@NiagaraProperty(
+  name = "agentMaxChangesPerMinute",
+  type = "int",
+  defaultValue = "10",
+  flags = Flags.SUMMARY
+)
+/** Allow agents to use emergency (priority level 1) commands. */
+@NiagaraProperty(
+  name = "agentAllowEmergency",
+  type = "boolean",
+  defaultValue = "false",
+  flags = Flags.SUMMARY
+)
+/** Value limit for agent writes: an ORD pattern (* matches anything) and a range, e.g. slot:/Floor1/VAV_01/ZoneSP 68..76. Points' own min/max facets always apply. */
+@NiagaraProperty(
+  name = "agentBound1",
+  type = "baja:String",
+  defaultValue = "",
+  flags = Flags.SUMMARY
+)
+@NiagaraProperty(
+  name = "agentBound2",
+  type = "baja:String",
+  defaultValue = "",
+  flags = Flags.SUMMARY
+)
+@NiagaraProperty(
+  name = "agentBound3",
+  type = "baja:String",
+  defaultValue = "",
+  flags = Flags.SUMMARY
+)
+@NiagaraProperty(
+  name = "agentBound4",
+  type = "baja:String",
+  defaultValue = "",
+  flags = Flags.SUMMARY
+)
+/** Minutes a proposal waits for a person before it expires. */
+@NiagaraProperty(
+  name = "agentProposalMinutes",
+  type = "int",
+  defaultValue = "15",
+  flags = Flags.SUMMARY
+)
+/** Proposals waiting for a person. Approve or reject them with the actions below, using the id (e.g. P7). */
+@NiagaraProperty(
+  name = "pendingProposals",
+  type = "baja:String",
+  defaultValue = "none",
+  flags = Flags.READONLY | Flags.TRANSIENT | Flags.SUMMARY
+)
+/** Approves a pending agent proposal by id (e.g. P7). The write runs with your permissions. */
+@NiagaraAction(
+  name = "approveProposal",
+  parameterType = "baja:String",
+  defaultValue = "BString.make(\"\")",
+  flags = Flags.OPERATOR
+)
+/** Rejects a pending agent proposal by id (e.g. P7). */
+@NiagaraAction(
+  name = "rejectProposal",
+  parameterType = "baja:String",
+  defaultValue = "BString.make(\"\")",
+  flags = Flags.OPERATOR
+)
 public final class BBaskStreamService extends BWebServlet
 {
   public static final Logger LOG = Logger.getLogger(BBaskStreamService.class.getName());
@@ -172,8 +264,8 @@ public final class BBaskStreamService extends BWebServlet
 
 //region /*+ ------------ BEGIN BAJA AUTO GENERATED CODE ------------ +*/
 //@formatter:off
-/*@ $com.basidekick.baskstream.BBaskStreamService(3979930858)1.0$ @*/
-/* Generated Mon Sep 28 21:50:08 MST 2026 by Slot-o-Matic (c) Tridium, Inc. 2012-2026 */
+/*@ $com.basidekick.baskstream.BBaskStreamService(3460251306)1.0$ @*/
+/* Generated Wed Oct 21 21:00:04 MST 2026 by Slot-o-Matic (c) Tridium, Inc. 2012-2026 */
 
   //region Property "writesEnabled"
 
@@ -727,6 +819,319 @@ public final class BBaskStreamService extends BWebServlet
 
   //endregion Property "requestTimeoutCount"
 
+  //region Property "agentUsers"
+
+  /**
+   * Slot for the {@code agentUsers} property.
+   * Niagara users that are AI agents (comma separated). Agents can also declare themselves. Blank = no agent controls unless a session declares itself an agent.
+   * @see #getAgentUsers
+   * @see #setAgentUsers
+   */
+  public static final Property agentUsers = newProperty(Flags.SUMMARY, "", null);
+
+  /**
+   * Get the {@code agentUsers} property.
+   * Niagara users that are AI agents (comma separated). Agents can also declare themselves. Blank = no agent controls unless a session declares itself an agent.
+   * @see #agentUsers
+   */
+  public String getAgentUsers() { return getString(agentUsers); }
+
+  /**
+   * Set the {@code agentUsers} property.
+   * Niagara users that are AI agents (comma separated). Agents can also declare themselves. Blank = no agent controls unless a session declares itself an agent.
+   * @see #agentUsers
+   */
+  public void setAgentUsers(String v) { setString(agentUsers, v, null); }
+
+  //endregion Property "agentUsers"
+
+  //region Property "agentApprovalRequired"
+
+  /**
+   * Slot for the {@code agentApprovalRequired} property.
+   * Agent point writes become proposals that a person approves; other agent changes are refused. Off = agents change things directly, within the limits below.
+   * @see #getAgentApprovalRequired
+   * @see #setAgentApprovalRequired
+   */
+  public static final Property agentApprovalRequired = newProperty(Flags.SUMMARY, true, null);
+
+  /**
+   * Get the {@code agentApprovalRequired} property.
+   * Agent point writes become proposals that a person approves; other agent changes are refused. Off = agents change things directly, within the limits below.
+   * @see #agentApprovalRequired
+   */
+  public boolean getAgentApprovalRequired() { return getBoolean(agentApprovalRequired); }
+
+  /**
+   * Set the {@code agentApprovalRequired} property.
+   * Agent point writes become proposals that a person approves; other agent changes are refused. Off = agents change things directly, within the limits below.
+   * @see #agentApprovalRequired
+   */
+  public void setAgentApprovalRequired(boolean v) { setBoolean(agentApprovalRequired, v, null); }
+
+  //endregion Property "agentApprovalRequired"
+
+  //region Property "agentRequireReason"
+
+  /**
+   * Slot for the {@code agentRequireReason} property.
+   * Agents must give a reason with every change or proposal.
+   * @see #getAgentRequireReason
+   * @see #setAgentRequireReason
+   */
+  public static final Property agentRequireReason = newProperty(Flags.SUMMARY, true, null);
+
+  /**
+   * Get the {@code agentRequireReason} property.
+   * Agents must give a reason with every change or proposal.
+   * @see #agentRequireReason
+   */
+  public boolean getAgentRequireReason() { return getBoolean(agentRequireReason); }
+
+  /**
+   * Set the {@code agentRequireReason} property.
+   * Agents must give a reason with every change or proposal.
+   * @see #agentRequireReason
+   */
+  public void setAgentRequireReason(boolean v) { setBoolean(agentRequireReason, v, null); }
+
+  //endregion Property "agentRequireReason"
+
+  //region Property "agentMaxChangesPerMinute"
+
+  /**
+   * Slot for the {@code agentMaxChangesPerMinute} property.
+   * Changes and proposals one agent user may make per minute. 0 = no limit.
+   * @see #getAgentMaxChangesPerMinute
+   * @see #setAgentMaxChangesPerMinute
+   */
+  public static final Property agentMaxChangesPerMinute = newProperty(Flags.SUMMARY, 10, null);
+
+  /**
+   * Get the {@code agentMaxChangesPerMinute} property.
+   * Changes and proposals one agent user may make per minute. 0 = no limit.
+   * @see #agentMaxChangesPerMinute
+   */
+  public int getAgentMaxChangesPerMinute() { return getInt(agentMaxChangesPerMinute); }
+
+  /**
+   * Set the {@code agentMaxChangesPerMinute} property.
+   * Changes and proposals one agent user may make per minute. 0 = no limit.
+   * @see #agentMaxChangesPerMinute
+   */
+  public void setAgentMaxChangesPerMinute(int v) { setInt(agentMaxChangesPerMinute, v, null); }
+
+  //endregion Property "agentMaxChangesPerMinute"
+
+  //region Property "agentAllowEmergency"
+
+  /**
+   * Slot for the {@code agentAllowEmergency} property.
+   * Allow agents to use emergency (priority level 1) commands.
+   * @see #getAgentAllowEmergency
+   * @see #setAgentAllowEmergency
+   */
+  public static final Property agentAllowEmergency = newProperty(Flags.SUMMARY, false, null);
+
+  /**
+   * Get the {@code agentAllowEmergency} property.
+   * Allow agents to use emergency (priority level 1) commands.
+   * @see #agentAllowEmergency
+   */
+  public boolean getAgentAllowEmergency() { return getBoolean(agentAllowEmergency); }
+
+  /**
+   * Set the {@code agentAllowEmergency} property.
+   * Allow agents to use emergency (priority level 1) commands.
+   * @see #agentAllowEmergency
+   */
+  public void setAgentAllowEmergency(boolean v) { setBoolean(agentAllowEmergency, v, null); }
+
+  //endregion Property "agentAllowEmergency"
+
+  //region Property "agentBound1"
+
+  /**
+   * Slot for the {@code agentBound1} property.
+   * Value limit for agent writes: an ORD pattern (* matches anything) and a range, e.g. slot:/Floor1/VAV_01/ZoneSP 68..76. Points' own min/max facets always apply.
+   * @see #getAgentBound1
+   * @see #setAgentBound1
+   */
+  public static final Property agentBound1 = newProperty(Flags.SUMMARY, "", null);
+
+  /**
+   * Get the {@code agentBound1} property.
+   * Value limit for agent writes: an ORD pattern (* matches anything) and a range, e.g. slot:/Floor1/VAV_01/ZoneSP 68..76. Points' own min/max facets always apply.
+   * @see #agentBound1
+   */
+  public String getAgentBound1() { return getString(agentBound1); }
+
+  /**
+   * Set the {@code agentBound1} property.
+   * Value limit for agent writes: an ORD pattern (* matches anything) and a range, e.g. slot:/Floor1/VAV_01/ZoneSP 68..76. Points' own min/max facets always apply.
+   * @see #agentBound1
+   */
+  public void setAgentBound1(String v) { setString(agentBound1, v, null); }
+
+  //endregion Property "agentBound1"
+
+  //region Property "agentBound2"
+
+  /**
+   * Slot for the {@code agentBound2} property.
+   * @see #getAgentBound2
+   * @see #setAgentBound2
+   */
+  public static final Property agentBound2 = newProperty(Flags.SUMMARY, "", null);
+
+  /**
+   * Get the {@code agentBound2} property.
+   * @see #agentBound2
+   */
+  public String getAgentBound2() { return getString(agentBound2); }
+
+  /**
+   * Set the {@code agentBound2} property.
+   * @see #agentBound2
+   */
+  public void setAgentBound2(String v) { setString(agentBound2, v, null); }
+
+  //endregion Property "agentBound2"
+
+  //region Property "agentBound3"
+
+  /**
+   * Slot for the {@code agentBound3} property.
+   * @see #getAgentBound3
+   * @see #setAgentBound3
+   */
+  public static final Property agentBound3 = newProperty(Flags.SUMMARY, "", null);
+
+  /**
+   * Get the {@code agentBound3} property.
+   * @see #agentBound3
+   */
+  public String getAgentBound3() { return getString(agentBound3); }
+
+  /**
+   * Set the {@code agentBound3} property.
+   * @see #agentBound3
+   */
+  public void setAgentBound3(String v) { setString(agentBound3, v, null); }
+
+  //endregion Property "agentBound3"
+
+  //region Property "agentBound4"
+
+  /**
+   * Slot for the {@code agentBound4} property.
+   * @see #getAgentBound4
+   * @see #setAgentBound4
+   */
+  public static final Property agentBound4 = newProperty(Flags.SUMMARY, "", null);
+
+  /**
+   * Get the {@code agentBound4} property.
+   * @see #agentBound4
+   */
+  public String getAgentBound4() { return getString(agentBound4); }
+
+  /**
+   * Set the {@code agentBound4} property.
+   * @see #agentBound4
+   */
+  public void setAgentBound4(String v) { setString(agentBound4, v, null); }
+
+  //endregion Property "agentBound4"
+
+  //region Property "agentProposalMinutes"
+
+  /**
+   * Slot for the {@code agentProposalMinutes} property.
+   * Minutes a proposal waits for a person before it expires.
+   * @see #getAgentProposalMinutes
+   * @see #setAgentProposalMinutes
+   */
+  public static final Property agentProposalMinutes = newProperty(Flags.SUMMARY, 15, null);
+
+  /**
+   * Get the {@code agentProposalMinutes} property.
+   * Minutes a proposal waits for a person before it expires.
+   * @see #agentProposalMinutes
+   */
+  public int getAgentProposalMinutes() { return getInt(agentProposalMinutes); }
+
+  /**
+   * Set the {@code agentProposalMinutes} property.
+   * Minutes a proposal waits for a person before it expires.
+   * @see #agentProposalMinutes
+   */
+  public void setAgentProposalMinutes(int v) { setInt(agentProposalMinutes, v, null); }
+
+  //endregion Property "agentProposalMinutes"
+
+  //region Property "pendingProposals"
+
+  /**
+   * Slot for the {@code pendingProposals} property.
+   * Proposals waiting for a person. Approve or reject them with the actions below, using the id (e.g. P7).
+   * @see #getPendingProposals
+   * @see #setPendingProposals
+   */
+  public static final Property pendingProposals = newProperty(Flags.READONLY | Flags.TRANSIENT | Flags.SUMMARY, "none", null);
+
+  /**
+   * Get the {@code pendingProposals} property.
+   * Proposals waiting for a person. Approve or reject them with the actions below, using the id (e.g. P7).
+   * @see #pendingProposals
+   */
+  public String getPendingProposals() { return getString(pendingProposals); }
+
+  /**
+   * Set the {@code pendingProposals} property.
+   * Proposals waiting for a person. Approve or reject them with the actions below, using the id (e.g. P7).
+   * @see #pendingProposals
+   */
+  public void setPendingProposals(String v) { setString(pendingProposals, v, null); }
+
+  //endregion Property "pendingProposals"
+
+  //region Action "approveProposal"
+
+  /**
+   * Slot for the {@code approveProposal} action.
+   * Approves a pending agent proposal by id (e.g. P7). The write runs with your permissions.
+   * @see #approveProposal(BString parameter)
+   */
+  public static final Action approveProposal = newAction(Flags.OPERATOR, BString.make(""), null);
+
+  /**
+   * Invoke the {@code approveProposal} action.
+   * Approves a pending agent proposal by id (e.g. P7). The write runs with your permissions.
+   * @see #approveProposal
+   */
+  public void approveProposal(BString parameter) { invoke(approveProposal, parameter, null); }
+
+  //endregion Action "approveProposal"
+
+  //region Action "rejectProposal"
+
+  /**
+   * Slot for the {@code rejectProposal} action.
+   * Rejects a pending agent proposal by id (e.g. P7).
+   * @see #rejectProposal(BString parameter)
+   */
+  public static final Action rejectProposal = newAction(Flags.OPERATOR, BString.make(""), null);
+
+  /**
+   * Invoke the {@code rejectProposal} action.
+   * Rejects a pending agent proposal by id (e.g. P7).
+   * @see #rejectProposal
+   */
+  public void rejectProposal(BString parameter) { invoke(rejectProposal, parameter, null); }
+
+  //endregion Action "rejectProposal"
+
   //region Type
 
   @Override
@@ -869,6 +1274,58 @@ public final class BBaskStreamService extends BWebServlet
     catch (RuntimeException e)
     {
       LOG.log(Level.WARNING, "baskStream could not record an audit event", e);
+    }
+  }
+
+  /** Adds one "Agent" record to the station's audit history (see BaskStreamAgents). */
+  void auditAgent(String target, String slot, String value, String user)
+  {
+    try
+    {
+      javax.baja.security.Auditor auditor = Sys.getAuditor();
+      if (auditor != null)
+        auditor.audit(new javax.baja.security.AuditEvent(BaskStreamAgents.AUDIT_OPERATION, target, slot, null, value, user));
+    }
+    catch (RuntimeException e)
+    {
+      LOG.log(Level.WARNING, "baskStream could not record an agent audit event", e);
+    }
+  }
+
+  /** Shows the pending proposals on the read-only property. */
+  void showPendingProposals(String text)
+  {
+    Property p = getProperty("pendingProposals");
+    if (p != null && !text.equals(getString(p))) setString(p, text, null);
+  }
+
+  /** Workbench action: approve a proposal; the write runs with the invoking user's permissions. */
+  public void doApproveProposal(BString id, Context cx)
+  {
+    decideProposal(id, cx, true);
+  }
+
+  /** Workbench action: reject a proposal. */
+  public void doRejectProposal(BString id, Context cx)
+  {
+    decideProposal(id, cx, false);
+  }
+
+  private void decideProposal(BString id, Context cx, boolean approve)
+  {
+    BaskStreamWebSocketRuntime current = runtime;
+    if (current == null) throw new IllegalStateException("BASkStreamService is not running.");
+    try
+    {
+      java.util.Map<String, Object> result = approve
+          ? current.getAgents().approve(id == null ? "" : id.getString(), cx, null)
+          : current.getAgents().reject(id == null ? "" : id.getString(), null, cx, null);
+      if ("failed".equals(result.get("status")))
+        throw new IllegalStateException("The proposed write failed: " + result.get("note"));
+    }
+    catch (BaskStreamProtocolException e)
+    {
+      throw new IllegalStateException(e.getMessage());
     }
   }
 

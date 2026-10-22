@@ -41,7 +41,115 @@ final class BaskStreamRequests
   void handleWrite(String id, Map<String, Object> request) throws BaskStreamProtocolException
   {
     Map<String, Object> response = session.baseMessage("write_result", id);
-    response.put("points", runtime.getWriteResolver().write(request, context, () -> session.closed.get()));
+    response.put("points", runtime.getAgents().isAgent(session)
+        ? agentWrite(request)
+        : runtime.getWriteResolver().write(request, context, () -> session.closed.get()));
+    session.send(response);
+  }
+
+  /**
+   * An agent's write: each point is checked against the agent limits, then either becomes a
+   * proposal a person approves (agentApprovalRequired, the default) or is written directly.
+   * Entries carry {@code outcome}: "proposed" or "written".
+   */
+  private List<Object> agentWrite(Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    BaskStreamAgents agents = runtime.getAgents();
+    BaskStreamWriteResolver writer = runtime.getWriteResolver();
+    String reason = agents.reason(request);
+    boolean propose = agents.approvalRequired();
+    BaskStreamAgents.Limits limits = agents.limits();
+    List<Object> results = new ArrayList<Object>();
+    for (Map<String, Object> spec : writer.specs(request))
+    {
+      if (session.closed.get() || Thread.currentThread().isInterrupted()) break;
+      String pointOrd = BaskStreamWriteResolver.specPoint(spec);
+      try
+      {
+        Map<String, Object> summary = writer.checkAgentWrite(pointOrd, spec, context, limits);
+        String action = String.valueOf(summary.get("action"));
+        if (propose)
+        {
+          BaskStreamAgents.Proposal proposal = agents.propose(session, pointOrd, spec, summary, reason);
+          Map<String, Object> entry = new LinkedHashMap<String, Object>();
+          entry.put("point", pointOrd);
+          entry.put("ok", Boolean.TRUE);
+          entry.put("outcome", "proposed");
+          entry.put("proposal", proposal.toWire());
+          results.add(entry);
+        }
+        else
+        {
+          agents.takeChangeSlot(session, action, pointOrd, reason);
+          Map<String, Object> entry = writer.writeSingle(pointOrd, spec, context);
+          entry.put("outcome", "written");
+          agents.record(session, pointOrd, action, BaskStreamAgents.describeWrite(summary), reason, "written", null);
+          results.add(entry);
+        }
+      }
+      catch (BaskStreamProtocolException e)
+      {
+        // Limit refusals are worth keeping; agent_rate_limited is recorded where it is raised.
+        if ("agent_priority_blocked".equals(e.getCode()) || "agent_value_out_of_bounds".equals(e.getCode()))
+        {
+          agents.record(session, pointOrd, String.valueOf(spec.get("action")), null, reason, "refused", e.getCode());
+        }
+        Map<String, Object> entry = new LinkedHashMap<String, Object>();
+        entry.put("point", pointOrd);
+        entry.put("ok", Boolean.FALSE);
+        entry.put("code", e.getCode());
+        entry.put("message", e.getMessage());
+        results.add(entry);
+      }
+      catch (RuntimeException e)
+      {
+        Map<String, Object> entry = new LinkedHashMap<String, Object>();
+        entry.put("point", pointOrd);
+        entry.put("ok", Boolean.FALSE);
+        entry.put("code", "write_failed");
+        entry.put("message", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+        results.add(entry);
+      }
+    }
+    return results;
+  }
+
+  void handleDeclareActor(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    session.actor = BaskStreamAgents.parseActor(request);
+    Map<String, Object> response = session.baseMessage("actor_declared", id);
+    response.put("agents", runtime.getAgents().describe(session));
+    session.send(response);
+  }
+
+  void handleListProposals(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    String status = runtime.getCodec().optionalString(request, "status");
+    Map<String, Object> response = session.baseMessage("proposals_result", id);
+    response.put("proposals", runtime.getAgents().list(session, status == null || status.length() == 0 ? null : status));
+    response.put("pendingProposals", Long.valueOf(runtime.getAgents().pendingCount()));
+    session.send(response);
+  }
+
+  void handleApproveProposal(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("proposal_result", id);
+    response.put("proposal", runtime.getAgents().approve(runtime.getCodec().requireString(request, "proposal"), context, session));
+    session.send(response);
+  }
+
+  void handleRejectProposal(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("proposal_result", id);
+    response.put("proposal", runtime.getAgents().reject(runtime.getCodec().requireString(request, "proposal"),
+        runtime.getCodec().optionalString(request, "note"), context, session));
+    session.send(response);
+  }
+
+  void handleReadAgentLog(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("agent_log_result", id);
+    response.put("log", runtime.getHistoryResolver().readAgentLog(request.get("since"), request.get("limit"), context));
     session.send(response);
   }
 

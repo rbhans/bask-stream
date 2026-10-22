@@ -154,6 +154,14 @@ export async function runDoctor(profileName: string | undefined, stationArg: str
       outcome: "ok",
       detail: `user ${caps.authenticatedUser ?? "?"} · service writes ${caps.writesEnabled ? "on" : "off"} · model edits ${(caps.modelEditing as { enabled?: boolean } | undefined)?.enabled ? "on" : "off"}`
     });
+    const agents = caps.agents as { isAgent?: boolean; approvalRequired?: boolean; agentUsersConfigured?: boolean; pendingProposals?: number } | undefined;
+    if (agents) {
+      print({
+        name: "AI agents",
+        outcome: "ok",
+        detail: `${agents.isAgent ? "this login is treated as an agent" : "this login is a person"} · ${agents.agentUsersConfigured ? "agent users configured" : "no agent users listed"} · approval ${agents.approvalRequired ? "required" : "off"} · ${agents.pendingProposals ?? 0} waiting`
+      });
+    }
   } catch (error) {
     const code = error instanceof BaskStreamError ? ` [${error.code}]` : "";
     print({

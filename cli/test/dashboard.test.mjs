@@ -108,7 +108,7 @@ test("status view shows station and traffic", async () => {
   const { lastFrame, stdin, unmount } = mount({ view: "status" });
   try {
     const frame = await until(lastFrame, /requests/);
-    assert.match(frame, /api version\s+1\.7/);
+    assert.match(frame, /api version\s+1\.8/);
     stdin.write("?");
     await until(lastFrame, /Everywhere/);
   } finally {
@@ -134,5 +134,26 @@ test("finder searches, reveals in the tree, and watches with tab", async () => {
     console.log(frame);
   } finally {
     unmount();
+  }
+});
+
+test("proposals view shows an agent's proposal and approves it", async () => {
+  const agent = await BaskStreamClient.connect({ station: station.url, username: USER, password: PASSWORD, actor: { name: "Claude Code", onBehalfOf: "ben" } });
+  const { lastFrame, stdin, unmount } = mount({ allowWrites: true });
+  try {
+    await until(lastFrame, /Drivers/);
+    const entry = await agent.write(SPACE_TEMP, "override", 72, { reason: "Room 204 is too cold" });
+    await until(lastFrame, new RegExp(`New proposal ${entry.proposal.id} from Claude Code for ben`));
+    stdin.write("6");
+    await until(lastFrame, /waiting/);
+    assert.match(lastFrame(), /Room 204 is too cold/);
+    stdin.write("a");
+    await until(lastFrame, /It runs with your permissions/);
+    stdin.write("y");
+    const frame = await until(lastFrame, new RegExp(`${entry.proposal.id} approved`));
+    console.log(frame);
+  } finally {
+    unmount();
+    agent.close();
   }
 });

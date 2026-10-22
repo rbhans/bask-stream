@@ -6,7 +6,7 @@ import { BaskStreamError, CLIENT_ERRORS } from "./errors.js";
 import { StationHttp, type StationHttpOptions } from "./http.js";
 import { OPERATIONS, type OperationName } from "./operations.js";
 import { toSlotOrd } from "./ords.js";
-import type { AlarmFilter, BrowseNode, Json, PointSnapshot, ScheduleEntry, Weekday } from "./types.js";
+import type { Actor, AgentLog, AlarmFilter, BrowseNode, Json, PointSnapshot, Proposal, ScheduleEntry, Weekday } from "./types.js";
 
 export interface ClientOptions extends StationHttpOptions {
   username?: string;
@@ -18,6 +18,11 @@ export interface ClientOptions extends StationHttpOptions {
   onSession?: (cookies: Record<string, string>) => void;
   /** Keepalive ping interval. Default: the station's heartbeat interval, else 25 s. */
   keepAliveMs?: number;
+  /**
+   * Declares who is behind this connection (for AI agents) each time it connects. The station then
+   * applies its agent rules: changes need a reason, and point writes may become proposals.
+   */
+  actor?: Actor;
 }
 
 export interface CallOptions {
@@ -39,6 +44,7 @@ const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000, 30000];
  * Events:
  * - `value` (PointSnapshot): one point changed (from COV frames and resync reads).
  * - `cov`, `alarm`, `model`, `resync`, `revoked`, `notice` (Json): raw server-initiated frames.
+ * - `proposal` (Proposal, frame): an agent proposal was created or decided.
  * - `disconnected` ({ code, reason }), `reconnecting` ({ attempt, delayMs }), `reconnected` ().
  * - `error` (Error): a failure outside any request, such as a failed reconnect.
  */
@@ -77,6 +83,7 @@ export class BaskStreamClient extends EventEmitter {
     this.closedByUser = false;
     await this.ensureLogin();
     await this.openSocket();
+    if (this.options.actor) await this.call("declare_actor", { ...this.options.actor });
     const reply = await this.call("capabilities");
     this.capabilities = (reply.capabilities as Json) ?? {};
     this.startKeepAlive();
@@ -153,7 +160,11 @@ export class BaskStreamClient extends EventEmitter {
     return (await this.call("read", fields ? { points: ords, fields } : { points: ords })).points as PointSnapshot[];
   }
 
-  async write(point: string, action: string, value?: unknown, options: Json = {}): Promise<PointSnapshot> {
+  /**
+   * Writes one point. Pass `{ reason }` in options when acting as an agent. For agents the result
+   * has `outcome`: "proposed" (with a `proposal` a person must approve) or "written".
+   */
+  async write(point: string, action: string, value?: unknown, options: Json & { reason?: string } = {}): Promise<PointSnapshot> {
     const reply = await this.call("write", { point: toSlotOrd(point), action, ...(value === undefined ? {} : { value }), ...options });
     return (reply.points as PointSnapshot[])[0];
   }
@@ -174,12 +185,12 @@ export class BaskStreamClient extends EventEmitter {
     return (await this.call("read_alarms", options as Json)).alarms as Json;
   }
 
-  async ackAlarms(target: { uuids: string[] } | { filter: AlarmFilter; scope?: string; limit?: number }, dryRun = false): Promise<Json> {
-    return (await this.call("ack_alarms", { ...target, dryRun })).alarms as Json;
+  async ackAlarms(target: { uuids: string[] } | { filter: AlarmFilter; scope?: string; limit?: number }, dryRun = false, reason?: string): Promise<Json> {
+    return (await this.call("ack_alarms", { ...target, dryRun, ...(reason ? { reason } : {}) })).alarms as Json;
   }
 
-  async clearAlarms(target: { uuids: string[] } | { filter: AlarmFilter; scope?: string; limit?: number }, dryRun = false): Promise<Json> {
-    return (await this.call("clear_alarms", { ...target, dryRun })).alarms as Json;
+  async clearAlarms(target: { uuids: string[] } | { filter: AlarmFilter; scope?: string; limit?: number }, dryRun = false, reason?: string): Promise<Json> {
+    return (await this.call("clear_alarms", { ...target, dryRun, ...(reason ? { reason } : {}) })).alarms as Json;
   }
 
   async schedule(ord: string, at?: number): Promise<Json> {
@@ -191,8 +202,33 @@ export class BaskStreamClient extends EventEmitter {
     return (await this.call("read_schedule_events", { ord: toSlotOrd(ord), ...options })).schedule as Json;
   }
 
-  async writeSchedule(ord: string, days: Partial<Record<Weekday, ScheduleEntry[]>>, dryRun = false): Promise<Json> {
-    return (await this.call("write_schedule", { ord: toSlotOrd(ord), days, dryRun })).schedule as Json;
+  async writeSchedule(ord: string, days: Partial<Record<Weekday, ScheduleEntry[]>>, dryRun = false, reason?: string): Promise<Json> {
+    return (await this.call("write_schedule", { ord: toSlotOrd(ord), days, dryRun, ...(reason ? { reason } : {}) })).schedule as Json;
+  }
+
+  /** Says who is behind this connection; returns the agent rules that now apply. */
+  async declareActor(actor: Actor): Promise<Json> {
+    return (await this.call("declare_actor", { ...actor })).agents as Json;
+  }
+
+  /** Proposals this connection may see (an agent sees its own), newest first. */
+  async proposals(status?: Proposal["status"]): Promise<Proposal[]> {
+    return (await this.call("list_proposals", status ? { status } : {})).proposals as Proposal[];
+  }
+
+  /** Approves a proposal; the write runs with this user's permissions. People only. */
+  async approveProposal(id: string): Promise<Proposal> {
+    return (await this.call("approve_proposal", { proposal: id })).proposal as Proposal;
+  }
+
+  /** Rejects a proposal, with an optional note for the agent. People only. */
+  async rejectProposal(id: string, note?: string): Promise<Proposal> {
+    return (await this.call("reject_proposal", note ? { proposal: id, note } : { proposal: id })).proposal as Proposal;
+  }
+
+  /** "Agent" records from the station's audit history, newest first. */
+  async agentLog(options: { since?: number; limit?: number } = {}): Promise<AgentLog> {
+    return (await this.call("read_agent_log", options as Json)).log as AgentLog;
   }
 
   subscriptionStatus(includePoints = false): Promise<Json> {
@@ -317,6 +353,9 @@ export class BaskStreamClient extends EventEmitter {
         break;
       case "subscriptions_revoked":
         this.emit("revoked", frame);
+        break;
+      case "proposal_cov":
+        this.emit("proposal", frame.proposal as Proposal, frame);
         break;
       default:
         this.emit("notice", frame);

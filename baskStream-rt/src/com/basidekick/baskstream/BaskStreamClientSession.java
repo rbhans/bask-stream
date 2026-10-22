@@ -66,6 +66,8 @@ final class BaskStreamClientSession
   private final Object timerLock = new Object();
   final BaskStreamEventLane events;
   final BaskStreamAuthorizer authorizer;
+  /** Who the client says is behind this session ({@code declare_actor}); null until declared. */
+  volatile BaskStreamAgents.Actor actor;
   private volatile long requestStartedAt;
   private volatile String requestOp;
   private ScheduledFuture<?> revalidateFuture;
@@ -215,6 +217,11 @@ final class BaskStreamClientSession
     bound.put("read_tags", (id, op, request) -> requests.handleReadTags(id, request));
     bound.put("write_tags", (id, op, request) -> requests.handleWriteTags(id, request));
     bound.put("write_relations", (id, op, request) -> requests.handleWriteRelations(id, request));
+    bound.put("declare_actor", (id, op, request) -> requests.handleDeclareActor(id, request));
+    bound.put("list_proposals", (id, op, request) -> requests.handleListProposals(id, request));
+    bound.put("approve_proposal", (id, op, request) -> requests.handleApproveProposal(id, request));
+    bound.put("reject_proposal", (id, op, request) -> requests.handleRejectProposal(id, request));
+    bound.put("read_agent_log", (id, op, request) -> requests.handleReadAgentLog(id, request));
     for (String model : new String[] {
         "describe_component_types", "describe_component", "preview_model_changes", "apply_model_changes",
         "model_plan_status", "cancel_model_plan", "create_components", "update_component_properties",
@@ -268,7 +275,10 @@ final class BaskStreamClientSession
       {
         runtime.getService().requireModelEditsEnabled();
       }
+      // Agent sessions: reason, approval and rate checks before a change, and a record after it.
+      runtime.getAgents().beforeChange(this, op, operation.gate, request);
       handler.handle(id, op, request);
+      runtime.getAgents().afterChange(this, op, operation.gate, request);
     }
     catch (BaskStreamProtocolException e)
     {
@@ -371,6 +381,20 @@ final class BaskStreamClientSession
   void modelChanged(Set<String> affected)
   {
     models.modelChanged(affected);
+  }
+
+  /** Tells this client about a new or decided proposal it is allowed to see. */
+  void proposalChanged(BaskStreamAgents.Proposal proposal)
+  {
+    if (closed.get()) return;
+    events.submit(() -> {
+      if (closed.get() || !runtime.getAgents().canSee(this, proposal)) return;
+      Map<String, Object> notice = baseMessage("proposal_cov", null);
+      notice.put("timestamp", Long.valueOf(Clock.millis()));
+      notice.put("proposal", proposal.toWire());
+      notice.put("pendingProposals", Long.valueOf(runtime.getAgents().pendingCount()));
+      send(notice);
+    });
   }
 
   /** Sent after the event lane dropped a backlog: the client should re-read what it shows. */

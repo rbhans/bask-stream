@@ -84,6 +84,14 @@ if sdk_ops.exists():
     check(sdk_names == list(spec['operations']), 'sdk/src/operations.ts is out of date with the spec; run npm run gen in sdk/')
     check(f'API_VERSION = "{spec["apiVersion"]}"' in generated, 'sdk/src/operations.ts API_VERSION differs from the spec')
 
+# 7. No comment ends early: a "*/" inside a comment (e.g. an ORD pattern like .../*/ZoneSP) closes it
+# and turns the rest of the line into code. This broke a build once (2026-10-21).
+for path in sorted(p for p in src.glob('*.java') if not p.name.startswith('._')):  # skip macOS sidecar files
+    for number, line in enumerate(path.read_text(errors='replace').splitlines(), 1):
+        text = line.strip()
+        if (text.startswith('/*') or text.startswith('*')) and re.search(r'\*/\s*\S', text[2:]):
+            failures.append(f'{path.name}:{number}: "*/" inside a comment ends it early: {text[:80]}')
+
 if failures:
     print('FAIL:\n  ' + '\n  '.join(failures))
     sys.exit(1)

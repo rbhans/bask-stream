@@ -854,7 +854,7 @@
         <div class="guide-box">
           <div class="guide-title">Quick Start</div>
           <div class="guide-text">
-            Run <code>node tools/baskstream-nav-tree-server.mjs --port=8787</code> and open <code>http://127.0.0.1:8787/</code>. Use this guide for module startup, what's new in API 1.7, the <code>bask</code> CLI and TypeScript SDK, and live testing.
+            Run <code>node tools/baskstream-nav-tree-server.mjs --port=8787</code> and open <code>http://127.0.0.1:8787/</code>. Use this guide for module startup, what's new in API 1.8, AI agents, the <code>bask</code> CLI and TypeScript SDK, and live testing.
           </div>
         </div>
         <div class="health-box">
@@ -898,7 +898,7 @@
             <h2>What's New</h2>
           </div>
           <div class="guide-panel-body">
-            <p>The module now reports API <code>1.7</code>. It adds history rollups, alarm filters, schedule events and edits, metrics and the audit trail; API 1.6 added model editing. Everything below is additive unless listed under "Changed or tightened". Call <code>capabilities</code> to see what the deployed station supports.</p>
+            <p>The module now reports API <code>1.8</code>, which adds optional AI agent controls (below). API 1.7 added history rollups, alarm filters, schedule events and edits, metrics and the audit trail; API 1.6 added model editing. Everything below is additive unless listed under "Changed or tightened". Call <code>capabilities</code> to see what the deployed station supports.</p>
             <div class="guide-grid">
               <div class="guide-note"><strong>Station model editing (1.6)</strong>Describe installed types and components, then preview and apply creates, updates, renames, moves, deletes, links and hierarchy changes. Needs <code>modelEditsEnabled</code>. See <code>docs/MODEL_EDITING_API.md</code>.</div>
               <div class="guide-note"><strong>History rollups</strong><code>read_history_rollup</code> returns fixed-width buckets (count, min, max, avg, first, last), so a month of one-hour chart points is about 720 rows instead of every record.</div>
@@ -933,6 +933,22 @@ bask                                                 # full-screen dashboard</pr
               <div class="guide-note"><strong>Safe by default</strong>Read-only unless started with <code>--allow-writes</code>, and every write or alarm acknowledgement asks first. The password is never saved.</div>
               <div class="guide-note"><strong>More</strong>Full command list in <code>cli/README.md</code>. Releases: <code>github.com/rbhans/bask-stream/releases</code>.</div>
             </div>
+          </div>
+        </section>
+
+        <section class="guide-panel full">
+          <div class="guide-panel-head">
+            <h2>AI Agents (Optional)</h2>
+          </div>
+          <div class="guide-panel-body">
+            <p>baskStream can tell an AI agent apart from a person, ask why it is changing something, keep it within limits, and let a person approve its writes first. Nothing changes until you use it. Niagara roles stay the hard boundary, and Niagara's audit history stays the record of truth.</p>
+            <div class="guide-grid">
+              <div class="guide-note"><strong>Turn it on</strong>Put the agent's Niagara login in <code>agentUsers</code> on BASkStreamService. Agents can also declare themselves with <code>declare_actor</code> (bask: <code>--agent "Claude Code"</code>).</div>
+              <div class="guide-note"><strong>Proposals</strong>By default an agent's point write becomes a proposal. Approve it in Workbench (service actions, ids listed in <code>pendingProposals</code>), with <code>bask approve P7</code>, or in the dashboard's Proposals view. It runs with the approver's permissions.</div>
+              <div class="guide-note"><strong>Limits</strong>A reason on every change, 10 changes a minute, no emergency level 1, the point's min/max facets, and up to four ranges like <code>slot:/Drivers/*/ZoneSP 68..76</code>. Each has an off setting.</div>
+              <div class="guide-note"><strong>Record</strong>Each agent action adds an <code>Agent</code> record to the station's audit history beside Niagara's own: who, which model, for whom, why, and what happened. <code>bask agent-log</code> reads them.</div>
+            </div>
+            <p>Full setup: <code>docs/AI_AGENTS.md</code>.</p>
           </div>
         </section>
 
@@ -1053,6 +1069,7 @@ watch.on("change", (p) =&gt; render(p.point, p.value));</pre>
                 <tr><td>Tags and relations</td><td><code>read_tags</code>, <code>write_tags</code>, <code>write_relations</code></td><td>Read direct and implied tags, and edit direct tags and relations.</td></tr>
                 <tr><td>Model editing</td><td><code>describe_component</code>, <code>preview_model_changes</code>, <code>apply_model_changes</code></td><td>Preview, then apply, station model changes (needs <code>modelEditsEnabled</code>).</td></tr>
                 <tr><td>Model changes</td><td><code>subscribe_model</code></td><td>Receive branch-scoped hints, then refresh affected nodes with browse or describe.</td></tr>
+                <tr><td>AI agents</td><td><code>declare_actor</code>, <code>list_proposals</code>, <code>approve_proposal</code>, <code>reject_proposal</code>, <code>read_agent_log</code></td><td>Mark a session as an agent, decide its proposed writes, and read the agent records in the audit history.</td></tr>
                 <tr><td>Diagnostics</td><td><code>subscription_status</code>, <code>GET /stream/metrics</code></td><td>Inspect subscriptions and leases; scrape request, error, resync and connection counters.</td></tr>
               </tbody>
             </table>

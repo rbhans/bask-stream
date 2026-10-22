@@ -12,8 +12,9 @@ The repository's own code and documentation are open source under the [Apache Li
 
 ## Current API highlights
 
-- The current source advertises API version `1.7`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
-- API 1.7 adds, all additive: `read_history_rollup` (time-bucketed min/max/avg for charts), alarm filters with newest-first reads and filtered acknowledge/clear with `dryRun`, `read_schedule_events` and `write_schedule`, OpenMetrics counters at `/stream/metrics`, and audit-trail records for every change made through the stream.
+- The current source advertises API version `1.8`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
+- API 1.8 adds optional [AI agent controls](docs/AI_AGENTS.md): actor context, a reason on every change, rate and value limits, point-write proposals a person approves, and `Agent` records in the station's audit history. Nothing changes until an agent user is listed or a session declares itself an agent.
+- API 1.7 added, all additive: `read_history_rollup` (time-bucketed min/max/avg for charts), alarm filters with newest-first reads and filtered acknowledge/clear with `dryRun`, `read_schedule_events` and `write_schedule`, OpenMetrics counters at `/stream/metrics`, and audit-trail records for every change made through the stream.
 - A [TypeScript SDK](sdk/README.md) and the [`bask` CLI and terminal dashboard](cli/README.md) are the first clients built on the shared protocol spec.
 - API 1.6 added [station model editing](docs/MODEL_EDITING_API.md): installed component types, properties, clone/rename/move/delete, hierarchy configuration, slots, links and actions, with preview/apply and recorded outcomes.
 - `BASkStreamService.writesEnabled=false` turns off all writes through the module while reads continue. It defaults to true for compatibility. New model-plan application additionally requires `modelEditsEnabled=true` (default false).
@@ -104,6 +105,15 @@ Everything is read-only unless you add `--allow-writes`, and every write or alar
 
 - **Update:** run the install command again.
 - **Uninstall:** delete the `bask` executable and the saved sessions in `~/.config/baskstream` (Windows: `%APPDATA%\baskstream`).
+
+## AI agents
+
+All optional; see [docs/AI_AGENTS.md](docs/AI_AGENTS.md). In short:
+
+1. Give the agent its own Niagara user with a role covering only what it should touch.
+2. List that login in **`agentUsers`** on BASkStreamService.
+
+That agent's point writes then become proposals that a person approves in Workbench, with `bask approve P7`, or in the dashboard's Proposals view. Each change needs a reason, stays within simple limits (rate, no emergency level, value ranges), and leaves an `Agent` record next to Niagara's own audit record. With `bask`, an agent declares itself with `--agent "Claude Code" --reason "…"`.
 
 ## Grafana integration
 

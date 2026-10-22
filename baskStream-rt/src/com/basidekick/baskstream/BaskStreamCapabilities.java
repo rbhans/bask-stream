@@ -12,7 +12,7 @@ import javax.baja.sys.Context;
 final class BaskStreamCapabilities
 {
   /** The protocol version reported by capabilities and /stream/health. Keep in step with spec/baskstream-protocol.json. */
-  static final String API_VERSION = "1.7";
+  static final String API_VERSION = "1.8";
 
   private final BaskStreamClientSession session;
   private final BaskStreamWebSocketRuntime runtime;
@@ -35,6 +35,7 @@ final class BaskStreamCapabilities
     capabilities.put("authenticatedUser", session.user.getUsername());
     capabilities.put("operations", BaskStreamOperations.names());
     capabilities.put("writesEnabled", runtime.getService().writesAllowed());
+    capabilities.put("agents", runtime.getAgents().describe(session));
     capabilities.put("modelEditing", BaskStreamModelPlans.map("enabled", runtime.getService().modelEditsAllowed(),
         "actions", java.util.Arrays.asList(BaskStreamModelResolver.ACTIONS), "maxChanges", BaskStreamModelResolver.MAX_CHANGES,
         "previewRequired", true, "atomic", false, "planTtlMillis", BaskStreamModelPlans.PREVIEW_TTL,
@@ -83,6 +84,7 @@ final class BaskStreamCapabilities
     schemas.put("subscriptionGroups", "1");
     schemas.put("cov", "2");
     schemas.put("tags", "1");
+    schemas.put("agents", "1");
     capabilities.put("schemas", schemas);
 
     Map<String, Object> subscriptionsMeta = new LinkedHashMap<String, Object>();
