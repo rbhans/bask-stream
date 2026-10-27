@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 Ben Hansen. Licensed under the Apache License, Version 2.0.
+ * Copyright 2026 Robert Hansen. Licensed under the Apache License, Version 2.0.
  */
 
 import com.tridium.gradle.plugins.bajadoc.task.Bajadoc

@@ -16,7 +16,7 @@
     "server": "docker compose up --build",
     "sign": "sign-plugin"
   },
-  "author": "Basidekick",
+  "author": "BASidekick",
   "license": "Apache-2.0",
   "devDependencies": {
     "@grafana/eslint-config": "^9.0.0",
