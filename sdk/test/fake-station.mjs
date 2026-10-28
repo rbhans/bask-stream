@@ -46,7 +46,7 @@ export async function startFakeStation() {
     }
     if (req.url === "/stream/health") {
       if (!sessions.has(sid)) return void res.writeHead(302, { Location: "/prelogin" }).end();
-      return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, apiVersion: "1.8" }));
+      return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, apiVersion: "1.9" }));
     }
     if (req.url === "/stream/metrics") {
       if (!sessions.has(sid)) return void res.writeHead(302).end();
@@ -97,7 +97,7 @@ export async function startFakeStation() {
     });
   });
 
-  const value = (point) => ({ point, ok: true, valueType: "numeric", value: 72.5, status: "{ok}", timestamp: Date.now() });
+  const value = (point) => ({ point, ok: true, statusOk: true, state: "ok", valueType: "numeric", value: 72.5, displayValue: "72.5 °F", status: "{ok}", timestamp: Date.now() });
   const send = (ws, frame) => ws.send(encode(frame));
 
   const isAgent = (ws) => Boolean(ws.actor && ws.actor.kind !== "person");
@@ -114,7 +114,7 @@ export async function startFakeStation() {
       case "ping":
         return send(ws, { op: "pong", id });
       case "capabilities":
-        return send(ws, { op: "capabilities_result", id, capabilities: { apiVersion: "1.8", authenticatedUser: USER, limits: { heartbeatIntervalSec: 30 }, agents: agentRules(ws) } });
+        return send(ws, { op: "capabilities_result", id, capabilities: { apiVersion: "1.9", authenticatedUser: USER, limits: { heartbeatIntervalSec: 30 }, agents: agentRules(ws) } });
       case "declare_actor":
         ws.actor = { kind: request.kind ?? "agent", name: request.name, model: request.model, onBehalfOf: request.onBehalfOf };
         return send(ws, { op: "actor_declared", id, agents: agentRules(ws) });
@@ -136,7 +136,7 @@ export async function startFakeStation() {
       case "read_agent_log":
         return send(ws, { op: "agent_log_result", id, log: { since: 0, count: state.agentLog.length, truncated: false, records: [...state.agentLog].reverse() } });
       case "read":
-        return send(ws, { op: "read_result", id, points: request.points.map(value) });
+        return send(ws, { op: "read_result", id, points: request.points.map((p) => (request.fresh ? { ...value(p), fresh: true } : value(p))) });
       case "replace_subscriptions":
         state.groups.set(request.group, request.points);
         return send(ws, { op: "subscriptions_replaced", id, group: request.group, points: request.points, leaseSec: request.leaseSec });

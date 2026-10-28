@@ -112,6 +112,22 @@ final class BaskStreamOperations
     return OPERATIONS.get(name);
   }
 
+  /** Operations whose target field is "ord" (or "ords"); "point" ("points") is accepted for it. */
+  private static final java.util.Set<String> ORD_TARGETED = new java.util.HashSet<String>(java.util.Arrays.asList(
+      "describe", "read_history", "describe_history", "read_history_rollup", "read_schedule", "read_schedule_events",
+      "write_schedule", "read_tags", "describe_component"));
+
+  /**
+   * Accepts "point"/"points" where an operation's target field is "ord"/"ords", so clients that
+   * think in points do not get "Field 'ord' is required" for the field they did send.
+   */
+  static void applyAliases(String op, java.util.Map<String, Object> request)
+  {
+    if (!ORD_TARGETED.contains(op)) return;
+    if (!request.containsKey("ord") && request.get("point") instanceof String) request.put("ord", request.get("point"));
+    if (!request.containsKey("ords") && request.get("points") instanceof java.util.List) request.put("ords", request.get("points"));
+  }
+
   static List<String> names()
   {
     return new ArrayList<String>(OPERATIONS.keySet());

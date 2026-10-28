@@ -27,10 +27,20 @@ final class BaskStreamRequests
     List<String> points = runtime.getCodec().requireStringList(request, "points");
     session.requireMaxSize(points, "points", runtime.getService().getMaxPointSnapshotPointsValue());
     List<String> fields = normalizeSnapshotFields(request);
+    java.util.Set<String> leased = Boolean.TRUE.equals(request.get("fresh"))
+        ? leaseAndWait(points, request.get("freshWaitMillis"))
+        : java.util.Collections.<String>emptySet();
     List<Object> results = new ArrayList<Object>(points.size());
     for (String pointOrd : points)
     {
-      results.add(resolveReadResult(pointOrd, fields));
+      Object result = resolveReadResult(pointOrd, fields);
+      if (leased.contains(pointOrd) && result instanceof Map)
+      {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> entry = (Map<String, Object>) result;
+        entry.put("fresh", Boolean.TRUE);
+      }
+      results.add(result);
     }
 
     Map<String, Object> response = session.baseMessage("read_result", id);
@@ -247,6 +257,7 @@ final class BaskStreamRequests
         request.get("end"),
         request.get("interval"),
         request.get("includeInvalid"),
+        request.get("includeEmpty"),
         context));
     session.send(response);
   }
@@ -333,13 +344,52 @@ final class BaskStreamRequests
       for (Object input : inputs)
       {
         Map<String, Object> change = new LinkedHashMap<String, Object>(BaskStreamModelResolver.object(input, "change"));
-        change.remove("op"); change.remove("id"); change.put("action", action); changes.add(change);
+        change.remove("op"); change.remove("id"); change.remove("reason"); change.remove("verbose");
+        change.put("action", action); changes.add(change);
       }
       result = model.preview(BaskStreamModelPlans.map("changes", changes), context);
     }
+    boolean planReply = !"describe_component_types".equals(op) && !"describe_component".equals(op);
+    if (planReply && !Boolean.TRUE.equals(request.get("verbose"))) result = compactModelResult(result);
     Map<String, Object> response = session.baseMessage("model_result", id);
     response.put("operation", op); response.put("result", result);
     session.send(response);
+  }
+
+  /**
+   * Since API 1.9 plan replies (preview, apply, status, cancel and the convenience operations)
+   * leave out each change's before/after values and each result's component snapshot, which made
+   * a 100-change plan about 250 KB. The plan id, hash, actions, ORDs, value hashes and outcomes
+   * stay. Pass verbose: true for the full reply; the plan itself and its hash are unchanged.
+   */
+  private static Map<String, Object> compactModelResult(Map<String, Object> result)
+  {
+    if (result == null) return null;
+    Map<String, Object> compact = new LinkedHashMap<String, Object>(result);
+    for (String key : new String[] { "changes", "results" })
+    {
+      Object list = compact.get(key);
+      if (!(list instanceof List)) continue;
+      List<Object> slim = new ArrayList<Object>();
+      for (Object item : (List<?>) list)
+      {
+        if (item instanceof Map)
+        {
+          Map<Object, Object> copy = new LinkedHashMap<Object, Object>((Map<?, ?>) item);
+          copy.remove("before");
+          copy.remove("after");
+          copy.remove("snapshot");
+          slim.add(copy);
+        }
+        else
+        {
+          slim.add(item);
+        }
+      }
+      compact.put(key, slim);
+    }
+    compact.put("compact", Boolean.TRUE);
+    return compact;
   }
 
   void handleReadSchedule(String id, Map<String, Object> request) throws BaskStreamProtocolException
@@ -390,6 +440,55 @@ final class BaskStreamRequests
     Map<String, Object> response = session.baseMessage("relations_written", id);
     response.put("targets", runtime.getTagResolver().writeRelations(request, context));
     session.send(response);
+  }
+
+  static final long FRESH_LEASE_MILLIS = 60000L;
+  static final long DEFAULT_FRESH_WAIT_MILLIS = 3000L;
+  static final long MAX_FRESH_WAIT_MILLIS = 10000L;
+
+  /**
+   * read with fresh: true. Points nothing is subscribed to (proxy points are often only polled
+   * while watched) are leased, Niagara's temporary subscription, and the read waits up to
+   * freshWaitMillis for their first good value. Returns the points that were leased.
+   */
+  private java.util.Set<String> leaseAndWait(List<String> points, Object waitValue)
+  {
+    long wait = waitValue instanceof Number
+        ? Math.max(0L, Math.min(MAX_FRESH_WAIT_MILLIS, ((Number) waitValue).longValue()))
+        : DEFAULT_FRESH_WAIT_MILLIS;
+    java.util.Set<String> leased = new java.util.LinkedHashSet<String>();
+    List<javax.baja.control.BControlPoint> waiting = new ArrayList<javax.baja.control.BControlPoint>();
+    for (String pointOrd : points)
+    {
+      try
+      {
+        javax.baja.sys.BComponent component = runtime.getResolver().resolve(pointOrd, context).getComponent();
+        if (!(component instanceof javax.baja.control.BControlPoint) || component.isSubscribed()) continue;
+        component.lease(0, FRESH_LEASE_MILLIS);
+        leased.add(pointOrd);
+        waiting.add((javax.baja.control.BControlPoint) component);
+      }
+      catch (BaskStreamProtocolException | RuntimeException e)
+      {
+        // The read reports this point's error; a lease failure only means no wait for it.
+      }
+    }
+    long deadline = System.currentTimeMillis() + wait;
+    while (!waiting.isEmpty() && System.currentTimeMillis() < deadline && !session.closed.get())
+    {
+      waiting.removeIf(point -> !point.getStatus().isStale());
+      if (waiting.isEmpty()) break;
+      try
+      {
+        Thread.sleep(100L);
+      }
+      catch (InterruptedException e)
+      {
+        Thread.currentThread().interrupt();
+        break;
+      }
+    }
+    return leased;
   }
 
   private Object resolveReadResult(String pointOrd, List<String> fields)

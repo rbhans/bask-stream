@@ -25,7 +25,7 @@ test("logs in with SCRAM, loads capabilities and reads points", async () => {
   let saved;
   const client = await connect({ onSession: (cookies) => (saved = cookies) });
   try {
-    assert.equal(client.capabilities.apiVersion, "1.8");
+    assert.equal(client.capabilities.apiVersion, "1.9");
     assert.ok(saved?.JSESSIONID, "session cookies were reported");
     const [snapshot] = await client.read(["slot:/Drivers/A"]);
     assert.equal(snapshot.value, 72.5);
@@ -210,5 +210,22 @@ test("the actor is declared again after a reconnect", async () => {
     assert.equal(agent.capabilities.agents.isAgent, true);
   } finally {
     agent.close();
+  }
+});
+
+test("read passes fields and fresh, and keeps the old fields-array form", async () => {
+  const client = await connect();
+  try {
+    const [plain] = await client.read(["slot:/A"]);
+    assert.equal(plain.fresh, undefined);
+    assert.equal(plain.state, "ok");
+    const [fresh] = await client.read(["slot:/A"], { fresh: true, freshWaitMillis: 1000 });
+    assert.equal(fresh.fresh, true);
+    const sent = station.state.requests.filter((r) => r.op === "read").at(-1);
+    assert.equal(sent.freshWaitMillis, 1000);
+    await client.read(["slot:/A"], ["value"]);
+    assert.deepEqual(station.state.requests.filter((r) => r.op === "read").at(-1).fields, ["value"]);
+  } finally {
+    client.close();
   }
 });

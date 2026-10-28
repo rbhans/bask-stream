@@ -239,7 +239,7 @@ function Details({ node, detail, width }: { node: BrowseNode; detail?: { snapsho
           <Text> </Text>
           <Text>
             <Text color={theme.muted}>{"value".padEnd(9)}</Text>
-            <Text bold color={s.code ? theme.bad : s.ok === false ? statusTone(s.status) : "white"}>
+            <Text bold color={s.code ? theme.bad : s.statusOk === false || s.ok === false ? statusTone(s.status) : "white"}>
               {fmtPoint(s)}
             </Text>
           </Text>

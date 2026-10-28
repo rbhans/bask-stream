@@ -275,6 +275,7 @@ final class BaskStreamClientSession
       {
         runtime.getService().requireModelEditsEnabled();
       }
+      BaskStreamOperations.applyAliases(op, request);
       // Agent sessions: reason, approval and rate checks before a change, and a record after it.
       runtime.getAgents().beforeChange(this, op, operation.gate, request);
       handler.handle(id, op, request);

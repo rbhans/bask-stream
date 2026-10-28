@@ -107,7 +107,7 @@ final class BaskStreamPointResolver
     {
       BObject source = point.getSnapshotSource();
       String status = BStatus.ok.toString(context);
-      boolean ok = true;
+      BStatus pointStatus = null;
       Object wireValue = null;
       String displayValue = null;
       String valueType = source.getType().toString();
@@ -117,8 +117,8 @@ final class BaskStreamPointResolver
       if (source instanceof BIStatusValue)
       {
         BStatusValue statusValue = ((BIStatusValue) source).getStatusValue();
-        status = statusValue.getStatus().toString(context);
-        ok = statusValue.getStatus().isOk();
+        pointStatus = statusValue.getStatus();
+        status = pointStatus.toString(context);
         source = statusValue.getValueValue();
         valueType = source.getType().toString();
       }
@@ -153,10 +153,14 @@ final class BaskStreamPointResolver
 
       if (displayValue == null)
       {
-        displayValue = source.toString(context);
+        // Format with the point's facets, as Workbench does (trueText, precision, units).
+        displayValue = source.toString(facetContext(point.getComponent(), context));
       }
+      // Since API 1.9 "ok" means the read worked; the point's own status is statusOk and state.
+      extra.put("statusOk", Boolean.valueOf(pointStatus == null || pointStatus.isOk()));
+      extra.put("state", state(pointStatus, point.getComponent()));
       return new PointSnapshot(point.getPointOrd(), point.getDisplayName(), valueType, wireValue,
-          displayValue, status, ok, Clock.millis(), extra);
+          displayValue, status, true, Clock.millis(), extra);
     }
     catch (BaskStreamProtocolException e)
     {
@@ -166,6 +170,30 @@ final class BaskStreamPointResolver
     {
       throw new BaskStreamProtocolException("read_failed", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
     }
+  }
+
+  private static Context facetContext(BComponent component, Context context)
+  {
+    if (!(component instanceof BControlPoint)) return context;
+    BFacets facets = ((BControlPoint) component).getFacets();
+    return facets == null || facets.isNull() || facets.isEmpty() ? context : new javax.baja.sys.BasicContext(context, facets);
+  }
+
+  /**
+   * One word for the point's status. "unsubscribed" is a stale point nothing is subscribed to,
+   * typically a proxy point that is only polled while watched; read with fresh: true or watch it.
+   */
+  static String state(BStatus status, BComponent component)
+  {
+    if (status == null) return "ok";
+    if (status.isDisabled()) return "disabled";
+    if (status.isFault()) return "fault";
+    if (status.isDown()) return "down";
+    if (status.isAlarm()) return "alarm";
+    if (status.isStale()) return component != null && !component.isSubscribed() ? "unsubscribed" : "stale";
+    if (status.isOverridden()) return "overridden";
+    if (status.isNull()) return "null";
+    return status.isOk() ? "ok" : "other";
   }
 
   private Map<String, Object> pointFacets(BComponent component, Context context)

@@ -85,7 +85,8 @@ export const alarmState = (alarm: Record<string, unknown>) => String(alarm.sourc
 
 /** An alarm's message text, with unresolved "%lexicon(module:key)%" references shown as the key. */
 export function alarmMessage(alarm: Record<string, unknown>): string {
-  const text = String(((alarm.data ?? {}) as Record<string, unknown>).msgText ?? alarm.summary ?? "");
+  // API 1.9+ stations resolve the message (lexicon included); older ones send only data.msgText.
+  const text = String(alarm.message ?? ((alarm.data ?? {}) as Record<string, unknown>).msgText ?? alarm.summary ?? "");
   return text.replace(/%lexicon\([^:)]*:([^)]*)\)%/g, (_m, key: string) => key.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase());
 }
 

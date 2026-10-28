@@ -97,7 +97,7 @@ Response:
   "op": "capabilities_result",
   "id": "caps-1",
   "capabilities": {
-    "apiVersion": "1.8",
+    "apiVersion": "1.9",
     "operations": ["ping", "capabilities", "browse", "describe", "search", "read", "subscribe", "unsubscribe", "replace_subscriptions", "renew_subscriptions", "release_subscriptions", "subscription_status", "write", "describe_write", "read_history", "describe_history", "read_alarms", "ack_alarm", "ack_alarms", "clear_alarm", "clear_alarms", "subscribe_alarms", "unsubscribe_alarms", "read_schedule", "subscribe_model", "unsubscribe_model", "read_tags", "write_tags", "write_relations", "describe_component_types", "describe_component", "preview_model_changes", "apply_model_changes", "model_plan_status", "cancel_model_plan", "create_components", "update_component_properties", "rename_component", "move_components", "delete_components", "create_hierarchy", "configure_hierarchy"],
     "writesEnabled": true,
     "modelEditing": { "enabled": false, "maxChanges": 100, "previewRequired": true, "atomic": false },
@@ -1321,6 +1321,27 @@ Recommended client approach:
 The `metadata` block is additive and request-controlled. Clients can ignore it or omit it and continue using `ord`, `slotPath`, `name`, `typeSpec`, `features`, `operations`, and point read/write payloads.
 
 Third-party clients should not require every metadata subfield to be populated. Different protocols and station models expose different evidence.
+
+### API 1.9 changes
+
+`apiVersion` advanced from `1.8` to `1.9`. Fixes and lighter replies, from testing against a demo station. **Changed replies** (clients may need updating):
+
+- **Point snapshots** (`read`, `subscribe`, `cov`, write results): `ok` now means the read worked. A point in alarm or stale still reads with `ok: true`; its status is in `statusOk` and `state` (`ok`, `alarm`, `fault`, `down`, `stale`, `unsubscribed`, `overridden`, `disabled`, `null`). `ok: false` with a `code` is a failed read. `displayValue` is formatted with the point's facets (`trueText`, `precision`, units), as Workbench shows it.
+- **`write_tags` / `write_relations`** reply with per-operation `results` only. Add `echo: true` (or `"tags"` / `"relations"`) for the target's full list.
+- **Model plan replies** (preview, apply, status, cancel, convenience operations) leave out `before`/`after` values and component `snapshot`s and carry `compact: true`. Add `verbose: true` for the full reply. Plan ids, hashes and checks are unchanged.
+- **`read_history_rollup`** returns every bucket in the window; empty ones are `{start, count: 0}` (`includeEmpty: false` for the old behaviour). Each history adds `emptyBuckets`, `coverage` (share of intervals with data) and `longestGapMillis`.
+
+**Additions and fixes:**
+
+- `read` takes `fresh: true`: points nothing is subscribed to (proxy points often only poll while watched, and otherwise read as `state: "unsubscribed"`) are leased and the read waits up to `freshWaitMillis` (default 3000) for a value.
+- `read_tags` filters relations with `relationId` and `relationDirection`, pages them with `relationOffset`/`relationLimit` (`relationsTruncated`, `relationCount`), and returns `relationCounts` with `relations: "counts"`.
+- Relations name their endpoint (`endpointOrd`, `endpointName`, `endpointDisplay`, `endpointHandle`) instead of `"null"`, and `source` is `direct` (stored on this component), `endpoint` (stored on the other one) or `implied`.
+- Alarm records carry `message`, the alarm text resolved as the alarm console shows it (lexicon references included), and `messageFormat`, the raw format.
+- `browse` and `search` of a deep `hierarchy:` ORD follow the hierarchy's levels instead of falling back to the bound component's slot children.
+- `create_hierarchy` adds a `Station` scope (`scopeOrd`, default `station:|slot:/`) as a palette hierarchy has; `scopeOrd: null` leaves it out.
+- Move, rename and delete in model plans work again for dynamic components; the refusal now says which check failed.
+- `describe_component_types` refuses unknown fields, takes `typeSpecs` (up to 20), and reports type-level `writable` from slot flags.
+- Operations whose target field is `ord`/`ords` also accept `point`/`points`, and missing-field errors no longer name a different operation.
 
 ### API 1.8 changes
 

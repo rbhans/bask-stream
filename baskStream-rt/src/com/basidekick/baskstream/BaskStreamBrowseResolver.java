@@ -202,9 +202,13 @@ final class BaskStreamBrowseResolver
         throw new BaskStreamProtocolException("invalid_point", "Resolved browse target was null.");
       }
 
-      BINavNode navNode = object instanceof BINavNode
-          ? (BINavNode) object
-          : (target.getComponent() instanceof BINavNode ? (BINavNode) target.getComponent() : null);
+      BINavNode navNode = hierarchyNavNode(ord, context);
+      if (navNode == null)
+      {
+        navNode = object instanceof BINavNode
+            ? (BINavNode) object
+            : (target.getComponent() instanceof BINavNode ? (BINavNode) target.getComponent() : null);
+      }
 
       if (navNode == null)
       {
@@ -911,8 +915,14 @@ final class BaskStreamBrowseResolver
           relations.add(wire);
           continue;
         }
-        wire.put("endpointOrd", relation.getEndpointOrd() == null ? null : relation.getEndpointOrd().toString());
-        wire.put("endpoint", relation.getEndpoint() == null ? null : relation.getEndpoint().toString());
+        // Niagara often reports a null endpoint ORD; the endpoint component knows its own.
+        Object endpoint = relation.getEndpoint();
+        BComponent endpointComponent = endpoint instanceof BComponent ? (BComponent) endpoint : null;
+        BOrd endpointOrd = relation.getEndpointOrd();
+        wire.put("endpointOrd", endpointComponent != null && endpointComponent.getSlotPath() != null
+            ? endpointComponent.getSlotPathOrd().toString()
+            : endpointOrd == null || endpointOrd.isNull() ? null : endpointOrd.toString());
+        wire.put("endpoint", endpointComponent != null ? endpointComponent.getDisplayName(context) : endpoint == null ? null : endpoint.toString());
         relations.add(wire);
       }
     }
@@ -1174,9 +1184,13 @@ final class BaskStreamBrowseResolver
         throw new BaskStreamProtocolException("invalid_point", "Resolved search target was null.");
       }
 
-      BINavNode navNode = object instanceof BINavNode
-          ? (BINavNode) object
-          : (target.getComponent() instanceof BINavNode ? (BINavNode) target.getComponent() : null);
+      BINavNode navNode = hierarchyNavNode(ord, context);
+      if (navNode == null)
+      {
+        navNode = object instanceof BINavNode
+            ? (BINavNode) object
+            : (target.getComponent() instanceof BINavNode ? (BINavNode) target.getComponent() : null);
+      }
 
       if (navNode == null)
       {
@@ -1639,6 +1653,51 @@ final class BaskStreamBrowseResolver
   private boolean isAllowed(String ord)
   {
     return BaskStreamAccessPolicy.isAllowed(service, ord);
+  }
+
+  /**
+   * The hierarchy's own nav node (a level element) for a hierarchy: ORD. Resolving a deep
+   * hierarchy ORD lands on the bound component, whose nav children are its slot children, so
+   * browsing past the first level showed the folder's points instead of the next level. Walk the
+   * hierarchy space from its root instead. Returns null for slot ORDs or when the walk fails, and
+   * callers keep the resolved target.
+   */
+  private BINavNode hierarchyNavNode(String ord, Context context)
+  {
+    if (!isHierarchyOrd(ord)) return null;
+    try
+    {
+      String wanted = hierarchyPart(ord);
+      BObject root = BOrd.make("hierarchy:").resolve(service, context).get();
+      if (!(root instanceof BINavNode)) return null;
+      BINavNode node = (BINavNode) root;
+      if (wanted.equals("hierarchy:") || wanted.equals("hierarchy:/")) return node;
+      for (int depth = 0; depth < 32 && node != null; depth++)
+      {
+        BINavNode next = null;
+        for (BINavNode child : node.getNavChildren())
+        {
+          String childOrd = child.getNavOrd() == null ? null : hierarchyPart(child.getNavOrd().toString());
+          if (childOrd == null) continue;
+          if (childOrd.equals(wanted)) return child;
+          if (wanted.startsWith(childOrd.endsWith("/") ? childOrd : childOrd + "/")) { next = child; break; }
+        }
+        node = next;
+      }
+    }
+    catch (Exception ignored)
+    {
+      // Fall back to the resolved target.
+    }
+    return null;
+  }
+
+  /** The "hierarchy:/..." part of an ORD such as "local:|station:|hierarchy:/A/B". */
+  private static String hierarchyPart(String ord)
+  {
+    int index = ord.indexOf("hierarchy:");
+    String part = index < 0 ? ord : ord.substring(index);
+    return part.length() > "hierarchy:/".length() && part.endsWith("/") ? part.substring(0, part.length() - 1) : part;
   }
 
   private static boolean isHierarchyOrd(String ord)

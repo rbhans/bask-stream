@@ -22,7 +22,6 @@ import javax.baja.sys.Context;
 import javax.baja.tag.Id;
 import javax.baja.tag.Relation;
 import javax.baja.tag.Relations;
-import javax.baja.tag.SmartRelations;
 import javax.baja.tag.SmartTags;
 import javax.baja.tag.Tag;
 import javax.baja.tag.Tags;
@@ -63,6 +62,7 @@ final class BaskStreamTagResolver
     List<String> ords = normalizeOrds(request);
     String dictionary = normalizeDictionary(optionalString(request, "dictionary"));
     boolean includeRelations = !Boolean.FALSE.equals(request.get("includeRelations"));
+    RelationQuery query = RelationQuery.parse(request, dictionary);
 
     List<Object> results = new ArrayList<Object>(ords.size());
     for (String ord : ords)
@@ -74,7 +74,7 @@ final class BaskStreamTagResolver
         entry.put("tags", tagsToWire(component, dictionary));
         if (includeRelations)
         {
-          entry.put("relations", relationsToWire(component, dictionary, context));
+          relationsToWire(component, query, context, entry);
         }
         results.add(entry);
       }
@@ -92,12 +92,13 @@ final class BaskStreamTagResolver
   {
     List<Map<String, Object>> specs = normalizeSpecs(request);
     List<Object> results = new ArrayList<Object>(specs.size());
+    boolean echo = echoRequested(request, "tags");
     for (Map<String, Object> spec : specs)
     {
       String ord = specOrd(spec);
       try
       {
-        results.add(writeTagsForTarget(ord, spec, context));
+        results.add(writeTagsForTarget(ord, spec, context, echo));
       }
       catch (BaskStreamProtocolException e)
       {
@@ -107,7 +108,7 @@ final class BaskStreamTagResolver
     return results;
   }
 
-  private Map<String, Object> writeTagsForTarget(String ord, Map<String, Object> spec, Context context)
+  private Map<String, Object> writeTagsForTarget(String ord, Map<String, Object> spec, Context context, boolean echo)
       throws BaskStreamProtocolException
   {
     BComponent component = resolveWritable(ord, context);
@@ -148,7 +149,7 @@ final class BaskStreamTagResolver
 
     Map<String, Object> entry = baseEntry(ord, component, context);
     entry.put("results", opResults);
-    entry.put("tags", tagsToWire(component, null));
+    if (echo) entry.put("tags", tagsToWire(component, null));
     return entry;
   }
 
@@ -241,12 +242,13 @@ final class BaskStreamTagResolver
   {
     List<Map<String, Object>> specs = normalizeSpecs(request);
     List<Object> results = new ArrayList<Object>(specs.size());
+    boolean echo = echoRequested(request, "relations");
     for (Map<String, Object> spec : specs)
     {
       String ord = specOrd(spec);
       try
       {
-        results.add(writeRelationsForTarget(ord, spec, context));
+        results.add(writeRelationsForTarget(ord, spec, context, echo));
       }
       catch (BaskStreamProtocolException e)
       {
@@ -256,7 +258,7 @@ final class BaskStreamTagResolver
     return results;
   }
 
-  private Map<String, Object> writeRelationsForTarget(String ord, Map<String, Object> spec, Context context)
+  private Map<String, Object> writeRelationsForTarget(String ord, Map<String, Object> spec, Context context, boolean echo)
       throws BaskStreamProtocolException
   {
     BComponent component = resolveWritable(ord, context);
@@ -298,7 +300,7 @@ final class BaskStreamTagResolver
 
     Map<String, Object> entry = baseEntry(ord, component, context);
     entry.put("results", opResults);
-    entry.put("relations", relationsToWire(component, null, context));
+    if (echo) relationsToWire(component, RelationQuery.all(), context, entry);
     return entry;
   }
 
@@ -503,39 +505,126 @@ final class BaskStreamTagResolver
     return out;
   }
 
-  private List<Object> relationsToWire(BComponent component, String dictionary, Context context)
+  /**
+   * Since API 1.9, write_tags and write_relations answer with per-operation results only; the
+   * target's full tag or relation list (hundreds of implied tags per point) comes back only when
+   * the request asks for it with {@code echo: "tags"} / {@code "relations"} / {@code true}.
+   */
+  private static boolean echoRequested(Map<String, Object> request, String what)
+  {
+    Object echo = request.get("echo");
+    return Boolean.TRUE.equals(echo) || what.equals(echo) || "all".equals(echo);
+  }
+
+  /** Which relations read_tags returns: filtered by id and direction, a page of them, or counts only. */
+  static final class RelationQuery
+  {
+    final String dictionary;
+    final String id;
+    final String direction;
+    final int offset;
+    final int limit;
+    final boolean countsOnly;
+
+    private RelationQuery(String dictionary, String id, String direction, int offset, int limit, boolean countsOnly)
+    {
+      this.dictionary = dictionary;
+      this.id = id;
+      this.direction = direction;
+      this.offset = offset;
+      this.limit = limit;
+      this.countsOnly = countsOnly;
+    }
+
+    static RelationQuery all()
+    {
+      return new RelationQuery(null, null, null, 0, MAX_TAGS_ON_WIRE, false);
+    }
+
+    static RelationQuery parse(Map<String, Object> request, String dictionary) throws BaskStreamProtocolException
+    {
+      Object id = request.get("relationId");
+      if (id != null && !(id instanceof String)) throw new BaskStreamProtocolException("bad_request", "Field 'relationId' must be a string such as \"hs:spaceRef\".");
+      Object direction = request.get("relationDirection");
+      if (direction != null && !"in".equals(direction) && !"out".equals(direction))
+        throw new BaskStreamProtocolException("bad_request", "Field 'relationDirection' must be \"in\" or \"out\".");
+      Object mode = request.get("relations");
+      if (mode != null && !"list".equals(mode) && !"counts".equals(mode))
+        throw new BaskStreamProtocolException("bad_request", "Field 'relations' must be \"list\" or \"counts\".");
+      int offset = intField(request, "relationOffset", 0, 0, Integer.MAX_VALUE);
+      int limit = intField(request, "relationLimit", MAX_TAGS_ON_WIRE, 1, MAX_TAGS_ON_WIRE);
+      return new RelationQuery(dictionary, (String) id, (String) direction, offset, limit, "counts".equals(mode));
+    }
+
+    private static int intField(Map<String, Object> request, String key, int fallback, int min, int max) throws BaskStreamProtocolException
+    {
+      Object value = request.get(key);
+      if (value == null) return fallback;
+      if (!(value instanceof Number)) throw new BaskStreamProtocolException("bad_request", "Field '" + key + "' must be a number.");
+      return (int) Math.max(min, Math.min(max, ((Number) value).longValue()));
+    }
+
+    boolean matches(Relation relation)
+    {
+      if (dictionary != null && !dictionary.equals(relation.getId().getDictionary())) return false;
+      if (id != null && !id.equals(relation.getId().toString())) return false;
+      return direction == null || ("in".equals(direction) == relation.isInbound());
+    }
+  }
+
+  /**
+   * Adds the component's relations to {@code entry}: {@code relations} (a page) with
+   * {@code relationCount} and {@code relationsTruncated}, or {@code relationCounts} per id and
+   * direction. Each relation names its endpoint by slot ORD, display name and handle, and says
+   * where it comes from: "direct" (stored on this component), "endpoint" (stored on the other
+   * component) or "implied" (generated, e.g. n:parent/n:child).
+   */
+  private void relationsToWire(BComponent component, RelationQuery query, Context context, Map<String, Object> entry)
   {
     List<Object> out = new ArrayList<Object>();
+    Map<String, Object> counts = new LinkedHashMap<String, Object>();
+    int matched = 0;
     try
     {
-      Relations relations = component.relations();
-      Set<String> directIds = directRelationKeys(relations);
-      int count = 0;
-      for (Relation relation : relations.getAll())
+      Set<String> stored = storedRelationKeys(component);
+      for (Relation relation : component.relations().getAll())
       {
-        if (dictionary != null && !dictionary.equals(relation.getId().getDictionary()))
+        if (!query.matches(relation)) continue;
+        matched++;
+        if (query.countsOnly)
         {
+          @SuppressWarnings("unchecked")
+          Map<String, Object> byDirection = (Map<String, Object>) counts.get(relation.getId().toString());
+          if (byDirection == null) counts.put(relation.getId().toString(), byDirection = new LinkedHashMap<String, Object>());
+          String direction = relation.isInbound() ? "in" : "out";
+          Object previous = byDirection.get(direction);
+          byDirection.put(direction, Long.valueOf(previous == null ? 1L : ((Long) previous).longValue() + 1L));
           continue;
         }
-        if (count++ >= MAX_TAGS_ON_WIRE)
-        {
-          break;
-        }
+        if (matched <= query.offset || out.size() >= query.limit) continue;
+
         Map<String, Object> wire = new LinkedHashMap<String, Object>();
         wire.put("id", relation.getId().toString());
         wire.put("dictionary", relation.getId().hasDictionary() ? relation.getId().getDictionary() : null);
         wire.put("name", relation.getId().getName());
         wire.put("direction", relation.isInbound() ? "in" : "out");
         Object endpoint = relation.getEndpoint();
+        BComponent endpointComponent = endpoint instanceof BComponent ? (BComponent) endpoint : null;
         if (endpoint instanceof BObject && !authorizer.canRead((BObject) endpoint, context))
         {
           wire.put("endpointRedacted", Boolean.TRUE);
         }
         else
         {
-          wire.put("endpointOrd", relation.getEndpointOrd() == null ? null : relation.getEndpointOrd().toString());
+          wire.put("endpointOrd", endpointOrd(relation, endpointComponent));
+          if (endpointComponent != null)
+          {
+            wire.put("endpointName", endpointComponent.getName());
+            wire.put("endpointDisplay", endpointComponent.getDisplayName(context));
+            wire.put("endpointHandle", endpointComponent.getHandleOrd().toString());
+          }
         }
-        wire.put("source", directIds == null ? "unknown" : directIds.contains(relationKey(relation)) ? "direct" : "implied");
+        wire.put("source", relationSource(component, relation, endpointComponent, stored));
         out.add(wire);
       }
     }
@@ -543,7 +632,70 @@ final class BaskStreamTagResolver
     {
       // Relations are supplemental; a failing relation provider should not fail the whole read.
     }
-    return out;
+    if (query.countsOnly)
+    {
+      entry.put("relationCounts", counts);
+    }
+    else
+    {
+      entry.put("relations", out);
+      entry.put("relationsTruncated", Boolean.valueOf(matched > query.offset + out.size()));
+    }
+    entry.put("relationCount", Long.valueOf(matched));
+  }
+
+  /** The endpoint's slot ORD. Niagara often reports a null endpoint ORD, so prefer the component. */
+  private static String endpointOrd(Relation relation, BComponent endpointComponent)
+  {
+    if (endpointComponent != null && endpointComponent.getSlotPath() != null) return endpointComponent.getSlotPathOrd().toString();
+    BOrd ord = relation.getEndpointOrd();
+    return ord == null || ord.isNull() ? null : ord.toString();
+  }
+
+  private static String relationSource(BComponent component, Relation relation, BComponent endpointComponent, Set<String> stored)
+  {
+    if (stored.contains(relationKey(relation.getId(), relation.isInbound(), endpointComponent))) return "direct";
+    if (endpointComponent != null)
+    {
+      for (BRelation other : storedRelations(endpointComponent))
+      {
+        if (relation.getId().equals(other.getId()) && other.isInbound() != relation.isInbound()
+            && other.getEndpoint() == component)
+        {
+          return "endpoint";
+        }
+      }
+    }
+    return "implied";
+  }
+
+  private static Set<String> storedRelationKeys(BComponent component)
+  {
+    Set<String> keys = new LinkedHashSet<String>();
+    for (BRelation relation : storedRelations(component))
+    {
+      Object endpoint = relation.getEndpoint();
+      keys.add(relationKey(relation.getId(), relation.isInbound(), endpoint instanceof BComponent ? (BComponent) endpoint : null));
+    }
+    return keys;
+  }
+
+  private static BRelation[] storedRelations(BComponent component)
+  {
+    try
+    {
+      BRelation[] stored = component.getComponentRelations();
+      return stored == null ? new BRelation[0] : stored;
+    }
+    catch (Exception e)
+    {
+      return new BRelation[0];
+    }
+  }
+
+  private static String relationKey(Id id, boolean inbound, BComponent endpoint)
+  {
+    return id + "\n" + inbound + "\n" + (endpoint == null ? "?" : endpoint.getHandleOrd().toString());
   }
 
   private Set<Id> directTagIds(Tags tags)
@@ -565,33 +717,6 @@ final class BaskStreamTagResolver
     {
       return null;
     }
-  }
-
-  private Set<String> directRelationKeys(Relations relations)
-  {
-    if (!(relations instanceof SmartRelations))
-    {
-      return null;
-    }
-    try
-    {
-      Set<String> ids = new LinkedHashSet<String>();
-      for (Relation relation : ((SmartRelations) relations).getDirectRelations())
-      {
-        ids.add(relationKey(relation));
-      }
-      return ids;
-    }
-    catch (Exception e)
-    {
-      return null;
-    }
-  }
-
-  private String relationKey(Relation relation)
-  {
-    return relation.getId().toString() + "\n" + relation.isInbound() + "\n"
-        + String.valueOf(relation.getEndpointOrd());
   }
 
   private boolean isImpliedOnly(Tags tags, Id id)

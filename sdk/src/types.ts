@@ -4,7 +4,14 @@ export type Json = Record<string, unknown>;
 /** A point value snapshot, as returned by read and pushed in COV frames. */
 export interface PointSnapshot {
   point: string;
+  /** The read worked (API 1.9+). On older stations false also meant a non-ok status; check `code` for a failed read. */
   ok: boolean;
+  /** The point's own status is ok (API 1.9+). */
+  statusOk?: boolean;
+  /** One word for the status (API 1.9+): ok, alarm, fault, down, stale, unsubscribed, overridden, disabled, null. */
+  state?: string;
+  /** The point was leased by a `fresh` read. */
+  fresh?: boolean;
   display?: string;
   valueType?: string;
   value?: unknown;

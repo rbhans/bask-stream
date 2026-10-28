@@ -497,6 +497,9 @@ final class BaskStreamAlarmResolver
     wire.put("isNormal", Boolean.valueOf(record.isNormal()));
     wire.put("sources", toSourceList(record.getSource()));
     wire.put("data", toAlarmData(record, context));
+    String format = msgText(record);
+    wire.put("message", resolveMessage(format, record, context));
+    wire.put("messageFormat", format);
     return wire;
   }
 
@@ -513,6 +516,31 @@ final class BaskStreamAlarmResolver
       sources.add(ord == null ? null : ord.toString());
     }
     return sources;
+  }
+
+  private static String msgText(BAlarmRecord record)
+  {
+    BObject value = record.getAlarmData() == null ? null : record.getAlarmData().get("msgText");
+    if (value instanceof javax.baja.sys.BString) return ((javax.baja.sys.BString) value).getString();
+    return value == null ? null : value.toString();
+  }
+
+  /**
+   * The alarm message as the alarm console shows it: msgText is a BFormat (lexicon references such
+   * as %lexicon(driver:pingSuccess)% and slot references), resolved in the user's locale. The raw
+   * format stays in messageFormat (and data.msgText).
+   */
+  private static String resolveMessage(String format, BAlarmRecord record, Context context)
+  {
+    if (format == null || format.indexOf('%') < 0) return format;
+    try
+    {
+      return javax.baja.util.BFormat.format(format, record, context);
+    }
+    catch (RuntimeException e)
+    {
+      return format;
+    }
   }
 
   private Map<String, Object> toAlarmData(BAlarmRecord record, Context context)

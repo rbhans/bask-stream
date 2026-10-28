@@ -155,9 +155,19 @@ export class BaskStreamClient extends EventEmitter {
     return this.call("search", { base: toSlotOrd(base), query, ...options });
   }
 
-  async read(points: string[], fields?: string[]): Promise<PointSnapshot[]> {
+  /**
+   * Current values. `fresh: true` (API 1.9+) leases points nothing is subscribed to, such as proxy
+   * points only polled while watched, and waits up to `freshWaitMillis` (default 3000) for a value.
+   * A string array as the second argument is `fields`, as before.
+   */
+  async read(points: string[], options?: string[] | { fields?: string[]; fresh?: boolean; freshWaitMillis?: number }): Promise<PointSnapshot[]> {
     const ords = points.map(toSlotOrd);
-    return (await this.call("read", fields ? { points: ords, fields } : { points: ords })).points as PointSnapshot[];
+    const opts = Array.isArray(options) ? { fields: options } : options ?? {};
+    const fields: Json = { points: ords };
+    if (opts.fields) fields.fields = opts.fields;
+    if (opts.fresh) fields.fresh = true;
+    if (opts.freshWaitMillis !== undefined) fields.freshWaitMillis = opts.freshWaitMillis;
+    return (await this.call("read", fields)).points as PointSnapshot[];
   }
 
   /**
@@ -177,7 +187,8 @@ export class BaskStreamClient extends EventEmitter {
     return (await this.call("read_history", { ord: toSlotOrd(ord), ...options })).history as Json;
   }
 
-  async historyRollup(ord: string, options: { start?: number; end?: number; interval: number; includeInvalid?: boolean }): Promise<Json> {
+  /** Time buckets. Since API 1.9 empty buckets come back with count 0 (includeEmpty: false to drop them), plus coverage and longestGapMillis per history. */
+  async historyRollup(ord: string, options: { start?: number; end?: number; interval: number; includeInvalid?: boolean; includeEmpty?: boolean }): Promise<Json> {
     return (await this.call("read_history_rollup", { ord: toSlotOrd(ord), ...options })).rollup as Json;
   }
 

@@ -3,7 +3,7 @@ import chalk from "chalk";
 import { Command, Option } from "commander";
 import { BaskStreamError, OPERATIONS, StationHttp, toSlotOrd, type Actor, type AlarmFilter, type BrowseNode, type Json, type Proposal } from "@basidekick/baskstream";
 import { getProfile, loadStore, putProfile, removeProfile, setCurrent, updateProfile } from "./config.js";
-import { alarmMessage, alarmState, csv, isUnacked, fmtPoint, fmtTime, fmtValue, parseDuration, parseTime, parseValue, shortOrd, sparkline, statusColor, table } from "./format.js";
+import { alarmMessage, alarmState, csv, fmtDuration, isUnacked, fmtPoint, fmtTime, fmtValue, parseDuration, parseTime, parseValue, shortOrd, sparkline, statusColor, table } from "./format.js";
 import { confirm, promptHidden } from "./prompt.js";
 import { connect, type Connection } from "./session.js";
 import { VERSION } from "./version.js";
@@ -202,9 +202,10 @@ program
   .command("read")
   .description("read current point values")
   .argument("<ords...>", "point ORDs (slot:/ prefix optional)")
-  .action((ords: string[], _opts, cmd: Command) =>
+  .option("--no-fresh", "don't wait for points nothing is subscribed to (e.g. unpolled proxy points)")
+  .action((ords: string[], opts: { fresh: boolean }, cmd: Command) =>
     withClient(cmd, async ({ client }, g) => {
-      const points = await client.read(ords.map(normalizeOrd));
+      const points = await client.read(ords.map(normalizeOrd), { fresh: opts.fresh });
       emit(g, ["point", "value", "status", "time"], points.map((p) => [p.point, fmtPoint(p), p.status ?? p.message ?? "", fmtTime(p.timestamp)]), points, (r) => [
         String(r[0]),
         chalk.bold(String(r[1])),
@@ -256,7 +257,9 @@ program
         const rollup = await client.historyRollup(normalizeOrd(ord), { start, end, interval: parseDuration(opts.rollup) });
         for (const h of (rollup.histories ?? []) as Json[]) {
           const buckets = (h.buckets ?? []) as Json[];
-          if (g.output === "table") console.log(chalk.bold(String(h.historyId)), chalk.dim(`${buckets.length} buckets of ${opts.rollup}`), sparkline(buckets.map((b) => Number(b.avg)).filter(Number.isFinite), 60));
+          const coverage = typeof h.coverage === "number" ? ` · ${Math.round(h.coverage * 100)}% coverage` : "";
+          const gap = Number(h.longestGapMillis) > 0 ? ` · longest gap ${fmtDuration(Number(h.longestGapMillis))}` : "";
+          if (g.output === "table") console.log(chalk.bold(String(h.historyId)), chalk.dim(`${buckets.length} buckets of ${opts.rollup}${coverage}${gap}`), sparkline(buckets.map((b) => Number(b.avg)).filter(Number.isFinite), 60));
           emit(g, ["start", "count", "min", "avg", "max", "last"], buckets.map((b) => [fmtTime(b.start), b.count, b.min, b.avg, b.max, b.last]), rollup);
           if (h.truncated) console.error(chalk.yellow(`truncated (${h.truncatedReason})`));
         }

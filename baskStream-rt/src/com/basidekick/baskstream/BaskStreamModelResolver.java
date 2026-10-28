@@ -52,21 +52,28 @@ final class BaskStreamModelResolver
 
   BaskStreamModelResolver(BBaskStreamService service) { this.service = service; }
 
+  private static final List<String> TYPE_FIELDS = Arrays.asList("op", "id", "typeSpec", "typeSpecs", "module", "baseType", "offset", "limit");
+
   Map<String, Object> types(Map<String, Object> request, Context cx) throws Exception
   {
-    String requested = optional(request, "typeSpec");
-    if (requested != null)
+    // An unknown field (e.g. a misspelt one) used to fall through to page 1 of every installed type.
+    for (String key : request.keySet())
+      if (!TYPE_FIELDS.contains(key)) throw error("bad_request", "Unknown field '" + key + "' for describe_component_types; use typeSpec, typeSpecs, module, baseType, offset or limit.");
+    Object specs = request.get("typeSpecs");
+    if (specs != null)
     {
-      requireLoadable(requested);
-      Type type = Sys.getType(requested);
-      Map<String, Object> result = typeInfo(type.getTypeInfo(), cx);
-      if (!type.isAbstract() && !type.isInterface() && type.is(BComplex.TYPE))
+      if (!(specs instanceof List) || ((List<?>)specs).isEmpty() || ((List<?>)specs).size() > 20)
+        throw error("bad_request", "typeSpecs must be an array of 1 to 20 type specs.");
+      List<Object> described = new ArrayList<Object>();
+      for (Object spec : (List<?>)specs)
       {
-        BObject instance = type.getInstance();
-        if (instance instanceof BComplex) result.put("slots", slots((BComplex)instance, null, cx));
+        if (!(spec instanceof String)) throw error("bad_request", "typeSpecs must contain strings.");
+        described.add(describeType((String)spec, cx));
       }
-      return result;
+      return map("types", described, "total", described.size(), "nextOffset", null);
     }
+    String requested = optional(request, "typeSpec");
+    if (requested != null) return describeType(requested, cx);
     String module = optional(request, "module");
     String base = optional(request, "baseType");
     TypeInfo baseType = Sys.getRegistry().getType(base == null ? "baja:Component" : base);
@@ -80,6 +87,19 @@ final class BaskStreamModelResolver
     List<Object> page = new ArrayList<Object>();
     for (int i = offset; i < found.size() && page.size() < limit; i++) page.add(typeInfo(found.get(i), cx));
     return map("types", page, "total", found.size(), "nextOffset", offset + page.size() < found.size() ? offset + page.size() : null);
+  }
+
+  private Map<String, Object> describeType(String spec, Context cx) throws Exception
+  {
+    requireLoadable(spec);
+    Type type = Sys.getType(spec);
+    Map<String, Object> result = typeInfo(type.getTypeInfo(), cx);
+    if (!type.isAbstract() && !type.isInterface() && type.is(BComplex.TYPE))
+    {
+      BObject instance = type.getInstance();
+      if (instance instanceof BComplex) result.put("slots", slots((BComplex)instance, null, cx));
+    }
+    return result;
   }
 
   private Map<String, Object> typeInfo(TypeInfo type, Context cx)
@@ -121,7 +141,11 @@ final class BaskStreamModelResolver
       {
         Property p = slot.asProperty();
         wire.put("typeSpec", p.getType().toString());
-        wire.put("writable", resolved != null && resolved.canWrite() && resolved.getPermissionsForTarget().hasAdminWrite());
+        // On an instance: whether this user may write it. On a type (no instance): whether the
+        // slot itself is writable, from its flags, since permissions belong to instances.
+        wire.put("writable", ord == null
+            ? (c.getFlags(slot) & Flags.READONLY) == 0
+            : resolved != null && resolved.canWrite() && resolved.getPermissionsForTarget().hasAdminWrite());
         wire.put("value", valueWire(c.get(p), slot.getName(), 0, ord == null ? null : child(ord, slot.getName()), cx));
       }
       if (slot.isAction())
@@ -304,6 +328,7 @@ final class BaskStreamModelResolver
       {
         String type = "create_hierarchy".equals(action) ? "hierarchy:Hierarchy" : required(change, "typeSpec");
         value = newComponent(type);
+        if ("create_hierarchy".equals(action)) addDefaultScope(value, change);
       }
       final BComponent created = value;
       if (containsProtected(created, 0))
@@ -812,6 +837,22 @@ final class BaskStreamModelResolver
       c = (BComplex)value;
     }
     throw error("invalid_property", "Empty property path.");
+  }
+
+  /**
+   * A hierarchy from the palette comes with a "Station" scope (scopeOrd station:|slot:/); without a
+   * scope its tree stays empty. Give created hierarchies the same one. "scopeOrd" picks another
+   * ORD, and "scopeOrd": null leaves the scope container empty.
+   */
+  private void addDefaultScope(BComponent hierarchy, Map<String, Object> change) throws Exception
+  {
+    if (change.containsKey("scopeOrd") && change.get("scopeOrd") == null) return;
+    String scopeOrd = change.containsKey("scopeOrd") ? optional(change, "scopeOrd") : "station:|slot:/";
+    BValue container = hierarchy.get("scope");
+    if (!(container instanceof BComponent) || ((BComponent)container).getChildComponents().length > 0) return;
+    BComponent scope = newComponent("hierarchy:HierarchyScope");
+    scope.set("scopeOrd", BOrd.make(scopeOrd));
+    ((BComponent)container).add("Station", scope);
   }
 
   private BComponent newComponent(String spec) throws Exception

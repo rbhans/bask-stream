@@ -108,7 +108,7 @@ test("status view shows station and traffic", async () => {
   const { lastFrame, stdin, unmount } = mount({ view: "status" });
   try {
     const frame = await until(lastFrame, /requests/);
-    assert.match(frame, /api version\s+1\.8/);
+    assert.match(frame, /api version\s+1\.9/);
     stdin.write("?");
     await until(lastFrame, /Everywhere/);
   } finally {

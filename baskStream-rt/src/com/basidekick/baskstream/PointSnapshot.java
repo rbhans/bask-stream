@@ -65,6 +65,8 @@ final class PointSnapshot
     Map<String, Object> filtered = new LinkedHashMap<String, Object>();
     filtered.put("point", pointOrd);
     filtered.put("ok", Boolean.valueOf(ok));
+    // state says how to read ok:true with a non-ok status, so it is always included.
+    if (full.containsKey("state")) filtered.put("state", full.get("state"));
     for (String field : fields)
     {
       if ("point".equals(field) || "ok".equals(field))

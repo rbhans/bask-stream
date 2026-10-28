@@ -12,8 +12,9 @@ The repository's own code and documentation are open source under the [Apache Li
 
 ## Current API highlights
 
-- The current source advertises API version `1.8`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
-- API 1.8 adds optional [AI agent controls](docs/AI_AGENTS.md): actor context, a reason on every change, rate and value limits, point-write proposals a person approves, and `Agent` records in the station's audit history. Nothing changes until an agent user is listed or a session declares itself an agent.
+- The current source advertises API version `1.9`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
+- API 1.9 fixes relation endpoints, alarm messages, facet-formatted display text, hierarchy browsing and model move/rename/delete, and slims large replies (tag writes, model plans). Point snapshots now separate `ok` (the read worked) from `state`; see the [compatibility notes](docs/THIRD_PARTY_API.md#api-19-changes).
+- API 1.8 added optional [AI agent controls](docs/AI_AGENTS.md): actor context, a reason on every change, rate and value limits, point-write proposals a person approves, and `Agent` records in the station's audit history. Nothing changes until an agent user is listed or a session declares itself an agent.
 - API 1.7 added, all additive: `read_history_rollup` (time-bucketed min/max/avg for charts), alarm filters with newest-first reads and filtered acknowledge/clear with `dryRun`, `read_schedule_events` and `write_schedule`, OpenMetrics counters at `/stream/metrics`, and audit-trail records for every change made through the stream.
 - A [TypeScript SDK](sdk/README.md) and the [`bask` CLI and terminal dashboard](cli/README.md) are the first clients built on the shared protocol spec.
 - API 1.6 added [station model editing](docs/MODEL_EDITING_API.md): installed component types, properties, clone/rename/move/delete, hierarchy configuration, slots, links and actions, with preview/apply and recorded outcomes.

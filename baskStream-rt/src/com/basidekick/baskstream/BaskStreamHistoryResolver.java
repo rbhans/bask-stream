@@ -229,7 +229,7 @@ final class BaskStreamHistoryResolver
    * includeInvalid is true.
    */
   Map<String, Object> rollupHistory(String ord, Object startValue, Object endValue, Object intervalValue,
-      Object includeInvalidValue, Context context) throws BaskStreamProtocolException
+      Object includeInvalidValue, Object includeEmptyValue, Context context) throws BaskStreamProtocolException
   {
     String candidate = normalizeOrd(ord);
     long end = normalizeMillis(endValue, Clock.millis());
@@ -254,11 +254,17 @@ final class BaskStreamHistoryResolver
       throw new BaskStreamProtocolException("bad_request", "Field 'includeInvalid' must be a boolean.");
     }
     boolean includeInvalid = Boolean.TRUE.equals(includeInvalidValue);
+    if (includeEmptyValue != null && !(includeEmptyValue instanceof Boolean))
+    {
+      throw new BaskStreamProtocolException("bad_request", "Field 'includeEmpty' must be a boolean.");
+    }
+    // Since API 1.9 every bucket is returned, empty ones with count 0, so gaps are visible.
+    boolean includeEmpty = !Boolean.FALSE.equals(includeEmptyValue);
 
     List<Object> histories = new ArrayList<Object>();
     for (Source source : readableHistories(candidate, context))
     {
-      histories.add(rollupSingleHistory(source.history, start, end, interval, includeInvalid, context));
+      histories.add(rollupSingleHistory(source.history, start, end, interval, includeInvalid, includeEmpty, context));
     }
 
     Map<String, Object> result = new LinkedHashMap<String, Object>();
@@ -267,12 +273,13 @@ final class BaskStreamHistoryResolver
     result.put("end", Long.valueOf(end));
     result.put("interval", Long.valueOf(interval));
     result.put("includeInvalid", Boolean.valueOf(includeInvalid));
+    result.put("includeEmpty", Boolean.valueOf(includeEmpty));
     result.put("histories", histories);
     return result;
   }
 
   private Map<String, Object> rollupSingleHistory(BIHistory history, long start, long end, long interval,
-      boolean includeInvalid, Context context) throws BaskStreamProtocolException
+      boolean includeInvalid, boolean includeEmpty, Context context) throws BaskStreamProtocolException
   {
     java.util.TreeMap<Long, Bucket> buckets = new java.util.TreeMap<Long, Bucket>();
     long examined = 0L;
@@ -324,10 +331,33 @@ final class BaskStreamHistoryResolver
       }
     }
 
-    List<Object> rows = new ArrayList<Object>(buckets.size());
-    for (Map.Entry<Long, Bucket> entry : buckets.entrySet())
+    // Walk every interval in the window: empty ones become {start, count: 0} rows (when asked),
+    // and coverage and the longest gap show quiet periods versus missing data.
+    List<Object> rows = new ArrayList<Object>(includeEmpty ? (int) Math.min((end - start) / interval + 1, MAX_ROLLUP_BUCKETS) : buckets.size());
+    long slots = 0L;
+    long filled = 0L;
+    long run = 0L;
+    long longestRun = 0L;
+    for (long bucketStart = start; bucketStart <= end && slots < MAX_ROLLUP_BUCKETS; bucketStart += interval)
     {
-      rows.add(entry.getValue().toWire(entry.getKey().longValue()));
+      slots++;
+      Bucket bucket = buckets.get(Long.valueOf(bucketStart));
+      if (bucket != null)
+      {
+        filled++;
+        run = 0L;
+        rows.add(bucket.toWire(bucketStart));
+        continue;
+      }
+      run++;
+      longestRun = Math.max(longestRun, run);
+      if (includeEmpty)
+      {
+        Map<String, Object> empty = new LinkedHashMap<String, Object>();
+        empty.put("start", Long.valueOf(bucketStart));
+        empty.put("count", Long.valueOf(0L));
+        rows.add(empty);
+      }
     }
     Map<String, Object> wire = new LinkedHashMap<String, Object>();
     wire.put("historyOrd", history.getNavOrd() == null ? history.getOrdInSpace().toString() : history.getNavOrd().toString());
@@ -335,6 +365,9 @@ final class BaskStreamHistoryResolver
     wire.put("recordType", history.getRecordType().toString());
     wire.put("buckets", rows);
     wire.put("bucketCount", Long.valueOf(rows.size()));
+    wire.put("emptyBuckets", Long.valueOf(slots - filled));
+    wire.put("coverage", Double.valueOf(slots == 0 ? 0.0 : Math.round(filled * 10000.0 / slots) / 10000.0));
+    wire.put("longestGapMillis", Long.valueOf(longestRun * interval));
     wire.put("examined", Long.valueOf(Math.min(examined, MAX_ROLLUP_RECORDS)));
     wire.put("skippedInvalid", Long.valueOf(skipped));
     wire.put("truncated", Boolean.valueOf(truncatedReason != null));
@@ -729,7 +762,7 @@ final class BaskStreamHistoryResolver
   {
     if (ord == null || ord.trim().length() == 0)
     {
-      throw new BaskStreamProtocolException("bad_request", "Field 'ord' is required for read_history.");
+      throw new BaskStreamProtocolException("bad_request", "Field 'ord' (or 'point') is required: a slot:/ point ORD or a history: ORD.");
     }
     String candidate = ord.trim();
     if (!candidate.startsWith("slot:/") && !candidate.startsWith("history:"))

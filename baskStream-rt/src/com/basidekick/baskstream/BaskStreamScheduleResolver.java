@@ -569,7 +569,7 @@ final class BaskStreamScheduleResolver
   {
     if (ord == null || ord.trim().length() == 0)
     {
-      throw new BaskStreamProtocolException("bad_request", "Field 'ord' is required for read_schedule.");
+      throw new BaskStreamProtocolException("bad_request", "Field 'ord' (or 'point') is required: a slot:/ schedule ORD.");
     }
 
     String candidate = ord.trim();
