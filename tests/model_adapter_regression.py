@@ -159,7 +159,7 @@ class BComponent extends BComplex {
   void remove(Property p,Context cx){BValue v=values.remove(p.name);props.remove(p.name);if(v instanceof BComplex)((BComplex)v).parent=null;}
   void rename(Property p,String n,Context cx){BValue v=get(p);remove(p,cx);add(n,v,cx);}
   void reorder(Property[] order,Context cx){LinkedHashMap<String,Property> m=new LinkedHashMap<>();for(Property p:order)m.put(p.name,p);props=m;}
-  BComponent getParentComponent(){return parent instanceof BComponent?(BComponent)parent:null;}
+  BComponent getParentComponent(){return this;}  // as Baja: the nearest component, starting with this one
   Property getPropertyInParent(){return parent==null?null:parent.getProperty(name);}
   BComponent[] getChildComponents(){return values.values().stream().filter(v->v instanceof BComponent).toArray(BComponent[]::new);}
   boolean isDescendentOf(BComponent c){int n=0;for(BComplex p=parent;p!=null&&n++<64;p=p.parent)if(p==c)return true;return false;}

@@ -434,9 +434,12 @@ final class BaskStreamModelResolver
       for (String path : touched) if (within(path, oldOrd)) throw error("plan_conflict", "Do not combine structural and property edits of one branch.");
       for (String path : reservations) if (within(path, oldOrd)) throw error("plan_conflict", "Do not combine structural edits with creations in the same branch.");
       verifyTree(c, cx, true, new int[]{0});
-      final BComponent parent = c.getParentComponent();
+      // getParent(), not getParentComponent(): on a component, getParentComponent() returns the component itself.
+      final BComplex parentComplex = c.getParent();
+      final BComponent parent = parentComplex instanceof BComponent ? (BComponent)parentComplex : null;
       final Property slot = c.getPropertyInParent();
-      if (parent == null || c.getParent() != parent || slot == null || !slot.isDynamic()) throw error("frozen_slot", "Only dynamic child components can be moved, renamed, or deleted.");
+      if (parent == null || slot == null) throw error("frozen_slot", "This component has no parent component to move, rename, or delete it from.");
+      if (!slot.isDynamic()) throw error("frozen_slot", "'" + slot.getName() + "' is a frozen slot of " + parent.getType() + "; only dynamic child components can be moved, renamed, or deleted.");
       component(parent.getSlotPathOrd().toString(), true);
       final String oldName = slot.getName();
       final int flags = parent.getFlags(slot);
