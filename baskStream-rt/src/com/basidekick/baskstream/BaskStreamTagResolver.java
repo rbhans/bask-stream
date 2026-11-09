@@ -319,8 +319,16 @@ final class BaskStreamTagResolver
       boolean inbound = Boolean.TRUE.equals(addSpec.get("inbound"));
       // Component-space relations must be BRelation structs; ComponentRelations.add
       // rejects generic javax.baja.tag.BasicRelation instances ("not a BRelation type").
+      // Build it from the endpoint's ORD, not the component: BRelation(id, component, inbound)
+      // holds the endpoint only in memory and saves sourceOrd as null, so the relation works
+      // until the station restarts and then fails to activate (NullOrdException). Workbench
+      // saves relations with the endpoint's handle ORD (h:2c45e); do the same.
+      BOrd endpointRef = endpoint.getHandleOrd();
+      if (endpointRef == null || endpointRef.isNull()) endpointRef = endpoint.getSlotPathOrd();
+      BRelation relation = new BRelation(id, endpointRef);
+      relation.setInbound(inbound);
       service.requireWritesEnabled();
-      Relation added = relations.add(new BRelation(id, endpoint, inbound));
+      Relation added = relations.add(relation);
       result.put("ok", Boolean.valueOf(added != null));
       if (added == null)
       {
