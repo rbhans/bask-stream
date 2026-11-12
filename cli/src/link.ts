@@ -9,7 +9,8 @@ import { configDir } from "./config.js";
 export interface ShowRequest {
   /** Rises with each request, so the same ORD can be shown twice. */
   n: number;
-  kind: "reveal" | "trend";
+  kind: "reveal" | "trend" | "graphic";
+  /** The ORD to show, or the name of a graphic. */
   ord: string;
   /** Process that asked. */
   from: number;
@@ -114,7 +115,7 @@ export class Link extends EventEmitter {
     return Object.values(this.state.panes).some((pane) => now - pane.at < ALIVE_MS);
   }
 
-  /** Asks every window to show an ORD in its Explorer or Trends view. */
+  /** Asks every window to show an ORD in its Explorer or Trends view, or a graphic by name in Graphics. */
   show(kind: ShowRequest["kind"], ord: string): void {
     this.update((s) => void (s.show = { n: (s.show?.n ?? 0) + 1, kind, ord, from: process.pid }));
   }

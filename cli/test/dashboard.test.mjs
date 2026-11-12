@@ -152,7 +152,8 @@ test("files browses folders and previews text", () =>
   withApp({ view: "files" }, { columns: 130, rows: 24 }, async (app) => {
     const root = await app.until(/▸ px\//);
     assert.match(root, /Files · \^/);
-    await app.press("down", "down", "down", "right");
+    // The folders are bask, config, images, nav, notes, px.
+    await app.press("down", "down", "down", "down", "right");
     await app.until(/Files · \^notes/);
     const preview = await app.until(/1 # Commissioning notes/);
     assert.match(preview, /commissioning\.md/);

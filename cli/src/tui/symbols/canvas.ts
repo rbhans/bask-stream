@@ -114,11 +114,12 @@ export class Canvas {
     const flow = options.flow;
     if (!flow) return;
     const spacing = flow.spacing ?? 4;
-    path.forEach((cell, index) => {
-      // Marks ride forward along the path, or backward when the flow is reversed.
-      const at = flow.direction > 0 ? index - flow.frame : index + flow.frame;
-      if (((at % spacing) + spacing) % spacing !== 0) return;
+    path.forEach((cell) => {
+      // Marks ride forward along the path, or backward when the flow is reversed. Where they sit
+      // comes from the cell itself, so two routes sharing a stretch carry the same marks there.
       const heading = flow.direction > 0 ? cell.heading : cell.heading === E ? W : cell.heading === W ? E : cell.heading === N ? S : N;
+      const at = heading === E ? cell.x - flow.frame : heading === W ? cell.x + flow.frame : heading === S ? cell.y - flow.frame : cell.y + flow.frame;
+      if (((at % spacing) + spacing) % spacing !== 0) return;
       // Corners keep their bend; marks only sit on straight cells.
       const bits = this.lines[cell.y]?.[cell.x]?.bits ?? 0;
       if (bits !== (E | W) && bits !== (N | S)) return;

@@ -299,7 +299,7 @@ export const SYMBOLS: SymbolDef[] = [
   },
   {
     id: "cooling-tower", title: "Cooling tower", group: "Water and plant", note: "A fan on top and water falling through the fill into the basin.", value: "fan speed",
-    uses: ["on", "value"], sample: { on: true, value: 60 }, ports: { supply: [0, 4], return: [8, 4] },
+    uses: ["on", "value"], sample: { on: true, value: 60 }, ports: { in: [0, 4], out: [8, 4] },
     draw: (s, f) => {
       const run = moving(s);
       const spinner = run ? ["│", "╱", "─", "╲"][mod(paced(f, pct(s, 60)), 4)] : "┼";

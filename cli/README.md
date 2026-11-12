@@ -30,7 +30,7 @@ bask demo                                              # try it on a built-in si
 
 ## Dashboard
 
-Ten views, switched with `1`–`0` or `tab`:
+Eleven views, switched with `1`–`0`, `g` or `tab`:
 
 | | View | What you do there |
 |---|---|---|
@@ -44,6 +44,7 @@ Ten views, switched with `1`–`0` or `tab`:
 | `8` | Files | The station's file space: browse, preview, edit in your editor, upload, save a copy, delete |
 | `9` | Jobs | Station jobs. Run BACnet discovery and add the devices or points it finds |
 | `0` | AI Activity | What AI agents did and why, from the station's audit history, and their proposals for you to approve or reject |
+| `g` | Graphics | Drawings of the station's equipment, moving, with live values. Pick a part to trend, watch or command its point |
 
 Everywhere: `/` finds a point or component by name, `:` (or `ctrl+k`) opens every command, `?` shows the keys for the current view, `q` quits. The mouse works too: click a tab or a row, scroll with the wheel (`--no-mouse` leaves the mouse to the terminal).
 
@@ -87,7 +88,43 @@ Each site is saved as a profile (`demo`, `demo-riverside`, `demo-harbor`, `demo-
 
 In the gallery, the arrow keys choose a symbol and `s` (status), `[` `]` (value), `p` (start/stop), `m` (medium), `f` (direction) and `o` (door) try its states. `tab` shows two example assemblies: an air handler with its coil piping, and a chilled water plant joined by pipes with flow marks. `bask symbols --list` prints the ids and sizes.
 
-The library is in `src/tui/symbols`: `library.ts` (the symbols), `canvas.ts` (a grid to place them on, with pipes and ducts that join where they meet) and `examples.ts`. It does not read a station yet; binding symbols to live points is the next step.
+The library is in `src/tui/symbols`: `library.ts` (the symbols), `canvas.ts` (a grid to place them on, with pipes and ducts that join where they meet), `graphic.ts` (graphics, below) and `examples.ts`. It is compiled into `bask`, so every install has it.
+
+## Graphics
+
+A graphic is a drawing of equipment made from the symbols and tied to a station's points: an air handler, a plant, a row of freezers. It is a small JSON file with **no coordinates**. You list the parts; bask places them and finds the way for each pipe.
+
+```json
+{
+  "title": "AHU-1",
+  "base": "slot:/Drivers/BacnetNetwork/AHU_01/points",
+  "rows": [
+    { "air": [
+        { "symbol": "louver" },
+        { "symbol": "filter", "label": "Filter", "reading": "FilterDP" },
+        { "symbol": "cooling-coil", "label": "Cooling", "value": "CoolingValve" },
+        { "symbol": "fan", "label": "Supply fan", "value": "SupplyFanSpeed", "on": "SupplyFanStatus" },
+        { "symbol": "sensor", "label": "Supply air", "text": "T", "reading": "SupplyAirTemp" }
+      ],
+      "from": { "label": "OA", "reading": "OutdoorAirTemp" }, "to": "SA" }
+  ]
+}
+```
+
+- An `air` row is an air path: its sections join into one casing, air moves between them while the fan runs, and each coil gets its supply and return legs with a valve.
+- A `parts` row is equipment side by side; an array inside it is a column. `pipes` join parts by `id.port` (`{"from": "ch1.chwOut", "to": "p1.in", "medium": "chw"}`), go round the equipment by themselves, and branch where two leave the same port.
+- `value`, `on` and `reading` take a point (a path under `base`, or a full ORD) or a fixed number. Alarm, fault, down and overridden colours, units and number formats come from the points.
+
+```bash
+bask graphic guide                  # the format, every symbol with its ports, and an example
+bask graphic print ahu-01.json      # the drawing as text with live values, and anything wrong with the file
+bask graphic save ahu-01.json --allow-writes
+bask graphic list                   # also: get <name>, show <name>, rm <name>
+```
+
+**Where they live.** Graphics are saved on the station, in its file space under `^bask/graphics/`, one JSON file each. So they stay with the station (its backups and copies carry them), every bask on that station shows the same ones in the Graphics view, and each save is in the station's audit history. Nothing is kept on your computer.
+
+**For an AI agent** this is the whole job: read `bask graphic guide`, write the file, `print` it to see the result as text and fix what it reports (a misspelt symbol comes back with the one that was meant; a point that does not exist is named), then `save`, which opens it in your Graphics pane. The workspace briefing tells the agent this. The demo buildings each start with two graphics drawn this way.
 
 ## Workspace
 
@@ -96,15 +133,16 @@ The library is in `src/tui/symbols`: `library.ts` (the symbols), `canvas.ts` (a 
 ```bash
 bask workspace                      # Explorer · Alarms · AI Activity · Claude Code
 bask workspace --no-agent           # Explorer · Watch · Alarms · AI Activity
+bask workspace --layout graphics    # Graphics · AI Activity · Claude Code
 bask workspace --layout monitor     # Home · Alarms · Watch · AI Activity
 bask workspace --layout duo         # the full dashboard beside the agent
 bask workspace --demo               # the same on a simulated building (--site to choose)
 bask workspace --dry-run            # print what would be started
 ```
 
-It uses the multiplexer the terminal is already in, else Rex, else tmux (`--mux rex|tmux` to choose). Each pane is `bask tui --view <name> --pane`: one view, no tab row, though `1`–`0` still switch.
+It uses the multiplexer the terminal is already in, else Rex, else tmux (`--mux rex|tmux` to choose). Each pane is `bask tui --view <name> --pane`: one view, no tab row, though `1`–`0` and `g` still switch.
 
-**Panes work together.** They share the watch list, so `w` in the Explorer pane adds a row to the Watch pane. `t` (trend) and `e` (show in the Explorer) go to the pane that shows that view when there is one. `bask show <ord>`, `bask show --trend <ord>` and `bask show --watch <ord>` do the same from any shell, which is how the agent points at things for you.
+**Panes work together.** They share the watch list, so `w` in the Explorer pane adds a row to the Watch pane. `t` (trend) and `e` (show in the Explorer) go to the pane that shows that view when there is one. `bask show <ord>`, `bask show --trend <ord>` and `bask show --watch <ord>` do the same from any shell, which is how the agent points at things for you; `bask graphic save` and `bask graphic show <name>` open a graphic in the Graphics pane.
 
 **MCP tools in terminal Claude Code.** The baskStream extension for the Claude desktop app is an MCP server, and it can read a saved `bask` profile. Registered once like this, terminal Claude Code gets the same `baskStream` tools, on the workspace's station inside a workspace pane and on the profile named `ai` anywhere else:
 
@@ -147,6 +185,10 @@ On macOS the folder is `~/Library/Application Support/Claude/Claude Extensions/l
 | `bask show <ord> [--trend] [--watch]` | Select an ORD in the open Explorer, chart it, or add it to the watch list |
 | `bask agent-brief` | The briefing an AI agent gets on working with this station |
 | `bask symbols [--list]` | The terminal symbol library: animated equipment drawn in text, with example assemblies |
+| `bask graphic guide` | How to write a graphic: the format, every symbol with its ports, an example |
+| `bask graphic print <file-or-name> [--offline]` | Draw a graphic once as text with the points' values, and list anything wrong with it |
+| `bask graphic save <file> [--name <name>]` | Check a graphic and store it on the station (`^bask/graphics/`); open windows show it |
+| `bask graphic list` · `get <name>` · `show <name>` · `rm <name>` | The saved graphics; one's JSON; open one in the Graphics view; delete one |
 | `bask fleet [profiles...] [--demo]` | Every saved station at once: alarms, AI activity and live values per station, and all alarms in one list |
 | `bask demo [--site <name>] [--fleet] [--list] [--view <name>] [--serve]` | The dashboard on a simulated building; `--serve` only runs the station |
 

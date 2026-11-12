@@ -2,6 +2,7 @@
 // history, some files, and what keeps happening while it runs. The station itself (protocol, values,
 // plans, jobs) is the same for all of them and lives in station.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { DEMO_GRAPHICS } from "./graphics.js";
 
 export type SiteName = "northgate" | "riverside" | "harbor" | "summit";
 
@@ -67,6 +68,11 @@ export interface Site {
   /** Alarms that come and go, in turn, while the station runs. */
   alarmMoves(c: SiteContext): (() => void)[];
 }
+
+/** Saves a site's starting graphics in its station files, where the dashboard looks for them. */
+const graphics = (file: SiteContext["file"], key: SiteName, hoursAgo: number) => {
+  for (const [name, doc] of Object.entries(DEMO_GRAPHICS[key])) file(`^bask/graphics/${name}.json`, `${JSON.stringify(doc, null, 2)}\n`, hoursAgo);
+};
 
 const MIN = 60000;
 const HOUR = 3600000;
@@ -187,6 +193,7 @@ const northgate: Site = {
   },
   files({ file }) {
     file("^px/Home.px", '<?xml version="1.0" encoding="UTF-8"?>\n<px version="1.0" media="workbench:WbPxMedia">\n<import>\n  <module name="bajaui"/>\n  <module name="kitPx"/>\n</import>\n<content>\n<CanvasPane name="content" viewSize="1280.0,720.0">\n  <Label layout="40,30,400,40" text="Northgate Office"/>\n  <BoundLabel layout="40,90,220,30">\n    <BoundLabelBinding ord="station:|slot:/Drivers/BacnetNetwork/AHU_01/points/SupplyAirTemp"/>\n  </BoundLabel>\n</CanvasPane>\n</content>\n</px>\n', 200);
+    graphics(file, "northgate", 26);
     file("^px/AHU_01.px", '<?xml version="1.0" encoding="UTF-8"?>\n<px version="1.0" media="workbench:WbPxMedia">\n<content>\n<CanvasPane name="content" viewSize="1280.0,720.0"/>\n</content>\n</px>\n', 96);
     file("^px/VAV_Template.px", '<?xml version="1.0" encoding="UTF-8"?>\n<px version="1.0" media="workbench:WbPxMedia">\n<content>\n<CanvasPane name="content" viewSize="800.0,600.0"/>\n</content>\n</px>\n', 400);
     file("^nav/NavFile.nav", "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<nav version='1.0'>\n<node name='Home' ord='file:^px/Home.px' icon='module://icons/x16/home.png'>\n  <node name='AHU 01' ord='file:^px/AHU_01.px'/>\n</node>\n</nav>\n", 96);
@@ -330,6 +337,7 @@ const riverside: Site = {
   },
   files({ file }) {
     file("^px/Home.px", px("Riverside Surgery Center", ["slot:/Drivers/BacnetNetwork/OR_1/points/RoomTemp"]), 300);
+    graphics(file, "riverside", 26);
     file("^px/OR_Suite.px", px("Operating rooms", ["slot:/Drivers/BacnetNetwork/OR_1/points/RoomPressure", "slot:/Drivers/BacnetNetwork/OR_2/points/RoomHumidity"]), 120);
     file("^px/Isolation.px", px("Isolation rooms", ["slot:/Drivers/BacnetNetwork/ISO_202/points/RoomPressure"]), 60);
     file("^nav/NavFile.nav", nav(["OR_Suite", "Isolation"]), 60);
@@ -459,6 +467,7 @@ const harbor: Site = {
   },
   files({ file }) {
     file("^px/Home.px", px("Harbor Cold Storage", ["slot:/Drivers/BacnetNetwork/Freezer_1/points/BoxTemp"]), 500);
+    graphics(file, "harbor", 26);
     file("^px/Freezers.px", px("Freezers", [1, 2, 3, 4].map((i) => `slot:/Drivers/BacnetNetwork/Freezer_${i}/points/BoxTemp`)), 90);
     file("^px/Rack_A.px", px("Compressor rack A", ["slot:/Drivers/BacnetNetwork/Rack_A/points/SuctionPressure", "slot:/Drivers/BacnetNetwork/Rack_A/points/DischargePressure"]), 90);
     file("^nav/NavFile.nav", nav(["Freezers", "Rack_A"]), 90);
@@ -589,6 +598,7 @@ const summit: Site = {
   },
   files({ file }) {
     file("^px/Home.px", px("Summit Data Hall", ["slot:/Drivers/BacnetNetwork/Hall_A/points/ColdAisleTemp", "slot:/Drivers/BacnetNetwork/Hall_A/points/HotAisleTemp"]), 400);
+    graphics(file, "summit", 26);
     file("^px/Cooling.px", px("Cooling", [1, 2, 3, 4].map((i) => `slot:/Drivers/BacnetNetwork/CRAC_${i}/points/SupplyAirTemp`)), 70);
     file("^px/Power.px", px("Power", ["slot:/Drivers/SnmpNetwork/UPS_A/points/LoadPercent"]), 70);
     file("^nav/NavFile.nav", nav(["Cooling", "Power"]), 70);

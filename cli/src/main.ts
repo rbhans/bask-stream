@@ -18,7 +18,7 @@ import { DEMO_SITES, SITE_NAMES, type SiteName } from "./demo/sites.js";
 import { Link } from "./link.js";
 import { agentBrief, buildLayout, detectMux, launch, sessionExists, shq, writeShim, type LayoutName } from "./workspace.js";
 
-const VIEW_NAMES = ["home", "explorer", "watch", "alarms", "trends", "schedules", "query", "files", "jobs", "activity"] as const;
+const VIEW_NAMES = ["home", "explorer", "watch", "alarms", "trends", "schedules", "query", "files", "jobs", "activity", "graphics"] as const;
 type ViewName = (typeof VIEW_NAMES)[number];
 
 type Output = "table" | "json" | "csv";
@@ -853,7 +853,7 @@ program
   .command("workspace")
   .alias("ws")
   .description("lay out a station workspace in Rex or tmux: station panes plus an AI agent session")
-  .addOption(new Option("--layout <name>", "ops: explorer, alarms, AI activity and the agent · monitor: home, alarms, watch, AI activity · duo: dashboard and the agent").choices(["ops", "monitor", "duo"]).default("ops"))
+  .addOption(new Option("--layout <name>", "ops: explorer, alarms, AI activity and the agent · graphics: the station's graphics, AI activity and the agent · monitor: home, alarms, watch, AI activity · duo: dashboard and the agent").choices(["ops", "graphics", "monitor", "duo"]).default("ops"))
   .addOption(new Option("--mux <name>", "which multiplexer").choices(["auto", "rex", "tmux"]).default("auto"))
   .option("--agent <command>", "the AI agent to start in its pane", "claude")
   .option("--no-agent", "station panes only")
@@ -975,6 +975,166 @@ program
     const { runGallery } = await import("./tui/run.js");
     await runGallery({ mouse: opts.mouse, theme: opts.theme });
   });
+
+// ---- Graphics --------------------------------------------------------------------------------------
+
+const graphic = program
+  .command("graphic")
+  .description("drawings of the station's equipment made from the symbol library: write one as a small JSON file, print it, save it on the station");
+
+graphic
+  .command("guide")
+  .description("how to write a graphic: the file format, every symbol and its ports, and an example")
+  .action(async () => {
+    const { graphicGuide } = await import("./tui/symbols/graphic.js");
+    process.stdout.write(graphicGuide());
+  });
+
+/** A graphic from a local JSON file, or by name from the station when no such file exists. */
+async function graphicSource(target: string, client?: Connection["client"]): Promise<{ raw: unknown; from: string }> {
+  const { existsSync } = await import("node:fs");
+  if (existsSync(target)) {
+    try {
+      return { raw: JSON.parse(readFileSync(target, "utf8")), from: target };
+    } catch (error) {
+      throw new Error(`${target} is not valid JSON: ${(error as Error).message}`);
+    }
+  }
+  if (/[\\/]|\.json$/i.test(target) || !client) throw new Error(`No such file: ${target}`);
+  const { graphicPath, loadGraphic } = await import("./graphics.js");
+  return { raw: await loadGraphic(client, target), from: graphicPath(target) };
+}
+
+const problemLine = (p: { level: string; at: string; message: string }) => `${p.level === "error" ? chalk.red("error") : chalk.yellow("warning")}  ${p.at ? `${chalk.bold(p.at)}: ` : ""}${p.message}`;
+
+/** Draws a graphic once as text with the points' values now; reports what is wrong with it. */
+async function printGraphic(raw: unknown, from: string, g: Globals, client: Connection["client"] | undefined, frame: number): Promise<{ ok: boolean; unreadable: string[]; size?: string; points: number }> {
+  const { drawGraphic, readGraphic, roomNeeded } = await import("./tui/symbols/graphic.js");
+  let read = readGraphic(raw);
+  if (!read.plan) {
+    if (g.output === "json") console.log(JSON.stringify({ from, drawn: false, problems: read.problems }, null, 2));
+    else for (const p of read.problems) console.log(problemLine(p));
+    return { ok: false, unreadable: [], points: 0 };
+  }
+  const values = new Map<string, { ok?: boolean; value?: unknown; displayValue?: string; state?: string }>();
+  if (client && read.plan.points.length) for (const point of await client.read(read.plan.points, { fresh: true })) values.set(point.point, point);
+  else if (!client) for (const ord of read.plan.points) values.set(ord, { ok: true, value: 50, displayValue: "50", state: "ok" });
+  const lookup = (ord: string) => values.get(ord);
+  // Readings longer than the room first kept for them: lay it out once more so nothing is cut short.
+  const room = roomNeeded(read.plan, lookup);
+  if (room) read = readGraphic(raw, room);
+  const plan = read.plan!;
+  const text = drawGraphic(plan, lookup, frame).toString();
+  const unreadable = plan.points.filter((ord) => values.get(ord)?.ok === false || !values.has(ord));
+  const errors = read.problems.filter((p) => p.level === "error");
+  if (g.output === "json") {
+    console.log(JSON.stringify({ from, drawn: true, width: plan.width, height: plan.height, text, problems: read.problems, points: plan.points.map((ord) => ({ point: ord, ok: values.get(ord)?.ok !== false && values.has(ord), value: values.get(ord)?.displayValue })) }, null, 2));
+  } else {
+    console.log(text);
+    console.log("");
+    console.log(chalk.dim(`${plan.doc.title ?? from} · ${plan.width} x ${plan.height} cells · ${plan.points.length} point${plan.points.length === 1 ? "" : "s"}${client ? "" : " (not read: placeholder values)"}`));
+    for (const p of read.problems) console.log(problemLine(p));
+    for (const ord of unreadable) console.log(`${chalk.yellow("warning")}  ${chalk.bold(ord)} could not be read: it shows as "?". Check the name with bask search.`);
+    if (plan.width > 110) console.log(`${chalk.yellow("warning")}  It is ${plan.width} cells wide: a pane narrower than that scrolls it. Split it into two graphics or two rows.`);
+  }
+  return { ok: errors.length === 0, unreadable, size: `${plan.width} x ${plan.height}`, points: plan.points.length };
+}
+
+graphic
+  .command("print")
+  .description("draw a graphic once as text, with the points' values now, and list anything wrong with it")
+  .argument("<file-or-name>", "a local JSON file, or the name of a graphic saved on the station")
+  .option("--offline", "do not connect: check the file and draw it with placeholder values")
+  .option("--frame <n>", "which frame of the animation to draw", "0")
+  .action(async (target: string, opts: { offline?: boolean; frame: string }, cmd: Command) => {
+    const g = globals(cmd);
+    const run = async (client?: Connection["client"]) => {
+      const { raw, from } = await graphicSource(target, client);
+      const result = await printGraphic(raw, from, g, client, Number(opts.frame) || 0);
+      if (!result.ok) process.exitCode = 1;
+    };
+    if (opts.offline) return run();
+    await withClient(cmd, ({ client }) => run(client));
+  });
+
+graphic
+  .command("save")
+  .description("check a graphic and store it on the station, where every bask on that station shows it")
+  .argument("<file>", "the local JSON file")
+  .option("--name <name>", "the name to save it under (default: the file's name)")
+  .action((file: string, opts: { name?: string }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { graphicName, graphicPath, saveGraphic } = await import("./graphics.js");
+      const { raw } = await graphicSource(file);
+      const name = graphicName(opts.name ?? file);
+      const { readGraphic } = await import("./tui/symbols/graphic.js");
+      const read = readGraphic(raw);
+      const errors = read.problems.filter((p) => p.level === "error");
+      if (errors.length) {
+        for (const p of read.problems) console.error(problemLine(p));
+        throw new Error(`Not saved: fix ${errors.length === 1 ? "the error" : `the ${errors.length} errors`} above. bask graphic print ${file} shows the drawing.`);
+      }
+      const points = read.plan!.points;
+      const unreadable = points.length ? (await client.read(points, { fresh: true })).filter((p) => !p.ok).map((p) => p.point) : [];
+      await requireWrite(g, `Save the graphic "${name}" to ${graphicPath(name)} on the station?`);
+      const written = await saveGraphic(client, name, raw, reasonOf(g));
+      const link = new Link(client.http.url.origin);
+      link.show("graphic", name);
+      if (g.output === "json") return console.log(JSON.stringify({ name, path: graphicPath(name), created: written.created, points: points.length, unreadable }, null, 2));
+      console.log(`${chalk.green("✓")} ${written.created ? "Saved" : "Replaced"} ${chalk.bold(name)} at ${graphicPath(name)} (${points.length} point${points.length === 1 ? "" : "s"}).`);
+      for (const ord of unreadable) console.log(`${chalk.yellow("warning")}  ${ord} could not be read: it shows as "?".`);
+      console.log(link.anyOpen() ? chalk.dim("  Shown in the open Graphics window.") : chalk.dim("  Open bask and press g to see it."));
+    })
+  );
+
+graphic
+  .command("list")
+  .description("the graphics saved on the station")
+  .action((_opts, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { listGraphics } = await import("./graphics.js");
+      const entries = await listGraphics(client);
+      if (g.output === "table" && entries.length === 0) return console.log(chalk.dim("No graphics on this station yet. bask graphic guide says how to write one."));
+      emit(g, ["name", "path", "modified"], entries.map((e) => [e.name, e.path, e.modified ? fmtTime(e.modified) : ""]), entries);
+    })
+  );
+
+graphic
+  .command("get")
+  .description("print a saved graphic's JSON, to change it and save it again")
+  .argument("<name>", "the graphic's name")
+  .action((name: string, _opts, cmd: Command) =>
+    withClient(cmd, async ({ client }) => {
+      const { loadGraphic } = await import("./graphics.js");
+      console.log(JSON.stringify(await loadGraphic(client, name), null, 2));
+    })
+  );
+
+graphic
+  .command("show")
+  .description("open a saved graphic in the Graphics view of the open bask windows")
+  .argument("<name>", "the graphic's name")
+  .action(async (name: string, _opts, cmd: Command) => {
+    const { graphicName } = await import("./graphics.js");
+    const { profile } = getProfile(globals(cmd).profile);
+    const link = new Link(profile.station);
+    link.show("graphic", graphicName(name));
+    console.log(link.anyOpen() ? `${chalk.green("✓")} ${graphicName(name)} shown in Graphics.` : `${chalk.yellow("!")} No bask window is open on ${new URL(profile.station).host}; ${graphicName(name)} opens when one is.`);
+  });
+
+graphic
+  .command("rm")
+  .description("delete a saved graphic from the station")
+  .argument("<name>", "the graphic's name")
+  .action((name: string, _opts, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { deleteGraphic, graphicName, graphicPath } = await import("./graphics.js");
+      await requireWrite(g, `Delete the graphic "${graphicName(name)}" (${graphicPath(name)}) from the station?`);
+      await deleteGraphic(client, name, reasonOf(g));
+      if (g.output === "json") return console.log(JSON.stringify({ name: graphicName(name), deleted: true }, null, 2));
+      console.log(`${chalk.green("✓")} Deleted ${graphicName(name)}.`);
+    })
+  );
 
 program
   .command("show")
