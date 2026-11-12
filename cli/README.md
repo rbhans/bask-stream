@@ -22,14 +22,52 @@ This downloads a single executable from the latest `bask-v*` [release](https://g
 
 ```bash
 bask login https://192.168.0.126 -u test --insecure   # asks for the password; saves only the session
-bask                                                   # full-screen dashboard
+bask                                                   # the dashboard: every view in one window
+bask workspace                                         # a multi-pane workspace in Rex or tmux, with an AI agent
+bask demo                                              # try it on a built-in simulated building, no station needed
 ```
 
 ## Dashboard
 
-`1 Browse` station tree with live details · `2 Watch` live values with sparklines · `3 Alarms` open alarms, live · `4 History` rollup chart · `5 Status` station, limits and traffic · `6 Proposals` AI agent proposals to approve or reject. Press `/` anywhere to find a point by name: `⏎` shows it in the tree, `tab` adds it to Watch. `?` shows every key; `q` quits.
+Ten views, switched with `1`–`0` or `tab`:
 
-It is read-only unless started with `--allow-writes`; then `o`/`s`/`a` command watched points and `a`/`A` acknowledge alarms, each after a y/N confirmation.
+| | View | What you do there |
+|---|---|---|
+| `1` | Home | Station, link and traffic; open alarms; what AI agents did and what is waiting for you; the watch list |
+| `2` | Explorer | The station tree with live point values. Details and a property sheet for the selected component. Command points, edit properties, invoke actions, rename, delete, add components, start a discovery |
+| `3` | Watch | Live values with sparklines. The list is saved and shared with other bask windows on the station |
+| `4` | Alarms | Open alarms, live. Filter, see details, acknowledge, jump to the source |
+| `5` | Trends | A line chart of a point's history; zoom, pan, follow live |
+| `6` | Schedules | Each schedule's week, what it outputs now and what is coming up |
+| `7` | Query | BQL and tag (NEQL) queries, with ready-made reports: points in alarm, overridden, down, devices, histories and more. Save results as CSV |
+| `8` | Files | The station's file space: browse, preview, edit in your editor, upload, save a copy, delete |
+| `9` | Jobs | Station jobs. Run BACnet discovery and add the devices or points it finds |
+| `0` | AI Activity | What AI agents did and why, from the station's audit history, and their proposals for you to approve or reject |
+
+Everywhere: `/` finds a point or component by name, `:` (or `ctrl+k`) opens every command, `?` shows the keys for the current view, `q` quits. The mouse works too: click a tab or a row, scroll with the wheel (`--no-mouse` leaves the mouse to the terminal).
+
+The dashboard starts read-only. Press `W` (or start with `--allow-writes`) to allow changes; each one still asks before it is sent. Edits to components go through a model plan that is previewed first.
+
+Colours follow the terminal; force one with `--theme dark|light` or `BASK_THEME`.
+
+## Workspace
+
+`bask workspace` lays out a station workspace in Rex (Superlogical's terminal multiplexer) or tmux: an Explorer, Alarms and AI Activity pane, and an AI agent session (Claude Code by default) that works on the station through `bask`.
+
+```bash
+bask workspace                      # Explorer · Alarms · AI Activity · Claude Code
+bask workspace --no-agent           # Explorer · Watch · Alarms · AI Activity
+bask workspace --layout monitor     # Home · Alarms · Watch · AI Activity
+bask workspace --layout duo         # the full dashboard beside the agent
+bask workspace --demo               # the same on the simulated building
+bask workspace --dry-run            # print what would be started
+```
+
+It uses the multiplexer the terminal is already in, else Rex, else tmux (`--mux rex|tmux` to choose). Each pane is `bask tui --view <name> --pane`: one view, no tab row, though `1`–`0` still switch.
+
+**Panes work together.** They share the watch list, so `w` in the Explorer pane adds a row to the Watch pane. `t` (trend) and `e` (show in the Explorer) go to the pane that shows that view when there is one. `bask show <ord>`, `bask show --trend <ord>` and `bask show --watch <ord>` do the same from any shell, which is how the agent points at things for you.
+
+**The agent** starts with a briefing on the station and how to use `bask` (`bask agent-brief` prints it). It connects with `--agent-profile <name>`, or a saved profile for the same station whose name or user says agent or ai, or else your own profile. Give it its own Niagara user and list that user in the service's agent users: then its writes become proposals in the AI Activity pane, every change carries its reason, and the audit history shows which changes were its own. Another agent: `--agent "<command>"`; it finds the briefing at `$BASK_STATION_BRIEF`.
 
 ## Commands
 
@@ -57,6 +95,11 @@ It is read-only unless started with `--allow-writes`; then `o`/`s`/`a` command w
 | `bask proposals [--all]` · `bask approve <id>` · `bask reject <id> [--note]` | AI agent proposals waiting for a person; approving runs the write with your permissions (needs `--allow-writes`) |
 | `bask agent-log [--since 24h]` | What AI agents did, from the station's audit history |
 | `bask metrics` | OpenMetrics text |
+| `bask tui [--view <name>] [--pane] [--no-mouse] [--theme dark\|light]` | The dashboard (also what `bask` alone runs), opened on a view |
+| `bask workspace [--layout ops\|monitor\|duo] [--mux rex\|tmux] [--agent <cmd>\|--no-agent] [--agent-profile <name>] [--demo] [--dry-run]` | A multi-pane station workspace in Rex or tmux |
+| `bask show <ord> [--trend] [--watch]` | Select an ORD in the open Explorer, chart it, or add it to the watch list |
+| `bask agent-brief` | The briefing an AI agent gets on working with this station |
+| `bask demo [--view <name>] [--serve] [--port n]` | The dashboard on a simulated building; `--serve` only runs the station |
 
 `-o json` or `-o csv` on any listing command; `-p <profile>` picks a station. ORDs may drop the `slot:/` prefix.
 
@@ -73,5 +116,7 @@ npm run compile
 ```
 
 To publish a release, bump `version` in `package.json`, commit, and push a matching tag (`git tag bask-v0.1.0 && git push origin bask-v0.1.0`). The [release workflow](../.github/workflows/release-bask.yml) tests, builds Windows/macOS/Linux executables, and attaches them with checksums.
+
+`node test/peek.mjs --view explorer --size 120x36 --keys "down,right"` prints one frame of the dashboard on the demo station (add `--profile <name>` for a real one), which is the quick way to look at a change. Rendering and input notes are in [DEVELOPMENT-NOTES.md](DEVELOPMENT-NOTES.md).
 
 `npm run compile` produces a single executable `bin/bask` with Bun (about 60 MB, no Node needed). For another platform: `bun scripts/compile.mjs --target=bun-windows-x64 --outfile=bin/bask.exe` (or `bun-linux-x64`, `bun-darwin-arm64`).

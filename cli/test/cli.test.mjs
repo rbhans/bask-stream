@@ -113,3 +113,54 @@ test("query, station files, discovery and add (API 1.10)", async () => {
   assert.match(plan.out, /Nothing added yet/);
   assert.match((await bask("add", job, "all", "--apply", "--allow-writes", "--yes")).out, /Added 1/);
 });
+
+test("show leaves a request for the open dashboards", async () => {
+  const trend = await bask("show", "Drivers/Net/VAV_01/points/SpaceTemp", "--trend");
+  assert.equal(trend.code, 0, trend.out);
+  assert.match(trend.out, /No bask window is open on 127\.0\.0\.1/);
+  assert.match(trend.out, /VAV_01\/points\/SpaceTemp will be charted in Trends/);
+  assert.match((await bask("show", "Drivers/Net/VAV_01/points/SpaceTemp", "--watch")).out, /added to the watch list/);
+  const { Link } = await import("../dist/link.js");
+  process.env.BASKSTREAM_CONFIG_DIR = configDir;
+  const shared = new Link(station.url).get();
+  assert.deepEqual(shared.watch, ["slot:/Drivers/Net/VAV_01/points/SpaceTemp"]);
+  assert.deepEqual({ kind: shared.show.kind, ord: shared.show.ord }, { kind: "trend", ord: "slot:/Drivers/Net/VAV_01/points/SpaceTemp" });
+});
+
+test("agent-brief tells an agent how to work on this station", async () => {
+  const { code, out } = await bask("agent-brief");
+  assert.equal(code, 0, out);
+  assert.match(out, /signed in as the Niagara user "test" \(bask profile "fake"\)/);
+  assert.match(out, /--allow-writes -y --reason/);
+  assert.match(out, /bask show --trend <ord>/);
+});
+
+test("workspace plans its panes for Rex and tmux without starting anything", async () => {
+  const { buildLayout, launch, shq } = await import("../dist/workspace.js");
+  const agent = { label: "Claude Code", shell: "claude", env: { BASK_AGENT: "Claude Code" } };
+  const ops = buildLayout({ layout: "ops", profile: "fake", allowWrites: false, agent });
+  assert.deepEqual(ops.map((p) => p.label), ["Explorer", "Claude Code", "Alarms", "AI Activity"]);
+  assert.match(ops[0].shell, /-p fake tui --view explorer --pane$/);
+  assert.deepEqual(buildLayout({ layout: "ops", profile: "fake", allowWrites: true }).map((p) => p.label), ["Explorer", "Watch", "Alarms", "AI Activity"]);
+  assert.match(buildLayout({ layout: "duo", profile: "fake", allowWrites: true, agent })[0].shell, /--allow-writes tui --view home$/);
+
+  const rex = launch("rex", "bask-fake", ops, { rex: "rex", dryRun: true }).commands;
+  assert.match(rex[0], /^rex new bask-fake --window Explorer --json -- sh .*explorer\.sh$/);
+  assert.equal(rex.filter((c) => c.startsWith("rex split ")).length, 3);
+  assert.match(rex[1], /--split=right --ratio 42 --label 'Claude Code'/);
+
+  const tmux = launch("tmux", "bask-fake", ops, { dryRun: true });
+  assert.match(tmux.commands[0], /^tmux new-session -d -s bask-fake /);
+  assert.equal(tmux.commands.filter((c) => c.startsWith("tmux split-window ")).length, 3);
+  assert.deepEqual(tmux.attach?.slice(0, 2), ["tmux", process.env.TMUX ? "switch-client" : "attach-session"]);
+  assert.equal(shq("it's here"), `'it'\\''s here'`);
+});
+
+test("workspace --dry-run on the demo station prints the plan", async () => {
+  const { code, out } = await bask("workspace", "--demo", "--dry-run", "--mux", "rex", "--no-agent", "--layout", "monitor");
+  // Rex's command-line tool may not be installed where the tests run.
+  if (code !== 0) return assert.match(out, /Rex's command-line tool was not found/);
+  assert.match(out, /session bask-demo, layout monitor/);
+  assert.match(out, /pane Home: .* demo --view home --pane/);
+  assert.equal((out.match(/ split -s /g) ?? []).length, 3);
+});

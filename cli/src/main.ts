@@ -2,14 +2,23 @@
 import chalk from "chalk";
 import { Command, Option } from "commander";
 import { randomUUID } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 import { BaskStreamError, OPERATIONS, StationHttp, toSlotOrd, type Actor, type AlarmFilter, type BrowseNode, type JobDetail, type Json, type Proposal } from "@basidekick/baskstream";
-import { getProfile, loadStore, putProfile, removeProfile, setCurrent, updateProfile } from "./config.js";
+import { configDir, getProfile, loadStore, putProfile, removeProfile, setCurrent, updateProfile } from "./config.js";
 import { alarmMessage, alarmState, csv, fmtDuration, isUnacked, fmtPoint, fmtTime, fmtValue, parseDuration, parseTime, parseValue, shortOrd, sparkline, statusColor, table } from "./format.js";
 import { confirm, promptHidden } from "./prompt.js";
 import { connect, type Connection } from "./session.js";
 import { VERSION } from "./version.js";
 import { splash, spinner } from "./splash.js";
+import { Link } from "./link.js";
+import { agentBrief, buildLayout, detectMux, launch, sessionExists, shq, writeShim, type LayoutName } from "./workspace.js";
+
+const VIEW_NAMES = ["home", "explorer", "watch", "alarms", "trends", "schedules", "query", "files", "jobs", "activity"] as const;
+type ViewName = (typeof VIEW_NAMES)[number];
 
 type Output = "table" | "json" | "csv";
 interface Globals {
@@ -25,7 +34,7 @@ interface Globals {
 
 const program = new Command()
   .name("bask")
-  .description("Browse, watch and query Niagara stations over baskStream.\nRun with no command in a terminal to open the dashboard.")
+  .description("Browse, watch and work on Niagara stations over baskStream.\nRun with no command in a terminal to open the dashboard, bask workspace for a multi-pane workspace, or bask demo to try it without a station.")
   .version(VERSION)
   .option("-p, --profile <name>", "saved station profile (default: current)")
   .addOption(new Option("-o, --output <format>", "output format").choices(["table", "json", "csv"]).default("table"))
@@ -373,7 +382,7 @@ program
       if (result.ok === false) throw new BaskStreamError(String(result.code), String(result.message), "write");
       if (result.outcome === "proposed") {
         const proposal = result.proposal as Proposal;
-        return console.log(`${chalk.yellow("⧗")} Proposed ${chalk.bold(proposal.id)}: ${proposal.description} on ${shortOrd(point, 3)}. Waiting for a person to approve (expires ${fmtTime(proposal.expiresAt, false)}).`);
+        return console.log(`${chalk.yellow("◷")} Proposed ${chalk.bold(proposal.id)}: ${proposal.description} on ${shortOrd(point, 3)}. Waiting for a person to approve (expires ${fmtTime(proposal.expiresAt, false)}).`);
       }
       console.log(`${chalk.green("✓")} ${shortOrd(point, 3)}: ${fmtValue(result.value)} ${statusColor(result.status)(String(result.status ?? ""))}${result.activeLevel ? chalk.dim(` (active level ${result.activeLevel})`) : ""}`);
     })
@@ -685,17 +694,29 @@ program
     process.stdout.write(await http.metrics());
   });
 
-program
-  .command("tui", { isDefault: true })
+interface TuiOptions {
+  view?: ViewName;
+  pane?: boolean;
+  mouse?: boolean;
+  theme?: "dark" | "light";
+}
+const tuiOptions = (cmd: Command) =>
+  cmd
+    .addOption(new Option("--view <name>", "the view to open").choices([...VIEW_NAMES]))
+    .option("--pane", "one view per window, for a multiplexer pane (no tab row)")
+    .option("--no-mouse", "leave the mouse to the terminal (text selection)")
+    .addOption(new Option("--theme <name>", "colours (default: from the terminal, or BASK_THEME)").choices(["dark", "light"]));
+
+tuiOptions(program.command("tui", { isDefault: true }))
   .description("open the full-screen dashboard (default when run in a terminal)")
-  .action(async (_opts, cmd: Command) => {
+  .action(async (opts: TuiOptions, cmd: Command) => {
     const g = globals(cmd);
     if (!process.stdout.isTTY) return program.help();
-    await runTui(g, {});
+    await runTui(g, opts);
   });
 
-async function runTui(g: Globals, start: { view?: "watch"; points?: string[] }): Promise<void> {
-  process.stderr.write(`${splash()}\n`);
+async function runTui(g: Globals, start: TuiOptions & { points?: string[]; shared?: boolean }): Promise<void> {
+  if (!start.pane) process.stderr.write(`${splash()}\n`);
   const spin = spinner("connecting");
   let conn: Connection;
   try {
@@ -710,6 +731,165 @@ async function runTui(g: Globals, start: { view?: "watch"; points?: string[] }):
   const { runDashboard } = await import("./tui/run.js");
   await runDashboard(conn, { allowWrites: !!g.allowWrites, ...start });
 }
+
+// ---- Demo station and workspaces ------------------------------------------------------------------
+
+const portOpen = (port: number) =>
+  new Promise<boolean>((resolve) => {
+    const socket = net.connect(port, "127.0.0.1");
+    socket.once("connect", () => (socket.destroy(), resolve(true)));
+    socket.once("error", () => resolve(false));
+  });
+
+tuiOptions(program.command("demo"))
+  .description("try the dashboard on a built-in simulated building: no station needed")
+  .option("--port <n>", "port for the demo station", "47899")
+  .option("--serve", "only run the demo station (other windows connect with bask demo)")
+  .action(async (opts: TuiOptions & { port: string; serve?: boolean }, cmd: Command) => {
+    const { startDemoStation, DEMO_PASSWORD, DEMO_USER } = await import("./demo/station.js");
+    const port = Number(opts.port);
+    // The first window to ask hosts the station; later ones (other panes, an agent's bask) join it.
+    const station = (await portOpen(port)) ? undefined : await startDemoStation({ port }).catch((error: Error & { code?: string }) => (error.code === "EADDRINUSE" ? undefined : Promise.reject(error)));
+    for (let tries = 0; !station && tries < 40 && !(await portOpen(port)); tries += 1) await new Promise((resolve) => setTimeout(resolve, 250));
+    putProfile("demo", { station: `http://127.0.0.1:${port}`, username: DEMO_USER }, false);
+    process.env.BASKSTREAM_PASSWORD = DEMO_PASSWORD;
+    if (opts.serve) {
+      if (!station) throw new Error(`Port ${port} is already in use. A demo station may be running; try bask demo.`);
+      console.log(`${chalk.green("✓")} Demo station at http://127.0.0.1:${port} (user ${DEMO_USER}, password ${DEMO_PASSWORD}). Open it with: bask demo   ·   ctrl+c stops it.`);
+      await new Promise<void>((resolve) => process.once("SIGINT", resolve));
+      return station.close();
+    }
+    if (!process.stdout.isTTY) throw new Error("bask demo opens the dashboard, which needs a terminal.");
+    try {
+      // A few points to watch, the first time the demo is opened.
+      const base = "slot:/Drivers/BacnetNetwork";
+      const seeded = new Link(`http://127.0.0.1:${port}`).get().watch.length > 0;
+      const points = seeded ? [] : ["AHU_01/points/SupplyAirTemp", "AHU_01/points/SupplyFanSpeed", "AHU_01/points/OutdoorAirTemp", "VAV_101/points/ZoneTemp", "VAV_105/points/ZoneTemp", "VAV_105/points/ZoneSetpoint", "CHW_Plant/points/ChwSupplyTemp", "CHW_Plant/points/ChwFlow"].map((p) => `${base}/${p}`);
+      await runTui({ ...globals(cmd), profile: "demo", allowWrites: true }, { view: opts.view, pane: opts.pane, mouse: opts.mouse, theme: opts.theme, points });
+    } finally {
+      await station?.close();
+    }
+  });
+
+program
+  .command("workspace")
+  .alias("ws")
+  .description("lay out a station workspace in Rex or tmux: station panes plus an AI agent session")
+  .addOption(new Option("--layout <name>", "ops: explorer, alarms, AI activity and the agent · monitor: home, alarms, watch, AI activity · duo: dashboard and the agent").choices(["ops", "monitor", "duo"]).default("ops"))
+  .addOption(new Option("--mux <name>", "which multiplexer").choices(["auto", "rex", "tmux"]).default("auto"))
+  .option("--agent <command>", "the AI agent to start in its pane", "claude")
+  .option("--no-agent", "station panes only")
+  .option("--agent-profile <name>", "profile the agent connects with (default: an agent profile for this station, else the same profile)")
+  .option("--session <name>", "name for the multiplexer session")
+  .option("--demo", "use the built-in simulated building instead of a station")
+  .option("--dry-run", "print what would be started, and start nothing")
+  .option("--no-attach", "tmux: create the session without switching to it")
+  .action(async (opts: { layout: LayoutName; mux: string; agent: string | false; agentProfile?: string; session?: string; demo?: boolean; dryRun?: boolean; attach: boolean }, cmd: Command) => {
+    const g = globals(cmd);
+    const found = detectMux(opts.mux === "auto" ? undefined : opts.mux);
+    if (!found.mux) throw new Error(found.why);
+
+    // The station, and a working session for it (the password is asked for here, once, if needed).
+    let profile = "demo";
+    let info = { station: "Northgate (demo)", host: "127.0.0.1:47899", user: "admin" };
+    const env: Record<string, string> = {};
+    if (opts.demo) {
+      const { DEMO_PASSWORD } = await import("./demo/station.js");
+      env.BASKSTREAM_PASSWORD = DEMO_PASSWORD;
+    } else {
+      const chosen = getProfile(g.profile);
+      profile = chosen.name;
+      info = { station: chosen.name, host: new URL(chosen.profile.station).host, user: chosen.profile.username ?? "" };
+      if (!opts.dryRun) {
+        const conn = await connect(profile);
+        if (typeof conn.client.capabilities.station === "string") info.station = conn.client.capabilities.station;
+        conn.client.close();
+      }
+    }
+
+    // The agent: its command, the profile it connects with, and a briefing on how to use bask here.
+    let agentProfile = opts.demo ? "demo" : opts.agentProfile ?? profile;
+    if (!opts.demo && !opts.agentProfile) {
+      const store = loadStore();
+      const mine = store.profiles[profile];
+      const candidate = Object.entries(store.profiles).find(([name, p]) => name !== profile && p.station === mine.station && p.username !== mine.username && /agent|^ai\b|ai[-_]/i.test(`${name} ${p.username ?? ""}`));
+      if (candidate) agentProfile = candidate[0];
+    }
+    let session = opts.session ?? `bask-${profile.replace(/[^\w-]/g, "-")}`;
+    if (!opts.dryRun) for (let n = 2; sessionExists(found.mux, session, found.rex); n += 1) session = `${(opts.session ?? `bask-${profile.replace(/[^\w-]/g, "-")}`)}-${n}`;
+
+    let agent: Parameters<typeof buildLayout>[0]["agent"];
+    const notes: string[] = [];
+    if (opts.agent) {
+      const program_ = opts.agent.trim().split(/\s+/)[0];
+      const installed = spawnSync("sh", ["-c", `command -v ${shq(program_)}`], { stdio: "ignore" }).status === 0;
+      if (!installed) notes.push(`${program_} was not found, so the workspace has no agent pane. Install it, or name another with --agent <command>.`);
+      else {
+        if (agentProfile !== profile && !opts.dryRun) {
+          const conn = await connect(agentProfile).catch((error: Error) => {
+            throw new Error(`The agent's profile "${agentProfile}" could not connect (${error.message}). Run: bask login ${getProfile(agentProfile).profile.station} -u ${getProfile(agentProfile).profile.username} --name ${agentProfile}`);
+          });
+          conn.client.close();
+        }
+        const agentUser = opts.demo ? "admin" : getProfile(agentProfile).profile.username ?? info.user;
+        const dir = path.join(configDir(), "workspaces", session.replace(/[^\w.-]/g, "_"));
+        const brief = path.join(dir, "STATION.md");
+        if (!opts.dryRun) {
+          mkdirSync(dir, { recursive: true, mode: 0o700 });
+          writeFileSync(brief, agentBrief({ ...info, user: agentUser, profile: agentProfile, demo: opts.demo }));
+        }
+        const isClaude = /(^|\/)claude$/.test(program_);
+        agent = {
+          label: isClaude ? "Claude Code" : path.basename(program_),
+          shell: isClaude ? `${opts.agent} --append-system-prompt "$(cat ${shq(brief)})"` : opts.agent,
+          cwd: process.cwd(),
+          env: { BASKSTREAM_PROFILE: agentProfile, BASK_AGENT: isClaude ? "Claude Code" : path.basename(program_), BASK_ON_BEHALF_OF: os.userInfo().username, BASK_STATION_BRIEF: brief, PATH: `${opts.dryRun ? path.join(configDir(), "bin") : writeShim()}${path.delimiter}${process.env.PATH ?? ""}` }
+        };
+        if (!isClaude) notes.push(`${agent.label} is not told about the station automatically: point it at the briefing in $BASK_STATION_BRIEF (${brief}).`);
+        if (agentProfile === profile && !opts.demo) notes.push(`The agent shares your login (${info.user}). For its own Niagara user, save a profile for it and pass --agent-profile <name>.`);
+      }
+    }
+
+    const panes = buildLayout({ layout: opts.layout, profile, allowWrites: !!g.allowWrites, env, agent, demo: opts.demo });
+    const result = launch(found.mux, session, panes, { rex: found.rex, dryRun: opts.dryRun });
+    if (opts.dryRun) {
+      console.log(chalk.dim(`# ${found.mux} (${found.why}), session ${session}, layout ${opts.layout}`));
+      for (const pane of panes) console.log(chalk.dim(`# pane ${pane.label}: ${pane.shell.replace(/"\$\(cat [^)]*\)"/, '"<station briefing>"')}`));
+      for (const line of result.commands) console.log(line);
+      for (const note of notes) console.error(chalk.yellow(note));
+      return;
+    }
+    console.log(`${chalk.green("✓")} Workspace ${chalk.bold(session)} is up in ${found.mux === "rex" ? "Rex" : "tmux"}: ${panes.map((p) => p.label).join(" · ")}.`);
+    if (found.mux === "rex" && !process.env.REX_SESSION) console.log(chalk.dim(`  Switch to the "${session}" session in Rex to see it.`));
+    for (const note of notes) console.log(chalk.yellow(`  ${note}`));
+    console.log(chalk.dim(`  In any station pane: 1-0 switch view, / find, : commands, W allow changes, ? help.${agent ? " The agent's changes show up in the AI Activity pane; approve with a, reject with x." : ""}`));
+    if (result.attach && opts.attach && process.stdout.isTTY) spawnSync(result.attach[0], result.attach.slice(1), { stdio: "inherit" });
+    else if (result.attach) console.log(chalk.dim(`  Open it with: ${result.attach.join(" ")}`));
+  });
+
+program
+  .command("show")
+  .description("show something in the open bask windows: select an ORD in the Explorer, chart it, or add it to the watch list")
+  .argument("<ord>", "a component or point")
+  .option("--trend", "chart it in Trends")
+  .option("--watch", "add it to the watch list")
+  .action((ord: string, opts: { trend?: boolean; watch?: boolean }, cmd: Command) => {
+    const { profile } = getProfile(globals(cmd).profile);
+    const link = new Link(profile.station);
+    const target = normalizeOrd(ord);
+    if (opts.watch) link.update((s) => void (s.watch = [...new Set([...s.watch, target])]));
+    if (opts.trend || !opts.watch) link.show(opts.trend ? "trend" : "reveal", target);
+    const what = [opts.watch ? "added to the watch list" : "", opts.trend ? "charted in Trends" : opts.watch ? "" : "selected in the Explorer"].filter(Boolean).join(" and ");
+    console.log(link.anyOpen() ? `${chalk.green("✓")} ${shortOrd(target, 3)} ${what}.` : `${chalk.yellow("!")} No bask window is open on ${new URL(profile.station).host}; ${shortOrd(target, 3)} will be ${what} when one is.`);
+  });
+
+program
+  .command("agent-brief")
+  .description("print the briefing bask workspace gives an AI agent: how to read and change this station through bask")
+  .action((_opts, cmd: Command) => {
+    const { name, profile } = getProfile(globals(cmd).profile);
+    process.stdout.write(agentBrief({ station: name, host: new URL(profile.station).host, user: profile.username ?? "", profile: name }));
+  });
 
 function normalizeOrd(ord: string): string {
   ord = toSlotOrd(ord);

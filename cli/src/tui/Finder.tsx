@@ -1,18 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
 import { toSlotOrd, type BaskStreamClient, type BrowseNode, type Json } from "@basidekick/baskstream";
 import { quip } from "../quips.js";
-import { Panel, clip, padEnd, theme, windowStart } from "./ui.js";
+import { nodeLook } from "./actions.js";
+import { useKeys } from "./input.js";
+import { Panel, TextInput, clip, clipStart, padEnd, theme, windowStart } from "./ui.js";
 
-const ICON: Record<string, string> = { point: "◉", schedule: "◷", container: "▣", component: "◇" };
-const KIND_COLOR: Record<string, string> = { point: theme.info, schedule: theme.accent2, container: theme.accent, component: "white" };
-
-/** Keeps the end of a path, which is the part that tells points apart. */
-const clipStart = (text: string, width: number) => (text.length <= width ? text : `…${text.slice(text.length - width + 1)}`);
-
-/** Station-wide search: type to find, ⏎ shows it in the tree, tab watches a point. */
-export function Finder(props: { client: BaskStreamClient; width: number; height: number; onClose: () => void; onReveal: (ord: string) => void; onWatch: (ord: string) => void }) {
-  const { client, width, height, onClose, onReveal, onWatch } = props;
+/** Station-wide search: type to find, enter shows it in the tree, tab watches a point, ctrl+t charts it. */
+export function Finder(props: { client: BaskStreamClient; width: number; height: number; onClose: () => void; onReveal: (ord: string) => void; onWatch: (ord: string) => void; onTrend: (ord: string) => void }) {
+  const { client, width, height, onClose, onReveal, onWatch, onTrend } = props;
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<BrowseNode[]>([]);
   const [state, setState] = useState<{ phase: "idle" | "searching" | "done" | "error"; note?: string; line?: string }>({ phase: "idle" });
@@ -49,55 +45,42 @@ export function Finder(props: { client: BaskStreamClient; width: number; height:
     return () => clearTimeout(timer);
   }, [query]);
 
-  useInput((input, key) => {
+  useKeys((input, key) => {
     const selected = results[cursor];
-    if (key.escape) onClose();
-    else if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
+    if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
     else if (key.downArrow) setCursor((c) => Math.min(results.length - 1, c + 1));
-    else if (key.return && selected) onReveal(selected.ord);
-    else if (key.tab && selected) {
-      if (selected.kind === "point") onWatch(selected.ord);
-    } else if (key.backspace || key.delete) setQuery((q) => q.slice(0, -1));
-    else if (input && !key.ctrl && !key.meta && !key.leftArrow && !key.rightArrow) setQuery((q) => q + input);
+    else if (key.tab && selected?.kind === "point") onWatch(selected.ord);
+    else if (key.ctrl && input === "t" && selected) onTrend(selected.ord);
   });
 
-  const listHeight = height - 6;
+  const listHeight = Math.max(1, height - 6);
   const start = windowStart(cursor, results.length, listHeight);
   const inner = width - 4;
   const nameWidth = Math.min(36, Math.floor(inner * 0.4));
 
   return (
-    <Panel title="Find" width={width} height={height}>
+    <Panel title="Find" meta={state.phase === "done" ? `${results.length} found` : undefined} width={width} height={height}>
       <Box>
-        <Text color={theme.accent} bold>
-          ›{" "}
-        </Text>
-        <Text>{query}</Text>
-        <Text inverse> </Text>
-        {query.length === 0 && <Text color={theme.muted}> type part of a name, e.g. zone temp or AHU_01</Text>}
+        <Text color={theme.accent} bold>›{" "}</Text>
+        <TextInput width={inner - 2} placeholder="part of a name, e.g. zone temp or AHU_01" onChange={setQuery} onCancel={onClose} onSubmit={() => results[cursor] && onReveal(results[cursor].ord)} />
       </Box>
       <Text color={state.phase === "error" ? theme.bad : theme.muted} wrap="truncate-end">
-        {state.phase === "searching"
-          ? state.line
-          : state.phase === "done"
-            ? `${results.length} found${state.note ? ` · ${state.note}` : ""}`
-            : state.phase === "error"
-              ? state.note
-              : " "}
+        {state.phase === "searching" ? state.line : state.phase === "done" ? state.note ?? " " : state.phase === "error" ? state.note : " "}
       </Text>
       {results.slice(start, start + listHeight).map((node, i) => {
         const selected = start + i === cursor;
-        const kind = node.kind ?? "component";
+        const look = nodeLook(node);
         return (
           <Text key={node.ord} backgroundColor={selected ? theme.selection : undefined} wrap="truncate-end">
-            <Text color={KIND_COLOR[kind]} bold={selected}>
-              {ICON[kind] ?? "·"} {padEnd(node.display ?? node.name, nameWidth)}
-            </Text>{" "}
+            <Text color={look.color}>{look.icon} </Text>
+            <Text bold={selected}>{padEnd(node.display ?? node.name, nameWidth)}</Text>{" "}
             <Text color={theme.muted}>{clipStart(node.ord.replace(/^slot:\//, ""), inner - nameWidth - 4)}</Text>
           </Text>
         );
       })}
       {state.phase === "done" && results.length === 0 && <Text color={theme.muted}>{clip(`Nothing matching "${query.trim()}".`, inner)}</Text>}
+      <Box flexGrow={1} />
+      <Text color={theme.muted} wrap="truncate-end">↑↓ move · enter show in the Explorer · tab watch · ctrl+t trend · esc close</Text>
     </Panel>
   );
 }

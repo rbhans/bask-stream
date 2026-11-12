@@ -79,6 +79,12 @@ export function shortOrd(ord: string, segments = 2): string {
   return parts.slice(-segments).join("/") || ord;
 }
 
+/** A compact "equipment/point" label for an ORD: its last path segments, skipping any "points" folder. */
+export function place(ord: string, segments = 2): string {
+  const parts = ord.replace(/^.*slot:\//, "").replace(/^file:/, "").split("/").filter((p) => p && p !== "points");
+  return parts.slice(-segments).join("/") || ord;
+}
+
 /** Case-insensitive alarm state checks (stations report "Unacked", "Normal", …). */
 export const isUnacked = (alarm: Record<string, unknown>) => String(alarm.ackState ?? "").toLowerCase() === "unacked";
 export const alarmState = (alarm: Record<string, unknown>) => String(alarm.sourceState ?? "").toLowerCase();

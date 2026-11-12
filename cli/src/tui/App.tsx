@@ -1,55 +1,92 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Box, Text, useApp, useInput, useStdout } from "ink";
-import { BaskStreamError, toSlotOrd, type BaskStreamClient, type Proposal } from "@basidekick/baskstream";
-import { isUnacked } from "../format.js";
-import { AlarmsView } from "./AlarmsView.js";
-import { BrowseView } from "./BrowseView.js";
-import { HistoryView } from "./HistoryView.js";
-import { StatusView } from "./StatusView.js";
-import { useAlarms, useProposals, useWatchList } from "./stores.js";
-import { ProposalsView, proposalActor } from "./ProposalsView.js";
-import { Hint, ModalBox, UiContext, theme, toneColor, type Modal, type Tone, type Ui } from "./ui.js";
-import { WatchView } from "./WatchView.js";
+import { Box, Text, useApp, useStdout } from "ink";
+import { randomUUID } from "node:crypto";
+import { BaskStreamError, toSlotOrd, type BaskStreamClient, type Json, type Proposal } from "@basidekick/baskstream";
+import { isUnacked, place } from "../format.js";
+import { Link, type Shared } from "../link.js";
 import { Finder } from "./Finder.js";
+import { mouseMode, useKeyPump, useKeys, useMouse } from "./input.js";
+import { Palette, type Command } from "./Palette.js";
+import { useActivity, useAlarms, useJobs, useProposals, useWatchList } from "./stores.js";
+import { setTheme } from "./theme.js";
+import { Hint, ModalBox, UiContext, VIEWS, VIEW_LABEL, clip, theme, toneColor, type Modal, type Rect, type Tone, type Ui, type ViewName } from "./ui.js";
+import { ACTIVITY_RANGES, ActivityView, proposalActor } from "./views/Activity.js";
+import { AlarmsView } from "./views/Alarms.js";
+import { ExplorerView } from "./views/Explorer.js";
+import { FilesView } from "./views/Files.js";
+import { HomeView } from "./views/Home.js";
+import { JobsView } from "./views/Jobs.js";
+import { QueryView, REPORTS } from "./views/Query.js";
+import { SchedulesView } from "./views/Schedules.js";
+import { TrendsView } from "./views/Trends.js";
+import { WatchView } from "./views/Watch.js";
 
-const VIEWS = ["browse", "watch", "alarms", "history", "status", "proposals"] as const;
-export type ViewName = (typeof VIEWS)[number];
+export type { ViewName } from "./ui.js";
 
 const HINTS: Record<ViewName, [string, string][]> = {
-  browse: [["↑↓", "move"], ["→←", "open/close"], ["w", "watch"], ["t", "trend"], ["r", "refresh"]],
-  watch: [["↑↓", "move"], ["t", "trend"], ["d", "remove"], ["o", "override"], ["s", "set"], ["a", "auto"]],
-  alarms: [["↑↓", "move"], ["⏎", "details"], ["a", "ack"], ["A", "ack all"], ["u", "unacked only"], ["t", "trend source"]],
-  history: [["+ -", "zoom"], ["← →", "pan"], ["n", "now"], ["r", "reload"]],
-  status: [],
-  proposals: [["↑↓", "move"], ["a", "approve"], ["x", "reject"]]
+  home: [],
+  explorer: [["↑↓", "move"], ["→←", "open/close"], ["w", "watch"], ["t", "trend"], ["c", "command"], ["p", "properties"], ["d", "discover"], ["n", "new"], ["R", "rename"], ["D", "delete"], ["y", "copy ORD"]],
+  watch: [["↑↓", "move"], ["t", "trend"], ["o", "override"], ["s", "set"], ["a", "auto"], ["c", "command"], ["e", "explorer"], ["d", "remove"]],
+  alarms: [["↑↓", "move"], ["⏎", "details"], ["a", "ack"], ["A", "ack all"], ["u", "unacked"], ["f", "class"], ["e", "source"], ["t", "trend"]],
+  trends: [["↑↓", "point"], ["+ -", "zoom"], ["← →", "pan"], ["n", "now"], ["w", "watch"], ["e", "explorer"]],
+  schedules: [["↑↓", "move"], ["e", "explorer"], ["r", "reload"]],
+  query: [["↑↓", "move"], ["⏎", "run / go to"], ["i", "type a query"], ["b", "reports"], ["← →", "columns"], ["w", "watch"], ["s", "save CSV"]],
+  files: [["↑↓", "move"], ["→←", "open/up"], ["e", "edit"], ["n", "new"], ["u", "upload"], ["s", "save copy"], ["D", "delete"]],
+  jobs: [["↑↓", "move"], ["d", "discover"], ["→", "results"], ["space", "select"], ["a", "add"], ["x", "cancel"]],
+  activity: [["↑↓", "move"], ["a", "approve"], ["x", "reject"], ["⏎", "details"], ["f", "filter"], ["u", "all users"], ["[ ]", "window"], ["e", "explorer"]]
 };
 
-const FIND_HINTS: [string, string][] = [["↑↓", "move"], ["⏎", "show in tree"], ["tab", "watch point"], ["esc", "close"]];
+const KEY_OF = (index: number) => String((index + 1) % 10);
 
 export interface AppProps {
   client: BaskStreamClient;
   profileName: string;
   allowWrites: boolean;
+  /** Shared state with other bask windows on this station; kept in memory when not given. */
+  link?: Link;
   view?: ViewName;
   points?: string[];
+  /** One view per window, for a multiplexer pane: no tab row. */
+  pane?: boolean;
+  mouse?: boolean;
+  /** Hands the terminal to another program and redraws afterwards. */
+  suspend?: (work: () => void) => void;
+  /** Sends a control sequence (mouse mode, window title, clipboard) straight to the terminal. */
+  terminal?: (data: string) => void;
 }
 
-export function App({ client, profileName, allowWrites, view: initialView, points: initialPoints = [] }: AppProps) {
+export function App(props: AppProps) {
+  const { client, profileName, view: initialView, points: initialPoints = [], pane = false } = props;
   const { exit } = useApp();
   const { stdout } = useStdout();
+  useKeyPump();
+  const link = useMemo(() => props.link ?? new Link(client.http.url.origin, false), []);
   const [size, setSize] = useState({ columns: stdout.columns || 100, rows: stdout.rows || 30 });
-  const [view, setView] = useState<ViewName>(initialView ?? "browse");
+  const [view, setView] = useState<ViewName>(initialView ?? "home");
+  const [visited, setVisited] = useState(new Set<ViewName>([initialView ?? "home"]));
   const [modal, setModal] = useState<Modal>();
   const [toast, setToast] = useState<{ text: string; tone: Tone; at: number }>();
-  const [link, setLink] = useState<{ state: "live" | "reconnecting" | "down"; latency?: number; detail?: string }>({ state: "live" });
-  const [historyOrd, setHistoryOrd] = useState<string>();
-  const [showHelp, setShowHelp] = useState(false);
-  const [finding, setFinding] = useState(false);
+  const [net, setNet] = useState<{ state: "live" | "reconnecting" | "down"; latency: number[]; detail?: string }>({ state: "live", latency: [] });
+  const [writes, setWrites] = useState(props.allowWrites);
+  const [overlay, setOverlay] = useState<"help" | "find" | "palette">();
+  const [typing, setTyping] = useState(false);
+  const [trendOrd, setTrendOrd] = useState<string>();
   const [reveal, setReveal] = useState<{ ord: string; n: number }>();
+  const [queryRun, setQueryRun] = useState<{ n: number; bql?: string; neql?: string }>();
+  const [focusJob, setFocusJob] = useState<{ job: string; n: number }>();
+  const [rangeIndex, setRangeIndex] = useState(1);
+  const [station, setStation] = useState<string | undefined>(typeof client.capabilities.station === "string" ? client.capabilities.station : undefined);
+  const [shared, setShared] = useState<Shared>(link.get());
+  const [mouseOn, setMouseOn] = useState(props.mouse ?? false);
+  const [, repaint] = useState(0);
+  const lastOrd = useRef<string | undefined>(undefined);
+  const targets = useRef(new Map<string, string>());
 
-  const watchList = useWatchList(client, initialPoints);
+  const watchList = useWatchList(client, link, initialPoints);
   const alarmStore = useAlarms(client);
   const proposalStore = useProposals(client);
+  const activity = useActivity(client, { enabled: view === "home" || view === "activity", station, rangeMs: ACTIVITY_RANGES[rangeIndex] });
+  const jobStore = useJobs(client, view === "jobs" || view === "home");
 
   useEffect(() => {
     const onResize = () => setSize({ columns: stdout.columns, rows: stdout.rows });
@@ -57,21 +94,33 @@ export function App({ client, profileName, allowWrites, view: initialView, point
     return () => void stdout.off("resize", onResize);
   }, [stdout]);
 
+  useEffect(() => setVisited((set) => (set.has(view) ? set : new Set(set).add(view))), [view]);
+
+  // The station's name, for the header and to find its audit history.
+  useEffect(() => {
+    if (station) return;
+    void client.describe("slot:/Services", "full").then((node) => {
+      const tags = (((node.metadata ?? {}) as Json).tags ?? []) as Json[];
+      const name = tags.find((t) => t.id === "n:station")?.value;
+      if (typeof name === "string" && name) setStation(name);
+    }, () => {});
+  }, [client]);
+
   // Connection state and a latency sample every 10 s.
   useEffect(() => {
     const ping = async () => {
       if (!client.connected) return;
       const started = Date.now();
-      await client.ping().then(() => setLink((l) => (l.state === "live" ? { ...l, latency: Date.now() - started } : l)), () => {});
+      await client.ping().then(() => setNet((l) => (l.state === "live" ? { ...l, latency: [...l.latency, Date.now() - started].slice(-30) } : l)), () => {});
     };
-    const onDown = () => setLink({ state: "reconnecting" });
-    const onRetry = ({ delayMs }: { delayMs: number }) => setLink({ state: "reconnecting", detail: `retry in ${Math.round(delayMs / 1000)}s` });
+    const onDown = () => setNet((l) => ({ ...l, state: "reconnecting", detail: undefined }));
+    const onRetry = ({ delayMs }: { delayMs: number }) => setNet((l) => ({ ...l, state: "reconnecting", detail: `retry in ${Math.round(delayMs / 1000)}s` }));
     const onUp = () => {
-      setLink({ state: "live" });
+      setNet((l) => ({ ...l, state: "live", detail: undefined }));
       showToast("Reconnected", "good");
     };
     const onError = (error: Error) => {
-      if (error instanceof BaskStreamError && error.code === "session_expired") setLink({ state: "down", detail: "session expired" });
+      if (error instanceof BaskStreamError && error.code === "session_expired") setNet((l) => ({ ...l, state: "down", detail: "session expired" }));
     };
     const onResync = () => showToast("Station dropped events; views refreshed", "warn");
     client.on("disconnected", onDown);
@@ -93,192 +142,394 @@ export function App({ client, profileName, allowWrites, view: initialView, point
 
   useEffect(() => {
     if (!toast) return;
-    const timer = setTimeout(() => setToast(undefined), 4000);
+    const timer = setTimeout(() => setToast(undefined), 5000);
     return () => clearTimeout(timer);
   }, [toast]);
 
   const showToast = useCallback((text: string, tone: Tone = "info") => setToast({ text, tone, at: Date.now() }), []);
 
-  const ui = useMemo<Ui>(
-    () => ({
-      allowWrites,
-      toast: showToast,
-      confirm: (text, onYes) => setModal({ kind: "confirm", text, onYes }),
-      prompt: (label, onSubmit, initial) => setModal({ kind: "input", label, onSubmit, initial }),
-      attempt: async (label, work) => {
-        try {
-          return await work();
-        } catch (error) {
-          const code = error instanceof BaskStreamError ? ` [${error.code}]` : "";
-          showToast(`${label} failed${code}: ${error instanceof Error ? error.message : String(error)}`, "bad");
-          return undefined;
-        }
-      },
-      openHistory: (ord) => {
-        setHistoryOrd(toSlotOrd(ord));
-        setView("history");
+  // ---- Other bask windows on this station ---------------------------------------------------------
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  useEffect(() => {
+    link.start();
+    let seen = link.get().show?.n ?? 0;
+    const onShared = (next: Shared) => {
+      setShared(next);
+      const show = next.show;
+      if (!show || show.n <= seen) return;
+      seen = show.n;
+      if (show.from === process.pid) return;
+      const target: ViewName = show.kind === "trend" ? "trends" : "explorer";
+      // A pane answers only for the view it is showing; a full dashboard steps in when no window is on it.
+      if (viewRef.current !== target && (pane || link.otherShowing(target))) return;
+      if (show.kind === "trend") setTrendOrd(toSlotOrd(show.ord));
+      else setReveal((r) => ({ ord: toSlotOrd(show.ord), n: (r?.n ?? 0) + 1 }));
+      setView(target);
+    };
+    link.on("change", onShared);
+    return () => {
+      link.off("change", onShared);
+      link.stop();
+    };
+  }, [link]);
+  useEffect(() => {
+    link.announce(view);
+    const timer = setInterval(() => link.announce(viewRef.current), 5000);
+    return () => clearInterval(timer);
+  }, [view, link]);
+
+  useEffect(() => props.terminal?.(mouseMode(mouseOn)), [mouseOn]);
+
+  // The window title, which multiplexers show on the pane or tab.
+  useEffect(() => props.terminal?.(`\x1b]2;${pane ? VIEW_LABEL[view] : `bask · ${station ?? client.http.url.host}`}\x07`), [view, station, pane]);
+
+  const ui = useMemo<Ui>(() => {
+    const attempt: Ui["attempt"] = async (label, work) => {
+      try {
+        return await work();
+      } catch (error) {
+        const code = error instanceof BaskStreamError ? ` [${error.code}]` : "";
+        showToast(`${label} failed${code}: ${error instanceof Error ? error.message : String(error)}`, "bad");
+        return undefined;
       }
-    }),
-    [allowWrites, showToast]
+    };
+    const canWrite = (what: string) => {
+      if (writes) return true;
+      showToast(`This window is read-only. Press W to allow changes, then ${what}.`, "warn");
+      return false;
+    };
+    return {
+      allowWrites: writes,
+      toast: showToast,
+      confirm: (text, onYes, options) => setModal({ kind: "confirm", text, onYes, ...options }),
+      prompt: (label, onSubmit, options) => setModal({ kind: "input", label, onSubmit, ...options }),
+      select: (label, options, onSelect) => setModal({ kind: "select", label, options: options as never, onSelect: onSelect as (value: unknown) => void }),
+      attempt,
+      canWrite,
+      plan: (title, changes, lines) =>
+        new Promise<boolean>((resolve) => {
+          void (async () => {
+            if (!((client.capabilities.modelEditing ?? {}) as Json).enabled) {
+              showToast("Model edits are off on the station: turn on modelEditsEnabled on the BASkStreamService.", "warn");
+              return resolve(false);
+            }
+            const preview = (await attempt(title, () => client.call("preview_model_changes", { changes })))?.result as Json | undefined;
+            if (!preview) return resolve(false);
+            const detail = lines ?? ((preview.changes ?? []) as Json[]).map((c) => `${String(c.action)} ${String(c.ord ?? c.name ?? "")}`);
+            setModal({
+              kind: "confirm", title, text: `Apply ${changes.length === 1 ? "this change" : `these ${changes.length} changes`} to the station?`, lines: detail,
+              onCancel: () => {
+                void client.call("cancel_model_plan", { planId: preview.planId }).catch(() => {});
+                resolve(false);
+              },
+              onYes: async () => {
+                const applied = (await attempt(title, () => client.call("apply_model_changes", { planId: preview.planId, planHash: preview.planHash, idempotencyKey: randomUUID() }, { timeoutMs: 120000 })))?.result as Json | undefined;
+                const failed = ((applied?.results ?? []) as Json[]).filter((r) => r.ok === false);
+                if (!applied) return resolve(false);
+                if (applied.state !== "applied" || failed.length) {
+                  showToast(`${title}: the plan ended ${String(applied.state)}${failed[0]?.message ? ` (${String(failed[0].message)})` : ""}`, "bad");
+                  return resolve(false);
+                }
+                showToast(`${title}: done`, "good");
+                resolve(true);
+              }
+            });
+          })();
+        }),
+      goto: setView,
+      openTrend: (raw) => {
+        const ord = toSlotOrd(raw);
+        link.update((s) => void (s.trends = [ord, ...s.trends.filter((o) => o !== ord)].slice(0, 12)));
+        if (pane && view !== "trends" && link.otherShowing("trends")) {
+          link.show("trend", ord);
+          return showToast(`Charted ${place(ord)} in the Trends window`, "info");
+        }
+        setTrendOrd(ord);
+        setView("trends");
+      },
+      reveal: (raw) => {
+        const ord = toSlotOrd(raw);
+        if (pane && view !== "explorer" && link.otherShowing("explorer")) {
+          link.show("reveal", ord);
+          return showToast(`Shown ${place(ord)} in the Explorer window`, "info");
+        }
+        setReveal((r) => ({ ord, n: (r?.n ?? 0) + 1 }));
+        setView("explorer");
+      },
+      watch: (raw) => {
+        const ord = toSlotOrd(raw);
+        if (watchList.points.some((p) => p.ord === ord)) return showToast("Already on the watch list", "info");
+        void attempt("watch", async () => {
+          await watchList.add(ord);
+          showToast(`Watching ${place(ord)}${view === "watch" ? "" : " · press 3 to see it"}`, "good");
+        });
+      },
+      discover: (raw) => {
+        if (!canWrite("start a discovery")) return;
+        const ord = toSlotOrd(raw);
+        setModal({
+          kind: "confirm", title: "Discover", text: `Start discovery on ${place(ord)}?`, lines: ["A network finds its devices; a device finds its points.", "This puts traffic on the driver's network."],
+          onYes: async () => {
+            const discovery = await attempt("discover", () => client.discover(ord));
+            if (!discovery) return;
+            targets.current.set(discovery.job, discovery.kind === "devices" ? ord : "");
+            setFocusJob((f) => ({ job: discovery.job, n: (f?.n ?? 0) + 1 }));
+            setView("jobs");
+            void jobStore.reload();
+          }
+        });
+      },
+      runQuery: (query) => {
+        setQueryRun((q) => ({ n: (q?.n ?? 0) + 1, ...query }));
+        setView("query");
+      },
+      copy: (text, what = "text") => {
+        if (!text) return;
+        props.terminal?.(`\x1b]52;c;${Buffer.from(text, "utf8").toString("base64")}\x07`);
+        showToast(`Copied the ${what}: ${clip(text, 60)}`, "good");
+      },
+      typing: setTyping,
+      suspend: (work) => (props.suspend ? props.suspend(work) : work())
+    };
+  }, [writes, showToast, view, pane, watchList.points, client, link]);
+
+  const toggleWrites = () => {
+    if (writes) {
+      setWrites(false);
+      return showToast("This window is read-only again.", "info");
+    }
+    setModal({
+      kind: "confirm", title: "Allow changes", text: `Allow changes from this window?`,
+      lines: [`Point commands, acknowledgements, file and model edits will go to ${station ?? client.http.url.host}`, `as ${String(client.capabilities.authenticatedUser ?? "this user")}. Each one still asks before it is sent.`],
+      onYes: () => {
+        setWrites(true);
+        showToast("Changes are allowed in this window. Press W to turn them off.", "warn");
+      }
+    });
+  };
+
+  const commands = useMemo<Command[]>(
+    () => [
+      ...VIEWS.map((name, i) => ({ title: VIEW_LABEL[name], group: "View", keys: KEY_OF(i), run: () => setView(name) })),
+      { title: "Find a point or component…", group: "Search", keys: "/", run: () => setOverlay("find") },
+      { title: writes ? "Make this window read-only" : "Allow changes from this window", group: "Safety", keys: "W", run: toggleWrites },
+      { title: "Discover devices or points…", group: "Driver", run: () => setModal({ kind: "input", label: "Discover on which BACnet network or device?", initial: lastOrd.current, hint: "ORD", onSubmit: (ord) => ord.trim() && ui.discover(ord.trim()) }) },
+      ...REPORTS.map((report) => ({ title: report.title, group: "Report", run: () => ui.runQuery(report.bql ? { bql: report.bql } : { neql: report.neql }) })),
+      { title: "Save station", group: "Station", run: () => ui.canWrite("save the station") && void ui.plan("Save station", [{ action: "invoke", ord: "slot:/", slot: "save" }], ["Writes the running configuration to the station's config.bog."]) },
+      { title: "Acknowledge every unacknowledged alarm", group: "Alarms", run: () => {
+        const uuids = [...alarmStore.alarms.values()].filter(isUnacked).map((a) => String(a.uuid));
+        if (!ui.canWrite("acknowledge alarms")) return;
+        if (uuids.length === 0) return showToast("Nothing to acknowledge.", "info");
+        ui.confirm(`Acknowledge ${uuids.length} alarm${uuids.length === 1 ? "" : "s"}?`, () => void ui.attempt("ack", () => client.ackAlarms({ uuids })).then((r) => r && showToast(`${uuids.length} acknowledged`, "good")));
+      } },
+      { title: "Copy the selected ORD", group: "Explorer", keys: "y", run: () => lastOrd.current && ui.copy(lastOrd.current, "ORD") },
+      { title: `Use the ${theme.name === "dark" ? "light" : "dark"} theme`, group: "Look", run: () => {
+        setTheme(theme.name === "dark" ? "light" : "dark");
+        repaint((n) => n + 1);
+      } },
+      ...(!props.terminal ? [] : [{ title: mouseOn ? "Turn the mouse off (to select text)" : "Turn the mouse on", group: "Look", run: () => setMouseOn((on) => !on) }]),
+      { title: "Help", group: "bask", keys: "?", run: () => setOverlay("help") },
+      { title: "Quit", group: "bask", keys: "q", run: () => exit() }
+    ],
+    [writes, ui, mouseOn, alarmStore.alarms]
   );
 
-  useInput(
-    (input, key) => {
-      if (showHelp) return setShowHelp(false);
-      if (input === "q" || (key.ctrl && input === "c")) return exit();
-      if (input === "?") return setShowHelp(true);
-      if (input === "/") return setFinding(true);
-      const index = Number(input);
-      if (index >= 1 && index <= VIEWS.length) return setView(VIEWS[index - 1]);
-      if (key.tab) setView((v) => VIEWS[(VIEWS.indexOf(v) + (key.shift ? VIEWS.length - 1 : 1)) % VIEWS.length]);
-    },
-    { isActive: !modal && !finding }
-  );
+  useKeys((input, key) => {
+    if (key.ctrl && input === "c") return exit();
+    if (modal || overlay) return;
+    if (key.ctrl && input === "k") return setOverlay("palette");
+    if (typing) return;
+    if (input === "q") return exit();
+    if (input === ":") return setOverlay("palette");
+    if (input === "?") return setOverlay("help");
+    if (input === "/") return setOverlay("find");
+    if (input === "W") return toggleWrites();
+    if (/^[0-9]$/.test(input)) return setView(VIEWS[(Number(input) + 9) % 10]);
+    if (key.tab) setView((v) => VIEWS[(VIEWS.indexOf(v) + (key.shift ? VIEWS.length - 1 : 1)) % VIEWS.length]);
+  });
 
-  const watchedSet = useMemo(() => new Set(watchList.points.map((p) => p.ord)), [watchList.points]);
   const unacked = [...alarmStore.alarms.values()].filter(isUnacked).length;
-
   const pendingProposals = [...proposalStore.proposals.values()].filter((p) => p.status === "pending").length;
+  const runningJobs = jobStore.jobs.filter((j) => !j.complete).length;
 
   // The sidekick mentions each new proposal while you're looking at something else.
   useEffect(() => {
     const onProposal = (p: Proposal) => {
-      if (p.status === "pending" && view !== "proposals") showToast(`New proposal ${p.id} from ${proposalActor(p)}: ${p.description}. Press 6 to review.`, "info");
+      // A workspace with an AI Activity window already shows it there.
+      if (p.status === "pending" && viewRef.current !== "activity" && !(pane && link.otherShowing("activity"))) showToast(`New proposal ${p.id} from ${proposalActor(p)}: ${p.description}. Press 0 to review.`, "warn");
     };
     client.on("proposal", onProposal);
     return () => void client.off("proposal", onProposal);
-  }, [client, view]);
+  }, [client]);
 
-  // The sidekick points out unacknowledged alarms once, after the first alarm load.
-  const greeted = useRef(false);
-  useEffect(() => {
-    if (greeted.current || alarmStore.loadedAt === undefined) return;
-    greeted.current = true;
-    if (unacked > 0 && view !== "alarms") showToast(`Found ${unacked} unacked alarm${unacked === 1 ? "" : "s"}. Press 3 to take a look.`, "info");
-  }, [alarmStore.loadedAt]);
-  // One row short of the terminal: a frame as tall as the screen makes Ink clear and redraw
-  // everything on each update, which floods scrollback in some terminals.
-  const height = Math.max(11, size.rows - 1);
-  const bodyHeight = height - 3;
-  const width = size.columns;
-  const viewActive = !modal && !showHelp && !finding;
+  const width = Math.max(40, size.columns);
+  const height = Math.max(12, size.rows);
+  const headRows = pane ? 1 : 2;
+  const bodyHeight = height - headRows - 1;
+  const rect = useMemo<Rect>(() => ({ x: 0, y: headRows, width, height: bodyHeight }), [width, bodyHeight, headRows]);
+  const viewActive = !modal && !overlay;
   const host = client.http.url.host;
   const user = String(client.capabilities.authenticatedUser ?? "");
+  const watchedSet = useMemo(() => new Set(watchList.points.map((p) => p.ord)), [watchList.points]);
+  const trendChoices = useMemo(() => [...new Set([...(trendOrd ? [trendOrd] : []), ...watchList.points.map((p) => p.ord), ...shared.trends])], [trendOrd, watchList.points, shared.trends]);
 
-  const addWatch = (ord: string) => {
-    if (watchedSet.has(ord)) return showToast("Already watching", "info");
-    void ui.attempt("watch", async () => {
-      await watchList.add(ord);
-      showToast(`Watching ${ord.split("/").pop()} · press 2 to see it`, "good");
-    });
+  // ---- Header -------------------------------------------------------------------------------------
+  const badges: Partial<Record<ViewName, { text: string; color: string }>> = {
+    watch: watchList.points.length ? { text: String(watchList.points.length), color: theme.muted } : undefined,
+    alarms: alarmStore.alarms.size ? { text: String(unacked || alarmStore.alarms.size), color: unacked ? theme.bad : theme.muted } : undefined,
+    jobs: runningJobs ? { text: String(runningJobs), color: theme.warn } : undefined,
+    activity: pendingProposals ? { text: String(pendingProposals), color: theme.warn } : undefined
   };
+  const fullTabs = VIEWS.reduce((n, name, i) => n + VIEW_LABEL[name].length + 4 + (badges[name] ? badges[name]!.text.length + 1 : 0) + (i ? 1 : 0), 0) <= width;
+  const tabs: { name: ViewName; text: string; from: number; to: number }[] = [];
+  let column = 0;
+  VIEWS.forEach((name, i) => {
+    const text = fullTabs || name === view ? ` ${KEY_OF(i)} ${VIEW_LABEL[name]} ` : ` ${KEY_OF(i)} `;
+    const length = text.length + (badges[name] ? (fullTabs || name === view ? badges[name]!.text.length : 1) + 1 : 0) + 1;
+    tabs.push({ name, text, from: column, to: column + length });
+    column += length;
+  });
+  useMouse((e) => {
+    if (e.kind !== "down" || e.y !== 1 || pane) return;
+    const tab = tabs.find((t) => e.x >= t.from && e.x < t.to);
+    if (tab) setView(tab.name);
+  }, viewActive && mouseOn);
 
-  const tabs: [ViewName, string, string?][] = [
-    ["browse", "Browse"],
-    ["watch", "Watch", watchList.points.length ? String(watchList.points.length) : undefined],
-    ["alarms", "Alarms", alarmStore.alarms.size ? String(alarmStore.alarms.size) : undefined],
-    ["history", "History"],
-    ["status", "Status"],
-    ["proposals", "Proposals", pendingProposals ? String(pendingProposals) : undefined]
+  const clockText = (() => {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  })();
+  const latency = net.latency[net.latency.length - 1];
+  const title = pane ? ` ◆ ${VIEW_LABEL[view]} ` : " ◆ bask ";
+  const name = station ?? profileName;
+  // The right side of the header gives way as the window narrows: the clock goes first, then the
+  // read-only note, then the words beside each mark.
+  type Part = { id: string; text: string; short?: string; color: string; filled?: boolean };
+  let right: Part[] = [
+    ...(unacked > 0 && view !== "alarms" ? [{ id: "alarms", text: ` ${unacked} unacked `, short: ` ${unacked}▲ `, color: theme.bad, filled: true }] : []),
+    ...(pendingProposals > 0 && view !== "activity" ? [{ id: "waiting", text: ` ${pendingProposals} waiting `, short: ` ${pendingProposals}◷ `, color: theme.warn, filled: true }] : []),
+    net.state === "live" ? { id: "link", text: `● live${latency !== undefined ? ` ${latency} ms` : ""}`, short: "●", color: theme.good } : net.state === "reconnecting" ? { id: "link", text: `◌ reconnecting${net.detail ? ` (${net.detail})` : ""}`, short: "◌", color: theme.warn } : { id: "link", text: `✕ ${net.detail ?? "offline"}`, short: "✕", color: theme.bad },
+    writes ? { id: "mode", text: "✎ changes on", short: "✎", color: theme.warn } : { id: "mode", text: "read-only", color: theme.muted },
+    { id: "clock", text: clockText, color: theme.muted }
   ];
+  const lengthOf = (parts: Part[]) => parts.reduce((n, p) => n + p.text.length + 2, 0);
+  const fits = (parts: Part[]) => title.length + 2 + Math.min(name.length, 10) + 1 + lengthOf(parts) <= width;
+  if (!fits(right) || width < 96) right = right.filter((p) => p.id !== "clock");
+  if (!fits(right)) right = right.filter((p) => p.id !== "mode" || writes);
+  if (!fits(right)) right = right.map((p) => (p.short ? { ...p, text: p.short } : p));
+  const leftRoom = Math.max(0, width - title.length - lengthOf(right) - 3);
+  const shownName = clip(name, Math.min(30, leftRoom));
+  const shownIdentity = clip(` · ${user ? `${user}@` : ""}${host}`, Math.max(0, leftRoom - shownName.length));
+  const headerGap = Math.max(1, width - title.length - 2 - shownName.length - (shownIdentity.length > 4 ? shownIdentity.length : 0) - lengthOf(right));
+
+  // Footer hints: the ones that work everywhere always show; the view's own fill what is left.
+  const everywhere: [string, string][] = overlay || typing ? [] : [["/", "find"], [":", "commands"], ...(pane ? ([["1-0", "views"]] as [string, string][]) : []), ["?", "help"], ["q", "quit"]];
+  const hintLength = ([k, label]: [string, string]) => k.length + label.length + 4;
+  let hintRoom = width - everywhere.reduce((n, h) => n + hintLength(h), 0);
+  const hints = (overlay ? [] : HINTS[view]).filter((h) => (hintRoom -= hintLength(h)) >= 0);
 
   return (
     <UiContext.Provider value={ui}>
       <Box flexDirection="column" width={width} height={height}>
-        <Box justifyContent="space-between" width={width}>
-          <Text wrap="truncate-end">
-            <Text backgroundColor={theme.accent} color="black" bold>
-              {" ◆ baskStream "}
-            </Text>
-            <Text color={theme.muted}>
-              {"  "}
-              {profileName} · {user ? `${user}@` : ""}
-              {host}
-            </Text>
-          </Text>
-          <Text>
-            {link.state === "live" ? (
-              <Text color={theme.good}>● live{link.latency !== undefined ? ` ${link.latency}ms` : ""}</Text>
-            ) : link.state === "reconnecting" ? (
-              <Text color={theme.warn}>◌ reconnecting{link.detail ? ` (${link.detail})` : ""}</Text>
-            ) : (
-              <Text color={theme.bad}>✕ {link.detail ?? "offline"}</Text>
-            )}
-            {allowWrites ? <Text color={theme.warn}>  ✎ writes on</Text> : <Text color={theme.muted}>  read-only</Text>}{" "}
-          </Text>
-        </Box>
         <Text wrap="truncate-end">
-          {tabs.map(([name, label, badge], i) => {
-            const on = view === name;
-            const badgeColor = name === "alarms" && unacked ? theme.bad : name === "proposals" ? theme.warn : theme.muted;
-            return (
-              <Text key={name}>
-                <Text color={on ? "black" : theme.muted} backgroundColor={on ? theme.accent2 : undefined} bold={on}>
-                  {` ${i + 1} ${label} `}
-                </Text>
-                {badge ? (
-                  <Text color={badgeColor} bold={(name === "alarms" && unacked > 0) || name === "proposals"}>
-                    {badge}
-                  </Text>
-                ) : null}
-                {"  "}
-              </Text>
-            );
-          })}
+          <Text backgroundColor={theme.accent} color={theme.onAccent} bold>{title}</Text>
+          <Text bold>{`  ${shownName}`}</Text>
+          <Text color={theme.muted}>{shownIdentity.length > 4 ? shownIdentity : ""}</Text>
+          {" ".repeat(headerGap)}
+          {right.map((p) => (
+            <Text key={p.id}>
+              {p.filled ? <Text backgroundColor={p.color} color={theme.onAccent} bold>{p.text}</Text> : <Text color={p.color}>{p.text}</Text>}
+              {"  "}
+            </Text>
+          ))}
         </Text>
+        {!pane && (
+          <Text wrap="truncate-end">
+            {tabs.map(({ name, text }) => {
+              const on = view === name;
+              const badge = badges[name];
+              return (
+                <Text key={name}>
+                  <Text color={on ? theme.onAccent : theme.muted} backgroundColor={on ? theme.accent2 : undefined} bold={on}>{text}</Text>
+                  {badge ? <Text color={badge.color} bold>{fullTabs || on ? badge.text : "●"} </Text> : null}{" "}
+                </Text>
+              );
+            })}
+          </Text>
+        )}
 
         <Box height={bodyHeight} flexDirection="column">
-          {showHelp ? (
-            <Help />
-          ) : finding && !modal ? (
-            <Finder
-              client={client}
-              width={width}
-              height={bodyHeight}
-              onClose={() => setFinding(false)}
-              onReveal={(ord) => {
-                setFinding(false);
-                setView("browse");
-                setReveal((r) => ({ ord, n: (r?.n ?? 0) + 1 }));
-              }}
-              onWatch={addWatch}
-            />
+          {overlay === "help" ? (
+            <Help width={width} height={bodyHeight} view={view} close={() => setOverlay(undefined)} />
+          ) : overlay === "find" && !modal ? (
+            <Finder client={client} width={width} height={bodyHeight} onClose={() => setOverlay(undefined)} onReveal={(ord) => (setOverlay(undefined), ui.reveal(ord))} onWatch={ui.watch} onTrend={(ord) => (setOverlay(undefined), ui.openTrend(ord))} />
+          ) : overlay === "palette" && !modal ? (
+            <Palette commands={commands} width={width} height={bodyHeight} onClose={() => setOverlay(undefined)} onGoto={(ord) => ui.reveal(ord)} />
           ) : modal ? (
             <Box height={bodyHeight} justifyContent="center" alignItems="center" flexDirection="column">
-              <ModalBox modal={modal} close={() => setModal(undefined)} />
+              <ModalBox modal={modal} close={() => setModal(undefined)} width={width} />
             </Box>
           ) : null}
-          <Box display={showHelp || modal || finding ? "none" : "flex"} flexDirection="column">
-            <Box display={view === "browse" ? "flex" : "none"}>
-              <BrowseView client={client} active={viewActive && view === "browse"} width={width} height={bodyHeight} watched={watchedSet} onWatch={addWatch} reveal={reveal} />
-            </Box>
-            {view === "watch" && <WatchView client={client} active={viewActive} width={width} height={bodyHeight} points={watchList.points} onRemove={(ord) => void watchList.remove(ord)} />}
-            {view === "alarms" && <AlarmsView client={client} active={viewActive} width={width} height={bodyHeight} alarms={alarmStore.alarms} error={alarmStore.error} loaded={alarmStore.loadedAt !== undefined} reload={alarmStore.reload} />}
-            {view === "history" && <HistoryView client={client} active={viewActive} width={width} height={bodyHeight} ord={historyOrd} />}
-            {view === "proposals" && <ProposalsView client={client} active={viewActive} width={width} height={bodyHeight} proposals={proposalStore.proposals} error={proposalStore.error} />}
-            {view === "status" && <StatusView client={client} active={viewActive} width={width} height={bodyHeight} profileName={profileName} allowWrites={allowWrites} />}
+          <Box display={modal || overlay ? "none" : "flex"} flexDirection="column">
+            {visited.has("home") && (
+              <Box display={view === "home" ? "flex" : "none"}>
+                <HomeView client={client} active={viewActive && view === "home"} rect={rect} profileName={profileName} station={station} allowWrites={writes} link={net} alarms={alarmStore.alarms} alarmsLoaded={alarmStore.loadedAt !== undefined} proposals={proposalStore.proposals} activity={activity.entries} activityLoaded={activity.loaded} watch={watchList.points} jobs={jobStore.jobs} />
+              </Box>
+            )}
+            {visited.has("explorer") && (
+              <Box display={view === "explorer" ? "flex" : "none"}>
+                <ExplorerView client={client} active={viewActive && view === "explorer"} rect={rect} watched={watchedSet} reveal={reveal} onSelect={(ord) => void (lastOrd.current = ord)} />
+              </Box>
+            )}
+            {view === "watch" && <WatchView client={client} active={viewActive} rect={rect} points={watchList.points} onRemove={(ord) => void watchList.remove(ord)} />}
+            {view === "alarms" && <AlarmsView client={client} active={viewActive} rect={rect} alarms={alarmStore.alarms} error={alarmStore.error} loaded={alarmStore.loadedAt !== undefined} lastEventAt={alarmStore.lastEventAt} reload={alarmStore.reload} />}
+            {visited.has("trends") && (
+              <Box display={view === "trends" ? "flex" : "none"}>
+                <TrendsView client={client} active={viewActive && view === "trends"} rect={rect} ord={trendOrd} choices={trendChoices} onPick={setTrendOrd} />
+              </Box>
+            )}
+            {visited.has("schedules") && (
+              <Box display={view === "schedules" ? "flex" : "none"}>
+                <SchedulesView client={client} active={viewActive && view === "schedules"} rect={rect} />
+              </Box>
+            )}
+            {visited.has("query") && (
+              <Box display={view === "query" ? "flex" : "none"}>
+                <QueryView client={client} active={viewActive && view === "query"} rect={rect} history={shared.queries} onRan={(text) => link.update((s) => void (s.queries = [text, ...s.queries.filter((q) => q !== text)].slice(0, 30)))} run={queryRun} />
+              </Box>
+            )}
+            {visited.has("files") && (
+              <Box display={view === "files" ? "flex" : "none"}>
+                <FilesView client={client} active={viewActive && view === "files"} rect={rect} />
+              </Box>
+            )}
+            {visited.has("jobs") && (
+              <Box display={view === "jobs" ? "flex" : "none"}>
+                <JobsView client={client} active={viewActive && view === "jobs"} rect={rect} jobs={jobStore.jobs} loaded={jobStore.loaded} error={jobStore.error} reload={jobStore.reload} targets={targets.current} focusJob={focusJob} lastOrd={lastOrd.current} />
+              </Box>
+            )}
+            {view === "activity" && (
+              <ActivityView client={client} active={viewActive} rect={rect} entries={activity.entries} proposals={proposalStore.proposals} loaded={activity.loaded} error={activity.error} auditNote={activity.auditNote} lastNewAt={activity.lastNewAt} agentUsers={activity.agentUsers} rangeIndex={rangeIndex} setRangeIndex={setRangeIndex} reload={activity.reload} />
+            )}
           </Box>
         </Box>
 
         <Box width={width}>
           {toast ? (
             <Text color={toneColor(toast.tone)} wrap="truncate-end">
-              {toast.tone === "bad" ? "✕ " : toast.tone === "good" ? "✓ " : "• "}
+              {toast.tone === "bad" ? "✕ " : toast.tone === "good" ? "✓ " : toast.tone === "warn" ? "! " : "• "}
               {toast.text}
             </Text>
           ) : (
             <Text wrap="truncate-end">
-              {(finding ? FIND_HINTS : HINTS[view]).map(([k, label]) => (
+              {hints.map(([k, label]) => (
                 <Hint key={k} k={k} label={label} />
               ))}
-              {!finding && (
-                <>
-                  <Hint k="/" label="find" />
-                  <Hint k="1-6" label="views" />
-                  <Hint k="?" label="help" />
-                  <Hint k="q" label="quit" />
-                </>
-              )}
+              {everywhere.map(([k, label]) => (
+                <Hint key={k} k={k} label={label} />
+              ))}
+              {typing && <Text color={theme.muted}>enter run · esc leave the query line · ↑↓ earlier queries · ctrl+k commands</Text>}
             </Text>
           )}
         </Box>
@@ -287,34 +538,54 @@ export function App({ client, profileName, allowWrites, view: initialView, point
   );
 }
 
-function Help() {
-  const section = (title: string, rows: [string, string][]) => (
-    <Box flexDirection="column" marginRight={4} marginBottom={1}>
-      <Text bold color={theme.accent2}>
-        {title}
-      </Text>
-      {rows.map(([k, label]) => (
-        <Text key={k}>
-          <Text color={theme.accent} bold>
-            {k.padEnd(8)}
-          </Text>
-          {label}
-        </Text>
-      ))}
-    </Box>
-  );
+function Help({ width, height, view, close }: { width: number; height: number; view: ViewName; close: () => void }) {
+  useKeys(() => close());
+  const everywhere: [string, string][] = [["1 … 0", "switch view"], ["tab", "next view"], ["/", "find by name"], [": ctrl+k", "every command"], ["W", "allow changes / read-only"], ["?", "this help"], ["q", "quit"]];
+  // This view's keys come first; the others follow for as long as there is room.
+  const sections: { title: string; rows: [string, string][] }[] = [
+    { title: "Everywhere", rows: everywhere },
+    ...[view, ...VIEWS.filter((name) => name !== view)].filter((name) => HINTS[name].length).map((name) => ({ title: VIEW_LABEL[name], rows: HINTS[name] }))
+  ];
+  const columnWidth = 34;
+  const columnCount = Math.max(1, Math.floor((width - 4) / columnWidth));
+  const room = Math.max(4, height - 3);
+  const columns: (typeof sections)[] = [[]];
+  let used = 0;
+  let left = sections.length;
+  for (const section of sections) {
+    const tall = section.rows.length + 2;
+    if (used + tall > room && columns[columns.length - 1].length > 0) {
+      if (columns.length === columnCount) break;
+      columns.push([]);
+      used = 0;
+    }
+    if (used + tall > room) break;
+    columns[columns.length - 1].push(section);
+    used += tall;
+    left -= 1;
+  }
   return (
-    <Box flexDirection="column" paddingX={2}>
-      <Box flexWrap="wrap">
-        {section("Everywhere", [["/", "find a point"], ["1-6", "switch view"], ["tab", "next view"], ["?", "this help"], ["q", "quit"]])}
-        {section("Find", [["type", "search the station"], ["⏎", "show in tree"], ["tab", "watch point"], ["esc", "close"]])}
-        {section("Browse", HINTS.browse)}
-        {section("Watch", HINTS.watch)}
-        {section("Alarms", HINTS.alarms)}
-        {section("History", HINTS.history)}
-        {section("Proposals", HINTS.proposals)}
+    <Box flexDirection="column" paddingX={2} width={width} height={height} overflow="hidden">
+      <Box height={room}>
+        {columns.map((column, i) => (
+          <Box key={i} flexDirection="column" width={columnWidth}>
+            {column.map((section) => (
+              <Box key={section.title} flexDirection="column" marginBottom={1}>
+                <Text bold color={section.title === VIEW_LABEL[view] ? theme.accent : theme.accent2}>{section.title}</Text>
+                {section.rows.map(([k, label]) => (
+                  <Text key={k} wrap="truncate-end">
+                    <Text color={theme.accent} bold>{k.padEnd(9)}</Text>
+                    {clip(label, columnWidth - 11)}
+                  </Text>
+                ))}
+              </Box>
+            ))}
+          </Box>
+        ))}
       </Box>
-      <Text color={theme.muted}>Commands that change the station need --allow-writes and ask before sending. Press any key to close.</Text>
+      <Text color={theme.muted} wrap="truncate-end">
+        {left > 0 ? "More views' keys fit in a larger window. " : ""}Changes need W and each one asks first. The mouse works: click tabs and rows, scroll with the wheel. Any key closes.
+      </Text>
     </Box>
   );
 }
