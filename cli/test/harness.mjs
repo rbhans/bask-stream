@@ -6,6 +6,7 @@ import { render } from "ink";
 import { BaskStreamClient } from "@basidekick/baskstream";
 import { App } from "../dist/tui/App.js";
 import { Fleet } from "../dist/tui/Fleet.js";
+import { Gallery } from "../dist/tui/symbols/Gallery.js";
 import { Link } from "../dist/link.js";
 import { DEMO_SITES, startDemoStation } from "../dist/demo/station.js";
 
@@ -81,6 +82,11 @@ export function mount(client, props = {}, size = {}) {
 /** Mounts the all-stations view. */
 export function mountFleet(entries, props = {}, size = {}) {
   return show(React.createElement(Fleet, { entries, allowWrites: false, ...props }), size);
+}
+
+/** Mounts the symbol gallery. */
+export function mountGallery(props = {}, size = {}) {
+  return show(React.createElement(Gallery, props), size);
 }
 
 function show(element, { columns = 120, rows = 36 } = {}) {

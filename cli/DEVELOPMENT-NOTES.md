@@ -9,6 +9,14 @@ Short notes on problems that were solved, so they are not solved twice.
 - **Control sequences.** With Ink writing into the stand-in stream, anything written to Ink's `stdout` is treated as a frame. Mouse mode, the window title and clipboard copies go through the `terminal` prop instead.
 - **Tables.** `fit()` treats a column with `min: 0` as hidden (no width, no separator). Give a column a real `min` when it should show.
 
+## Symbols
+
+- A symbol is `draw(state, frame)` returning rows of characters and a paint letter per character (`paint()` in `library.ts` maps letters to theme colours, so both themes work). Every row and paint row must be the symbol's full width in every state and frame; `test/symbols.test.mjs` checks all of them.
+- Air-handler sections are five rows (wall, three rows, wall) with no side walls, so placing them side by side makes one casing. Other equipment draws its own outline and lists `ports`: the cell just outside it where a line attaches.
+- `Canvas.route` keeps the lines separate from the sprites: sprites cover lines, routes that meet become tees and crosses, and a route's end is drawn as plain line so it meets the port it runs up to. Flow marks sit only on straight cells.
+- Characters are limited to box drawing, block elements, geometric shapes and a few ASCII marks, which terminal fonts have. Dingbats and emoji are avoided: fonts fall back and the cells stop lining up.
+- When judging the look from an HTML capture, a font fallback there can widen some marks and nudge a border; a terminal keeps every cell the same width.
+
 ## Input
 
 - **A burst of keys acted on stale state (2026-11-12).** Symptom: `down` then `right` sent together (key repeat, fast typing, a multiplexer's send-keys) opened the row the cursor had just left. Cause: both keys reach the handlers in one turn of the event loop, before React has drawn the first one's effect. Fix: `useKeyPump` (once, in `App`) queues input and hands out one event at a time, waiting for a render in between; `useKeys` / `useMouse` register with it and always call the newest handler. Do not call Ink's `useInput` anywhere else.

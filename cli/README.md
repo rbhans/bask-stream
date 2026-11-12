@@ -75,6 +75,20 @@ bask workspace --demo --site all     # a Rex or tmux session per building
 
 Each site is saved as a profile (`demo`, `demo-riverside`, `demo-harbor`, `demo-summit`) on its own local port, so every other `bask` command works on it too. The first window to open a site hosts its station; closing that window stops it.
 
+## Symbols
+
+`bask symbols` opens the terminal symbol library: equipment drawn in text, with moving parts and status colours. Fans turn, coils pulse with flow, flames flicker, water falls through a tower, and everything stops when it is off, faulted or unreachable.
+
+- **Air handling:** airflow, louver, damper, filter, cooling and heating coils, electric heater, fan, humidifier, duct sensor, VAV box. These are five rows tall and join side by side into one casing.
+- **Water and plant:** pump, valve, chiller, boiler, cooling tower, heat exchanger, tank.
+- **Refrigeration and critical rooms:** compressor, cold room, CRAC unit, server rack.
+- **Power:** UPS battery, generator.
+- **Indicators:** value plate, bar gauge, thermometer, status light, alarm marker.
+
+In the gallery, the arrow keys choose a symbol and `s` (status), `[` `]` (value), `p` (start/stop), `m` (medium), `f` (direction) and `o` (door) try its states. `tab` shows two example assemblies: an air handler with its coil piping, and a chilled water plant joined by pipes with flow marks. `bask symbols --list` prints the ids and sizes.
+
+The library is in `src/tui/symbols`: `library.ts` (the symbols), `canvas.ts` (a grid to place them on, with pipes and ducts that join where they meet) and `examples.ts`. It does not read a station yet; binding symbols to live points is the next step.
+
 ## Workspace
 
 `bask workspace` lays out a station workspace in Rex (Superlogical's terminal multiplexer) or tmux: an Explorer, Alarms and AI Activity pane, and an AI agent session (Claude Code by default) that works on the station through `bask`.
@@ -132,6 +146,7 @@ On macOS the folder is `~/Library/Application Support/Claude/Claude Extensions/l
 | `bask workspace [--layout ops\|monitor\|duo] [--mux rex\|tmux] [--agent <cmd>\|--no-agent] [--agent-profile <name>] [--demo] [--dry-run]` | A multi-pane station workspace in Rex or tmux |
 | `bask show <ord> [--trend] [--watch]` | Select an ORD in the open Explorer, chart it, or add it to the watch list |
 | `bask agent-brief` | The briefing an AI agent gets on working with this station |
+| `bask symbols [--list]` | The terminal symbol library: animated equipment drawn in text, with example assemblies |
 | `bask fleet [profiles...] [--demo]` | Every saved station at once: alarms, AI activity and live values per station, and all alarms in one list |
 | `bask demo [--site <name>] [--fleet] [--list] [--view <name>] [--serve]` | The dashboard on a simulated building; `--serve` only runs the station |
 

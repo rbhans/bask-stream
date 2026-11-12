@@ -962,6 +962,21 @@ program
   });
 
 program
+  .command("symbols")
+  .description("browse the terminal symbol library: equipment drawn in text, moving, with its states and example assemblies")
+  .option("--list", "print the symbols and their sizes instead of opening the gallery")
+  .option("--no-mouse", "leave the mouse to the terminal (text selection)")
+  .addOption(new Option("--theme <name>", "colours (default: from the terminal, or BASK_THEME)").choices(["dark", "light"]))
+  .action(async (opts: { list?: boolean; mouse?: boolean; theme?: "dark" | "light" }) => {
+    if (opts.list || !process.stdout.isTTY) {
+      const { SYMBOLS, sizeOf } = await import("./tui/symbols/library.js");
+      return console.log(table(["symbol", "size", "group", "what it draws"], SYMBOLS.map((s) => [s.id, sizeOf(s.draw(s.sample, 0)).join(" x "), s.group, s.note])));
+    }
+    const { runGallery } = await import("./tui/run.js");
+    await runGallery({ mouse: opts.mouse, theme: opts.theme });
+  });
+
+program
   .command("show")
   .description("show something in the open bask windows: select an ORD in the Explorer, chart it, or add it to the watch list")
   .argument("<ord>", "a component or point")

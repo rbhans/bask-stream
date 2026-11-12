@@ -5,6 +5,7 @@ import { Link } from "../link.js";
 import type { Connection } from "../session.js";
 import { App, type ViewName } from "./App.js";
 import { Fleet, type FleetEntry } from "./Fleet.js";
+import { Gallery } from "./symbols/Gallery.js";
 import { mouseMode } from "./input.js";
 import { detectTheme, setTheme } from "./theme.js";
 
@@ -132,4 +133,9 @@ export async function runDashboard(conn: Connection, options: DashboardOptions):
 /** Runs the all-stations view until the user quits. The caller closes the connections it handed out. */
 export async function runFleet(entries: FleetEntry[], options: { allowWrites: boolean; mouse?: boolean; theme?: "dark" | "light" }): Promise<void> {
   await onScreen(options, (io) => <Fleet entries={entries} allowWrites={options.allowWrites} mouse={io.mouse} suspend={io.suspend} terminal={io.terminal} />);
+}
+
+/** Runs the symbol gallery until the user quits. */
+export async function runGallery(options: { mouse?: boolean; theme?: "dark" | "light" }): Promise<void> {
+  await onScreen(options, (io) => <Gallery mouse={io.mouse} terminal={io.terminal} />);
 }

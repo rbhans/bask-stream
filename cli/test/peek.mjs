@@ -6,6 +6,19 @@ import { connect } from "../dist/session.js";
 const args = process.argv.slice(2);
 const option = (name, fallback) => (args.includes(`--${name}`) ? args[args.indexOf(`--${name}`) + 1] : fallback);
 const [columns, rows] = option("size", "120x36").split("x").map(Number);
+if (args.includes("--symbols")) {
+  const { mountGallery } = await import("./harness.mjs");
+  const view = mountGallery({ mouse: true }, { columns, rows });
+  await settle(Number(option("wait", "500")));
+  for (const key of option("keys", "").split(",").filter(Boolean)) {
+    if (/^wait\d+$/.test(key)) await settle(Number(key.slice(4)));
+    else await view.press(key);
+  }
+  await settle(Number(option("after", "300")));
+  console.log(args.includes("--color") ? view.raw() : view.frame());
+  view.unmount();
+  process.exit(0);
+}
 if (args.includes("--fleet")) {
   const { mountFleet, startFleet } = await import("./harness.mjs");
   const fleet = await startFleet(undefined, { live: args.includes("--live") });
