@@ -24,6 +24,10 @@ Short notes on problems that were solved, so they are not solved twice.
 - **Mouse.** SGR mouse reports (`ESC [ < b ; x ; y M`) arrive through Ink's input parser as one token. `useKeys` (the wrapper every view uses instead of `useInput`) drops them, so they never reach a text field; `useMouse` reads them from Ink's internal input emitter. Rows are located by absolute screen position, which is why views get a `rect`.
 - **Backspace.** Ink reports macOS backspace (0x7f) as `key.delete`; treat `backspace` and `delete` alike.
 
+## Installing a local build
+
+- **`bask` killed on start after copying a new build over the old one (2026-11-12).** Symptom: `cp bin/bask ~/.local/bin/bask` succeeded, but every `bask` command then exited at once with status 137 and no output; the copy's checksum matched the build. Cause (as far as I can tell): macOS keeps the code signature it saw for that file, and `cp` rewrites the same file in place, so the new contents no longer match and the system kills it. Fix: put the new binary beside the old one and move it into place, which makes a new file: `cp bin/bask ~/.local/bin/bask.new && chmod +x ~/.local/bin/bask.new && mv -f ~/.local/bin/bask.new ~/.local/bin/bask`. Verified: the same binary ran from the new file and after the move.
+
 ## Demo station
 
 - `src/demo/station.ts` speaks the real protocol and is what the dashboard tests run on (`live: false` freezes its values). When the module's replies change shape, change the demo to match; do not special-case the demo in the views.
