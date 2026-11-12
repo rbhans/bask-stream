@@ -692,7 +692,7 @@ final class BaskStreamAgents
   /** The best target to name in a record for a non-write change. */
   private static String opTarget(Map<String, Object> request)
   {
-    for (String key : new String[] { "ord", "point", "planId", "source" })
+    for (String key : new String[] { "ord", "point", "planId", "source", "path", "job" })
     {
       Object value = request.get(key);
       if (value instanceof String && ((String)value).length() > 0) return (String)value;

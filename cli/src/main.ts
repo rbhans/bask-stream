@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import chalk from "chalk";
 import { Command, Option } from "commander";
-import { BaskStreamError, OPERATIONS, StationHttp, toSlotOrd, type Actor, type AlarmFilter, type BrowseNode, type Json, type Proposal } from "@basidekick/baskstream";
+import { randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { BaskStreamError, OPERATIONS, StationHttp, toSlotOrd, type Actor, type AlarmFilter, type BrowseNode, type JobDetail, type Json, type Proposal } from "@basidekick/baskstream";
 import { getProfile, loadStore, putProfile, removeProfile, setCurrent, updateProfile } from "./config.js";
 import { alarmMessage, alarmState, csv, fmtDuration, isUnacked, fmtPoint, fmtTime, fmtValue, parseDuration, parseTime, parseValue, shortOrd, sparkline, statusColor, table } from "./format.js";
 import { confirm, promptHidden } from "./prompt.js";
@@ -475,6 +477,202 @@ program
         log.records.map((r) => [fmtTime(r.timestamp), r.user, r.outcome ?? "", r.change ?? r.action, r.target, [r.agent, r.for && `for ${r.for}`].filter(Boolean).join(" "), r.reason ?? ""]),
         log, (r) => [chalk.dim(String(r[0])), String(r[1]), String(r[2]), String(r[3]), chalk.cyan(shortOrd(String(r[4]), 3)), String(r[5]), String(r[6])]);
       if (log.truncated) console.error(chalk.yellow("More records exist: narrow --since or raise --limit."));
+    })
+  );
+
+// ---- Headless Workbench (docs/HEADLESS_WORKBENCH.md) ----------------------------------------------
+
+program
+  .command("query")
+  .description("run a BQL select, or a NEQL tag query with --neql, e.g. bask query \"select slotPath, out.value from control:NumericPoint\"")
+  .argument("<text>", "the query, without the bql: or neql: prefix")
+  .option("--neql", "the text is NEQL (tags), e.g. \"hs:ahu and hs:equip\"")
+  .option("--base <ord>", "where the query starts", "slot:/")
+  .option("--limit <n>", "maximum rows", "500")
+  .action((text: string, opts: { neql?: boolean; base: string; limit: string }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const result = await client.query(opts.neql ? { neql: text } : { bql: text }, { ord: normalizeOrd(opts.base), limit: Number(opts.limit) });
+      if (result.entities) {
+        emit(g, ["ord", "name", "type"], result.entities.map((e) => [e.ord, e.display || e.name, e.typeSpec]), result, (r) => [chalk.cyan(String(r[0])), String(r[1]), chalk.dim(String(r[2]))]);
+      } else {
+        const cell = (value: unknown) => (value === null || value === undefined ? "" : typeof value === "object" ? JSON.stringify(value) : String(value));
+        emit(g, (result.columns ?? []).map((c) => c.name), (result.rows ?? []).map((row) => row.map(cell)), result);
+      }
+      if (result.truncated) console.error(chalk.yellow(`Stopped by the ${result.stoppedBy ?? "limit"} after ${result.count} rows.`));
+      if (result.hidden) console.error(chalk.dim(`${result.hidden} rows you may not see were left out.`));
+    })
+  );
+
+program
+  .command("files")
+  .description("list a folder of the station's files, e.g. bask files ^px")
+  .argument("[path]", "folder in the station file space", "^")
+  .action((path: string, _opts, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const folder = await client.listFiles(path);
+      emit(g, ["path", "size", "modified"], folder.entries.map((e) => [e.directory ? `${e.path}/` : e.path, e.directory ? "" : e.size ?? "", e.modified ? fmtTime(e.modified) : ""]),
+        folder, (r) => [String(r[0]).endsWith("/") ? chalk.cyan(String(r[0])) : String(r[0]), String(r[1]), chalk.dim(String(r[2]))]);
+    })
+  );
+
+program
+  .command("cat")
+  .description("print a station file, or save it with --out")
+  .argument("<path>", "file in the station file space, e.g. ^px/Home.px")
+  .option("--out <file>", "save to a local file instead of printing")
+  .action((path: string, opts: { out?: string }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const file = await client.readFile(path);
+      const bytes = file.encoding === "text" ? Buffer.from(file.text ?? "", "utf8") : Buffer.from(file.base64 ?? "", "base64");
+      if (opts.out) {
+        writeFileSync(opts.out, bytes);
+        return console.error(`${chalk.green("✓")} ${path} → ${opts.out} (${bytes.length} bytes)`);
+      }
+      if (g.output === "json") return console.log(JSON.stringify(file, null, 2));
+      if (file.encoding !== "text") throw new Error(`${path} is not text; save it with --out <file>.`);
+      process.stdout.write(file.text ?? "");
+    })
+  );
+
+program
+  .command("put")
+  .description("upload a local file to the station's files, e.g. bask put Home.px ^px/Home.px")
+  .argument("<file>", "local file")
+  .argument("<path>", "destination in the station file space")
+  .option("--overwrite", "replace the file if it exists")
+  .action((local: string, path: string, opts: { overwrite?: boolean }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const bytes = readFileSync(local);
+      await requireWrite(g, `Write ${bytes.length} bytes to ${path}?`);
+      const file = await client.writeFile(path, { base64: bytes.toString("base64") }, { overwrite: Boolean(opts.overwrite), ...reasonOf(g) });
+      if (g.output === "json") return console.log(JSON.stringify(file, null, 2));
+      console.log(`${chalk.green("✓")} ${file.created ? "Created" : "Replaced"} ${path} (${bytes.length} bytes).`);
+    })
+  );
+
+program
+  .command("rm")
+  .description("delete a station file, or a folder and its contents with --recursive")
+  .argument("<path>", "file or folder in the station file space")
+  .option("--recursive", "delete a folder together with its contents")
+  .action((path: string, opts: { recursive?: boolean }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const preview = await client.deleteFile(path, { recursive: Boolean(opts.recursive), dryRun: true });
+      const doomed = (preview.deleted ?? []) as string[];
+      await requireWrite(g, `Delete ${doomed.length === 1 ? path : `${path} and ${doomed.length - 1} entries under it`}?`);
+      const file = await client.deleteFile(path, { recursive: Boolean(opts.recursive), ...reasonOf(g) });
+      if (g.output === "json") return console.log(JSON.stringify(file, null, 2));
+      console.log(`${chalk.green("✓")} Deleted ${doomed.length === 1 ? path : `${doomed.length} entries`}.`);
+    })
+  );
+
+const jobState = (state: string) => (state === "success" ? chalk.green(state) : state === "failed" ? chalk.red(state) : state === "running" ? chalk.yellow(state) : chalk.dim(state));
+
+program
+  .command("jobs")
+  .description("the station's jobs, with state and progress")
+  .action((_opts, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const jobs = await client.jobs();
+      if (jobs.length === 0 && g.output === "table") return console.log("No jobs.");
+      emit(g, ["job", "state", "progress", "started", "type"], jobs.map((j) => [j.job ?? j.name, j.state, `${j.progress}%`, j.startTime ? fmtTime(j.startTime) : "", j.typeSpec]),
+        jobs, (r) => [chalk.cyan(shortOrd(String(r[0]), 2)), jobState(String(r[1])), String(r[2]), chalk.dim(String(r[3])), chalk.dim(String(r[4]))]);
+    })
+  );
+
+const resultRow = (r: JobDetail["results"][number]): unknown[] => {
+  const values = (r.values && typeof r.values === "object" ? r.values : {}) as Record<string, unknown>;
+  return [r.slot, values.objectName ?? values.deviceName ?? "", values.objectId ?? "", values.description ?? values.modelName ?? ""];
+};
+
+async function showJob(client: Connection["client"], g: Globals, ord: string): Promise<JobDetail> {
+  const job = await client.job(ord, { limit: 1000 });
+  if (g.output === "json") {
+    console.log(JSON.stringify(job, null, 2));
+    return job;
+  }
+  console.log(`${chalk.cyan(job.job ?? job.name)}  ${jobState(job.state)}  ${job.progress}%`);
+  for (const item of job.log.slice(-10)) console.log(`  ${chalk.dim(item.timestamp ? fmtTime(item.timestamp) : "")}  ${item.kind}  ${item.message}`);
+  if (job.resultCount > 0) {
+    console.log("");
+    emit(g, ["slot", "name", "id", "detail"], job.results.map(resultRow), job, (r) => [chalk.bold(String(r[0])), String(r[1]), String(r[2]), chalk.dim(String(r[3]))]);
+    if (job.nextOffset !== null) console.error(chalk.yellow(`Showing ${job.results.length} of ${job.resultCount} results.`));
+  }
+  return job;
+}
+
+program
+  .command("job")
+  .description("one job: state, log and what it found (discovered devices or points)")
+  .argument("<ord>", "the job's ORD, from bask jobs or bask discover")
+  .option("--cancel", "cancel the job")
+  .action((ord: string, opts: { cancel?: boolean }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      if (opts.cancel) {
+        await requireWrite(g, `Cancel ${ord}?`);
+        const job = await client.cancelJob(normalizeOrd(ord), g.reason);
+        return console.log(g.output === "json" ? JSON.stringify(job, null, 2) : `${chalk.green("✓")} ${job.name} ${job.state}.`);
+      }
+      await showJob(client, g, normalizeOrd(ord));
+    })
+  );
+
+program
+  .command("discover")
+  .description("discover BACnet devices on a network, or the points of a device, and show what was found")
+  .argument("<ord>", "a BACnet network or device")
+  .option("--no-wait", "start the job and return its ORD without waiting")
+  .option("--timeout <duration>", "how long to wait for the job", "2m")
+  .action((ord: string, opts: { wait: boolean; timeout: string }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      await requireWrite(g, `Start discovery on ${ord}? This puts traffic on the driver's network.`);
+      const discovery = await client.discover(normalizeOrd(ord), reasonOf(g));
+      if (!opts.wait) return console.log(g.output === "json" ? JSON.stringify(discovery, null, 2) : discovery.job);
+      const spin = g.output === "table" ? spinner("discovering") : undefined;
+      const deadline = Date.now() + parseDuration(opts.timeout);
+      try {
+        for (;;) {
+          const job = await client.job(discovery.job, { limit: 1 });
+          if (job.complete) break;
+          if (Date.now() > deadline) throw new Error(`Still running after ${opts.timeout}: bask job ${discovery.job}`);
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      } finally {
+        spin?.stop();
+      }
+      const job = await showJob(client, g, discovery.job);
+      if (g.output === "table" && job.resultCount > 0) console.error(chalk.dim(`\nAdd some: bask add ${discovery.job} <slot> [<slot>...]${discovery.kind === "devices" ? " --parent <network>" : ""}`));
+    })
+  );
+
+program
+  .command("add")
+  .description("add discovered devices or points: shows the plan, and --apply makes the changes")
+  .argument("<job>", "the discovery job's ORD")
+  .argument("<slots...>", "result slots from bask job, or \"all\"")
+  .option("--parent <ord>", "where to add (required for devices: the network or a device folder)")
+  .option("--apply", "apply the plan after showing it")
+  .action((jobOrd: string, slots: string[], opts: { parent?: string; apply?: boolean }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const job = normalizeOrd(jobOrd);
+      const wanted = slots.length === 1 && slots[0] === "all" ? (await client.job(job, { limit: 1000 })).results.map((r) => r.slot) : slots;
+      if (wanted.length > 100) throw new Error(`${wanted.length} results; add up to 100 at a time.`);
+      const plan = await client.addDiscovered(job, wanted.map((slot) => ({ slot })), opts.parent ? { parent: normalizeOrd(opts.parent) } : {});
+      const items = (plan.items ?? []) as Json[];
+      if (g.output === "table") {
+        emit(g, ["slot", "name", "type", "facets"], items.map((i) => [i.slot, i.name, i.typeSpec, i.facetsLearned === false ? "not learned" : i.facetsLearned ? "learned" : ""]), plan,
+          (r) => [String(r[0]), chalk.bold(String(r[1])), chalk.dim(String(r[2])), r[3] === "not learned" ? chalk.yellow(String(r[3])) : chalk.dim(String(r[3]))]);
+      }
+      if (!opts.apply) {
+        if (g.output !== "table") return console.log(JSON.stringify(plan, null, 2));
+        return console.error(chalk.dim(`\nNothing added yet. Run again with --apply to add ${items.length === 1 ? "it" : `these ${items.length}`}.`));
+      }
+      await requireWrite(g, `Add ${items.length} ${plan.discovery ?? "components"}?`);
+      const applied = (await client.call("apply_model_changes", { planId: plan.planId, planHash: plan.planHash, idempotencyKey: randomUUID(), ...reasonOf(g) }, { timeoutMs: 300000 })).result as Json;
+      if (g.output !== "table") return console.log(JSON.stringify(applied, null, 2));
+      const failed = ((applied.results ?? []) as Json[]).filter((r) => r.ok === false);
+      if (applied.state !== "applied" || failed.length > 0) throw new Error(`The plan ended ${applied.state}: ${failed.length} of ${items.length} changes failed. bask call model_plan_status '{"planId":"${plan.planId}"}'`);
+      console.log(`${chalk.green("✓")} Added ${items.length}.`);
     })
   );
 

@@ -222,6 +222,16 @@ final class BaskStreamClientSession
     bound.put("approve_proposal", (id, op, request) -> requests.handleApproveProposal(id, request));
     bound.put("reject_proposal", (id, op, request) -> requests.handleRejectProposal(id, request));
     bound.put("read_agent_log", (id, op, request) -> requests.handleReadAgentLog(id, request));
+    bound.put("query", (id, op, request) -> requests.handleQuery(id, request));
+    bound.put("list_files", (id, op, request) -> requests.handleListFiles(id, request));
+    bound.put("read_file", (id, op, request) -> requests.handleReadFile(id, request));
+    bound.put("write_file", (id, op, request) -> requests.handleWriteFile(id, request));
+    bound.put("delete_file", (id, op, request) -> requests.handleDeleteFile(id, request));
+    bound.put("list_jobs", (id, op, request) -> requests.handleListJobs(id, request));
+    bound.put("read_job", (id, op, request) -> requests.handleReadJob(id, request));
+    bound.put("cancel_job", (id, op, request) -> requests.handleCancelJob(id, request));
+    bound.put("discover", (id, op, request) -> requests.handleDiscover(id, request));
+    bound.put("add_discovered", (id, op, request) -> requests.handleAddDiscovered(id, request));
     for (String model : new String[] {
         "describe_component_types", "describe_component", "preview_model_changes", "apply_model_changes",
         "model_plan_status", "cancel_model_plan", "create_components", "update_component_properties",

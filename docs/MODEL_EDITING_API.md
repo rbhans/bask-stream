@@ -23,6 +23,8 @@ Some parts of a station decide who can reach it and what they may do. Model edit
 
 Service types that are not installed on a station are skipped.
 
+`securityEditsEnabled` on the service (default off, API 1.10) opens the User, Role and Category services to model plans for people; agent sessions never get it, and the other protected services stay closed. See [HEADLESS_WORKBENCH.md](HEADLESS_WORKBENCH.md#users-roles-and-categories).
+
 ## Operations
 
 All new request/response operations return `{op:"model_result", id, operation, result}`. Existing response formats are unchanged.
@@ -76,6 +78,8 @@ Simple values use Niagara's encoded text representation. For an existing propert
 ```
 
 These property names are examples; inspect the actual type's slots before using them. Complex values use `{typeSpec, properties:{...}}`, with typed values recursively. Property paths such as `scope/someProperty` can address nested existing values. Child components are created/deleted through component actions rather than replaced using `update`. Read-only/frozen restrictions and Niagara validators apply. Nesting, model snapshot size and request sizes are bounded.
+
+A password property takes `{"typeSpec": "baja:Password", "plain": "new password"}` in place of `encoded` (API 1.10); Niagara hashes it.
 
 Credential-like property names and password/secret types are redacted in descriptions, diffs and audit details. Fingerprints still include their encoded state, so redaction does not weaken stale-plan checking. Avoid placing secrets in arbitrary unmarked string slots or action parameters: the module cannot infer the semantics of every vendor string.
 

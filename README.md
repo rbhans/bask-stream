@@ -12,7 +12,8 @@ The repository's own code and documentation are open source under the [Apache Li
 
 ## Current API highlights
 
-- The current source advertises API version `1.9`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
+- The current source advertises API version `1.10`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
+- API 1.10 adds the [headless Workbench](docs/HEADLESS_WORKBENCH.md) operations: BQL and NEQL queries, the station's files (Px, nav and so on), jobs, and BACnet discovery that adds devices and points with their facets learned. With model editing (create, wire, set any property, invoke any action), a client can engineer a station without Workbench. An opt-in `securityEditsEnabled` lets model plans edit users, roles and categories.
 - API 1.9 fixes relation endpoints, alarm messages, facet-formatted display text, hierarchy browsing and model move/rename/delete, and slims large replies (tag writes, model plans). Point snapshots now separate `ok` (the read worked) from `state`; see the [compatibility notes](docs/THIRD_PARTY_API.md#api-19-changes).
 - API 1.8 added optional [AI agent controls](docs/AI_AGENTS.md): actor context, a reason on every change, rate and value limits, point-write proposals a person approves, and `Agent` records in the station's audit history. Nothing changes until an agent user is listed or a session declares itself an agent.
 - API 1.7 added, all additive: `read_history_rollup` (time-bucketed min/max/avg for charts), alarm filters with newest-first reads and filtered acknowledge/clear with `dryRun`, `read_schedule_events` and `write_schedule`, OpenMetrics counters at `/stream/metrics`, and audit-trail records for every change made through the stream.
@@ -106,6 +107,20 @@ Everything is read-only unless you add `--allow-writes`, and every write or alar
 
 - **Update:** run the install command again.
 - **Uninstall:** delete the `bask` executable and the saved sessions in `~/.config/baskstream` (Windows: `%APPDATA%\baskstream`).
+
+## Headless Workbench
+
+For clients that build a station rather than only operate it; see [docs/HEADLESS_WORKBENCH.md](docs/HEADLESS_WORKBENCH.md).
+
+```bash
+bask query "select slotPath, out.value from control:NumericPoint where status.fault"
+```
+
+```bash
+bask discover Drivers/BacnetNetwork --allow-writes
+```
+
+`bask files`, `cat`, `put` and `rm` work on the station's files, `bask jobs` and `bask job` follow jobs, and `bask add <job> <slots...> --apply` adds discovered devices or points. Changes still need `writesEnabled`, model changes need `modelEditsEnabled`, and Niagara roles decide the rest.
 
 ## AI agents
 

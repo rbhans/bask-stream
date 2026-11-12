@@ -47,10 +47,19 @@ final class BaskStreamModelResolver
   private final BBaskStreamService service;
   private final BaskStreamModelPlans plans = new BaskStreamModelPlans();
   private final ThreadLocal<Context> applyingContext = new ThreadLocal<Context>();
+  // Set while the request on this thread comes from an AI agent; agents never get security edits.
+  private final ThreadLocal<Boolean> agentCall = new ThreadLocal<Boolean>();
   // Keep value commitments opaque, including low-entropy credentials in redacted diffs.
   private final String fingerprintKey = java.util.UUID.randomUUID().toString();
 
   BaskStreamModelResolver(BBaskStreamService service) { this.service = service; }
+
+  /** Marks (or clears) the current thread's request as an agent's. Clear it in a finally. */
+  void agentCall(boolean agent)
+  {
+    if (agent) agentCall.set(Boolean.TRUE);
+    else agentCall.remove();
+  }
 
   private static final List<String> TYPE_FIELDS = Arrays.asList("op", "id", "typeSpec", "typeSpecs", "module", "baseType", "offset", "limit");
 
@@ -687,7 +696,8 @@ final class BaskStreamModelResolver
       if (component == service || (component != null && component.isDescendentOf(service)))
         throw error("protected_component", "Edit the baskStream service in Workbench; it cannot change its own write controls remotely.");
       if (component != null && withinProtected(component))
-        throw error("protected_component", "Security, identity, remote-access, platform and audit services must be changed in Workbench.");
+        throw error("protected_component", "Security, identity, remote-access, platform and audit services must be changed in Workbench"
+            + " (securityEditsEnabled on BASkStreamService opens users, roles and categories to people, not agents).");
     }
     return t;
   }
@@ -700,6 +710,15 @@ final class BaskStreamModelResolver
       "platform:PlatformServiceContainer", "fox:FoxService", "web:WebService",
       "history:AuditHistoryService", "program:ProgramService" };
 
+  /** Opened by securityEditsEnabled, for people only. How users sign in, remote access, audit and code stay closed. */
+  private static final String[] SECURITY_EDIT_TYPES = { "baja:UserService", "baja:RoleService", "baja:CategoryService" };
+
+  private boolean protectedName(String spec)
+  {
+    if (!Arrays.asList(PROTECTED_TYPES).contains(spec)) return false;
+    return !(Arrays.asList(SECURITY_EDIT_TYPES).contains(spec) && agentCall.get() == null && service.securityEditsAllowed());
+  }
+
   /**
    * Walks the type's own (already loaded) superclass chain and compares names. It never calls
    * Sys.getType for the protected names: on a live station, loading program-module types from
@@ -711,7 +730,7 @@ final class BaskStreamModelResolver
     for (int depth = 0; t != null && depth < 64; depth++)
     {
       String spec = t.toString();
-      if (spec.equals(service.getType().toString()) || Arrays.asList(PROTECTED_TYPES).contains(spec)) return true;
+      if (spec.equals(service.getType().toString()) || protectedName(spec)) return true;
       Type next = t.getSuperType();
       if (next == t) break;
       t = next;
@@ -727,9 +746,9 @@ final class BaskStreamModelResolver
   }
 
   /** Name-only check for a requested type, made before anything is loaded or created. */
-  private static boolean protectedSpec(String spec)
+  private boolean protectedSpec(String spec)
   {
-    return spec.startsWith("program:") || spec.startsWith("baskStream:") || Arrays.asList(PROTECTED_TYPES).contains(spec);
+    return spec.startsWith("program:") || spec.startsWith("baskStream:") || protectedName(spec);
   }
 
   private boolean protectedType(BComponent c)
@@ -877,8 +896,10 @@ final class BaskStreamModelResolver
   {
     if (depth > 16) throw error("model_limit", "Value nesting exceeds 16 levels.");
     Map<String, Object> wire = object(raw, "typed value");
-    if (wire.containsKey("encoded") == wire.containsKey("properties")) throw error("bad_request", "Supply exactly one of encoded or properties.");
-    for (String key : wire.keySet()) if (!Arrays.asList("encoded", "properties", "typeSpec").contains(key)) throw error("bad_request", "Unknown typed value field: " + key);
+    boolean plain = wire.containsKey("plain");
+    if (plain ? wire.containsKey("encoded") || wire.containsKey("properties") : wire.containsKey("encoded") == wire.containsKey("properties"))
+      throw error("bad_request", "Supply exactly one of encoded or properties (or plain, for a password).");
+    for (String key : wire.keySet()) if (!Arrays.asList("encoded", "properties", "typeSpec", "plain").contains(key)) throw error("bad_request", "Unknown typed value field: " + key);
     String spec = optional(wire, "typeSpec");
     if (spec != null) requireLoadable(spec);
     Type type = spec == null ? expected : Sys.getType(spec);
@@ -887,6 +908,13 @@ final class BaskStreamModelResolver
       throw error("invalid_type", "Type " + type + " is abstract; supply a concrete typeSpec" + (spec == null ? " (the property is declared as " + type + ")." : "."));
     if (expected != null && !type.is(expected)) throw error("invalid_type", "Type " + type + " is not compatible with the property type " + expected + ".");
     if (type.is(BLink.TYPE) || type.is(BRelation.TYPE)) throw error("invalid_type", "Use create_link or the relation operations for links and relations.");
+    if (plain)
+    {
+      // A new password as text; Niagara hashes it. It is redacted in previews, results and logs.
+      if (!type.is(BPassword.TYPE) || !(wire.get("plain") instanceof String) || ((String)wire.get("plain")).isEmpty())
+        throw error("bad_request", "'plain' takes a nonempty string and is only for baja:Password values.");
+      return BPassword.make((String)wire.get("plain"));
+    }
     BObject value = type.getInstance();
     if (value instanceof BSimple)
     {

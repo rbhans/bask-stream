@@ -51,3 +51,21 @@ npm test
 `npm run gen` regenerates `src/operations.ts` from the spec; `tests/protocol_contract.py` fails if it is stale. Tests run against an in-process fake station (`test/fake-station.mjs`).
 
 On the Parallels shared drive, npm cannot create symlinks, so `.npmrc` sets `bin-links=false` and the scripts call `tsc` through `node`.
+
+## Headless Workbench (API 1.10)
+
+Queries, station files, jobs and discovery; see `docs/HEADLESS_WORKBENCH.md`.
+
+```ts
+const faults = await client.query({ bql: "select slotPath, status from control:ControlPoint where status.fault" }, { ord: "slot:/Drivers" });
+const page = await client.readFile("^px/Home.px");
+await client.writeFile("^px/Home.px", { text: page.text! }, { overwrite: true, reason: "fix label" });
+
+const { job } = await client.discover("slot:/Drivers/BacnetNetwork/AHU_1");
+let found = await client.job(job);
+while (!found.complete) found = await client.job(job);
+const plan = await client.addDiscovered(job, found.results.map((r) => ({ slot: r.slot })));
+await client.call("apply_model_changes", { planId: plan.planId, planHash: plan.planHash, idempotencyKey: crypto.randomUUID() });
+```
+
+Also `listFiles`, `deleteFile`, `jobs` and `cancelJob`.

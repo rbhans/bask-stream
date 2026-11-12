@@ -96,6 +96,19 @@ final class BaskStreamOperations
     add("approve_proposal", Gate.WRITES);
     add("reject_proposal", Gate.WRITES);
     add("read_agent_log", Gate.NONE);
+    // Headless Workbench (API 1.10): queries, station files, jobs and driver discovery.
+    add("query", Gate.NONE);
+    add("list_files", Gate.NONE);
+    add("read_file", Gate.NONE);
+    add("write_file", Gate.WRITES);
+    add("delete_file", Gate.WRITES);
+    add("list_jobs", Gate.NONE);
+    add("read_job", Gate.NONE);
+    add("cancel_job", Gate.WRITES);
+    // Starting discovery puts traffic on the driver's network and adds a job to the station.
+    add("discover", Gate.WRITES);
+    // Like the other convenience names, this only stores a plan for apply_model_changes.
+    add("add_discovered", Gate.MODEL_EDITS);
   }
 
   private static void add(String name, Gate gate)

@@ -31,6 +31,13 @@ import javax.baja.sys.Action;
   defaultValue = "false",
   flags = Flags.SUMMARY
 )
+/** Lets model plans edit users, roles and categories (never for AI agents). Off by default. */
+@NiagaraProperty(
+  name = "securityEditsEnabled",
+  type = "boolean",
+  defaultValue = "false",
+  flags = Flags.SUMMARY
+)
 @NiagaraProperty(
   name = "wsPath",
   type = "baja:String",
@@ -312,6 +319,32 @@ public final class BBaskStreamService extends BWebServlet
   public void setModelEditsEnabled(boolean v) { setBoolean(modelEditsEnabled, v, null); }
 
   //endregion Property "modelEditsEnabled"
+
+  //region Property "securityEditsEnabled"
+
+  /**
+   * Slot for the {@code securityEditsEnabled} property.
+   * Lets model plans edit users, roles and categories (never for AI agents). Off by default.
+   * @see #getSecurityEditsEnabled
+   * @see #setSecurityEditsEnabled
+   */
+  public static final Property securityEditsEnabled = newProperty(Flags.SUMMARY, false, null);
+
+  /**
+   * Get the {@code securityEditsEnabled} property.
+   * Lets model plans edit users, roles and categories (never for AI agents). Off by default.
+   * @see #securityEditsEnabled
+   */
+  public boolean getSecurityEditsEnabled() { return getBoolean(securityEditsEnabled); }
+
+  /**
+   * Set the {@code securityEditsEnabled} property.
+   * Lets model plans edit users, roles and categories (never for AI agents). Off by default.
+   * @see #securityEditsEnabled
+   */
+  public void setSecurityEditsEnabled(boolean v) { setBoolean(securityEditsEnabled, v, null); }
+
+  //endregion Property "securityEditsEnabled"
 
   //region Property "wsPath"
 
@@ -1160,6 +1193,13 @@ public final class BBaskStreamService extends BWebServlet
   {
     Property p = getProperty("modelEditsEnabled");
     return writesAllowed() && p != null && getBoolean(p);
+  }
+
+  /** Users, roles and categories are editable through model plans only while this and model edits are on. */
+  boolean securityEditsAllowed()
+  {
+    Property p = getProperty("securityEditsEnabled");
+    return modelEditsAllowed() && p != null && getBoolean(p);
   }
 
   void requireWritesEnabled() throws BaskStreamProtocolException

@@ -48,6 +48,12 @@ It is read-only unless started with `--allow-writes`; then `o`/`s`/`a` command w
 | `bask write <ord> <set\|override\|auto\|emergency_override\|emergency_auto> [value] [--for 30m]` | Needs `--allow-writes`; confirms |
 | `bask schedule <ord> [--days 7]` | Current output and upcoming changes |
 | `bask call <op> '<json>'` | Any operation (gated ones need `--allow-writes`) |
+| `bask query "<bql>"` · `bask query --neql "<tags>" [--base ord] [--limit n]` | A BQL select or a NEQL tag query |
+| `bask files [path]` · `bask cat <path> [--out file]` | List and read the station's files (`^px/Home.px`) |
+| `bask put <file> <path> [--overwrite]` · `bask rm <path> [--recursive]` | Upload or delete station files; needs `--allow-writes`; confirms |
+| `bask jobs` · `bask job <ord> [--cancel]` | Station jobs; one job's state, log and results |
+| `bask discover <network\|device> [--no-wait]` | BACnet discovery: devices on a network, or a device's points; needs `--allow-writes` |
+| `bask add <job> <slots...\|all> [--parent ord] [--apply]` | Plan for adding discovered devices or points; `--apply` adds them (needs `--allow-writes`) |
 | `bask proposals [--all]` · `bask approve <id>` · `bask reject <id> [--note]` | AI agent proposals waiting for a person; approving runs the write with your permissions (needs `--allow-writes`) |
 | `bask agent-log [--since 24h]` | What AI agents did, from the station's audit history |
 | `bask metrics` | OpenMetrics text |

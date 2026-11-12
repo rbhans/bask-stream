@@ -29,7 +29,7 @@ const ALARMS = [
 export async function startFakeStation() {
   const sessions = new Set();
   const scram = new Map();
-  const state = { sockets: new Set(), groups: new Map(), logins: 0, requests: [], proposals: new Map(), agentLog: [] };
+  const state = { sockets: new Set(), groups: new Map(), logins: 0, requests: [], proposals: new Map(), agentLog: [], files: new Map([["^px/Home.px", "<px/>"]]), jobs: new Map() };
   const salted = crypto.pbkdf2Sync(PASSWORD, SALT, ITERATIONS, 32, "sha256");
   const hmac = (key, text) => crypto.createHmac("sha256", key).update(text).digest();
 
@@ -46,7 +46,7 @@ export async function startFakeStation() {
     }
     if (req.url === "/stream/health") {
       if (!sessions.has(sid)) return void res.writeHead(302, { Location: "/prelogin" }).end();
-      return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, apiVersion: "1.9" }));
+      return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, apiVersion: "1.10" }));
     }
     if (req.url === "/stream/metrics") {
       if (!sessions.has(sid)) return void res.writeHead(302).end();
@@ -114,7 +114,7 @@ export async function startFakeStation() {
       case "ping":
         return send(ws, { op: "pong", id });
       case "capabilities":
-        return send(ws, { op: "capabilities_result", id, capabilities: { apiVersion: "1.9", authenticatedUser: USER, limits: { heartbeatIntervalSec: 30 }, agents: agentRules(ws) } });
+        return send(ws, { op: "capabilities_result", id, capabilities: { apiVersion: "1.10", authenticatedUser: USER, limits: { heartbeatIntervalSec: 30 }, agents: agentRules(ws) } });
       case "declare_actor":
         ws.actor = { kind: request.kind ?? "agent", name: request.name, model: request.model, onBehalfOf: request.onBehalfOf };
         return send(ws, { op: "actor_declared", id, agents: agentRules(ws) });
@@ -133,6 +133,59 @@ export async function startFakeStation() {
         pushProposal(proposal);
         return send(ws, { op: "proposal_result", id, proposal });
       }
+      case "query":
+        if (request.bql && /\bfrom nothing\b/.test(request.bql)) return send(ws, { op: "error", id, code: "bad_query", message: "BqlException: unknown extent" });
+        return send(ws, { op: "query_result", id, result: request.neql
+          ? { language: "neql", ord: request.ord ?? "slot:/", entities: [{ ord: "slot:/Drivers/Net/VAV_01", name: "VAV_01", display: "VAV 01", typeSpec: "bacnet:BacnetDevice" }], count: 1, hidden: 0, truncated: false }
+          : { language: "bql", ord: request.ord ?? "slot:/", columns: [{ name: "slotPath", display: "Slot Path", typeSpec: "baja:String" }, { name: "out.value", display: "Value", typeSpec: "baja:Double" }], rows: [["slot:/Drivers/Net/VAV_01/points/SpaceTemp", 72.5]], count: 1, hidden: 0, truncated: false } });
+      case "list_files": {
+        const folder = request.path ?? "^";
+        const prefix = folder === "^" ? "^" : `${folder}/`;
+        const names = new Set([...state.files.keys()].filter((p) => p.startsWith(prefix)).map((p) => p.slice(prefix.length).split("/")[0]));
+        const entries = [...names].map((name) => ({ path: prefix + name, name, directory: !state.files.has(prefix + name), modified: 1, readonly: false, ...(state.files.has(prefix + name) ? { size: state.files.get(prefix + name).length } : {}) }));
+        return send(ws, { op: "files_result", id, folder: { path: folder, entries, truncated: false } });
+      }
+      case "read_file":
+        if (!state.files.has(request.path)) return send(ws, { op: "error", id, code: "file_not_found", message: `No such file: ${request.path}` });
+        return send(ws, { op: "file_result", id, file: { path: request.path, name: request.path.split("/").pop(), directory: false, size: state.files.get(request.path).length, modified: 1, readonly: false, encoding: "text", text: state.files.get(request.path) } });
+      case "write_file": {
+        const exists = state.files.has(request.path);
+        if (exists && !request.overwrite) return send(ws, { op: "error", id, code: "file_exists", message: `${request.path} already exists; send overwrite: true to replace it.` });
+        const text = request.text ?? Buffer.from(request.base64, "base64").toString("utf8");
+        if (!request.dryRun) state.files.set(request.path, text);
+        return send(ws, { op: "file_written", id, file: { path: request.path, size: text.length, created: !exists, ...(request.dryRun ? { dryRun: true } : {}) } });
+      }
+      case "delete_file":
+        if (!state.files.has(request.path)) return send(ws, { op: "error", id, code: "file_not_found", message: `No such file or folder: ${request.path}` });
+        if (!request.dryRun) state.files.delete(request.path);
+        return send(ws, { op: "file_deleted", id, file: { path: request.path, deleted: [request.path] } });
+      case "discover": {
+        if (!request.ord.includes("Net")) return send(ws, { op: "error", id, code: "discovery_unsupported", message: "No built-in discovery for this type." });
+        const kind = request.ord.endsWith("/Net") ? "devices" : "points";
+        const job = `slot:/Services/JobService/Discover${state.jobs.size + 1}`;
+        const results = kind === "devices"
+          ? [{ slot: "device_1001", typeSpec: "bacnet:DiscoveryDevice", values: { deviceName: "VAV_02", objectId: "device:1001" } }]
+          : [{ slot: "analogInput_3", typeSpec: "bacnet:DiscoveryPoint", values: { objectName: "SpaceTemp", objectId: "analogInput:3" } }];
+        state.jobs.set(job, { job, name: job.split("/").pop(), display: "Discover", typeSpec: "bacnet:BacnetDiscoverJob", state: "success", complete: true, progress: 100, startTime: 1, endTime: 2, discovery: kind, results });
+        return send(ws, { op: "discovery_started", id, discovery: { job, kind, driver: "bacnet", target: request.ord } });
+      }
+      case "list_jobs":
+        return send(ws, { op: "jobs_result", id, jobs: [...state.jobs.values()].map(({ results, discovery, ...summary }) => summary) });
+      case "read_job":
+      case "cancel_job": {
+        const job = state.jobs.get(request.job);
+        if (!job) return send(ws, { op: "error", id, code: "invalid_job", message: `Not a job: ${request.job}` });
+        if (op === "cancel_job") job.state = "canceled";
+        return send(ws, { op: "job_result", id, job: { ...job, log: [{ kind: "success", timestamp: 2, message: "Done" }], logItems: 1, resultCount: job.results.length, nextOffset: null } });
+      }
+      case "add_discovered": {
+        const job = state.jobs.get(request.job);
+        if (!job) return send(ws, { op: "error", id, code: "invalid_job", message: `Not a job: ${request.job}` });
+        const items = request.items.map((item) => ({ slot: item.slot, name: item.name ?? item.slot, facetsLearned: true }));
+        return send(ws, { op: "model_result", id, operation: "add_discovered", result: { planId: "plan-1", planHash: "hash-1", state: "preview", compact: true, discovery: job.discovery, items, changes: items.map((item) => ({ action: "create", name: item.name })) } });
+      }
+      case "apply_model_changes":
+        return send(ws, { op: "model_result", id, operation: op, result: { planId: request.planId, planHash: request.planHash, state: "applied", compact: true, results: [{ ok: true }] } });
       case "read_agent_log":
         return send(ws, { op: "agent_log_result", id, log: { since: 0, count: state.agentLog.length, truncated: false, records: [...state.agentLog].reverse() } });
       case "read":

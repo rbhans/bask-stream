@@ -97,3 +97,19 @@ Three WebSocket-security items were addressed. Defaults keep current clients (Gr
 - The metadata intentionally exposes evidence rather than making universal equipment claims: parent/ancestor summaries, deterministic Niagara type flags, driver/device/proxy ancestry, point facets/extensions, tags, and relations.
 - Device and point detection can be deterministic through Niagara types such as `BDevice` and `BControlPoint`; equipment detection should be treated as confirmed only when tags/relations/user mappings say so, otherwise inferred and reviewed by the app.
 - See `docs/THIRD_PARTY_API.md` for the external API guide and client-side discovery recommendations.
+
+## Headless Workbench (API 1.10)
+
+New operations in `BaskStreamQueryResolver`, `BaskStreamFileResolver` and `BaskStreamJobResolver`; guide in `docs/HEADLESS_WORKBENCH.md`. Signatures were read with `javap` from the 4.15.3.28 jars (`baja.jar`, `bacnet-rt.jar`, `driver-rt.jar`, `control-rt.jar`). Written without a build: verify on-station before relying on any of it.
+
+- **Queries.** `BOrd.make(slotOrd + "|bql:" + text).resolve(service, cx).get()` returns a `javax.baja.collection.BITable`; NEQL returns a `BQueryResult`, which is also a `BITable` whose row objects are the entities. BQL is refused while `allowedPathPatterns` is narrowed, because a column can walk to components outside it.
+- **Files.** `file:^` is the station's shared folder, which the Developer Guide (`doc/security/securityManager.html`) says every module may read, write and delete, so no extra module permission was requested. `^^` (protected station home: `config.bog`, security) is refused by path. Permission checks use `BFileSystem.INSTANCE.checkReadPermission` / `checkWritePermission(FilePath, Context)`.
+- **Jobs.** `BJobService.getService().getJobs()`; a job's results are its dynamic struct-like slots.
+- **BACnet discovery** is reached by type name and slot name only, so there is no dependency on `bacnet-rt`:
+  - Devices: `BacnetNetwork.submitDeviceManagerJob(BValue)` with a `bacnet:DeviceDiscoveryConfig` returns the job ORD. The job adds one `bacnet:DiscoveryDevice` struct per device as a dynamic slot.
+  - Points: `BacnetPointDeviceExt.submitPointDiscoveryJob()`. The job's `discoverFacets(objectId)` action returns the facets the Point Manager would learn.
+  - `BacnetProxyExt.deviceFacets` is read-only (flags 1), so learned facets go on the point's own `facets`. `objectId` on the proxy ext and on `config/deviceObject` is writable.
+  - An object id encodes as `tag:instance` (`analogInput:3`), which is how the point type is chosen.
+- **Security edits.** `securityEditsEnabled` was hand-added to the generated region in the existing style. `protectedName` in the model resolver decides per request; an agent's request is marked with `agentCall` so agents never get it.
+
+Still to verify on a station: every operation above, and in particular that a user created through a plan can sign in after its password is set with `plain`, that the discovery jobs keep their results long enough to add from, and that `BPassword` values fingerprint without a SecurityException under the Security Manager.

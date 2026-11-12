@@ -6,7 +6,7 @@ import { BaskStreamError, CLIENT_ERRORS } from "./errors.js";
 import { StationHttp, type StationHttpOptions } from "./http.js";
 import { OPERATIONS, type OperationName } from "./operations.js";
 import { toSlotOrd } from "./ords.js";
-import type { Actor, AgentLog, AlarmFilter, BrowseNode, Json, PointSnapshot, Proposal, ScheduleEntry, Weekday } from "./types.js";
+import type { Actor, AgentLog, AlarmFilter, BrowseNode, DiscoveredItem, Discovery, FileContent, FileEntry, JobDetail, JobSummary, Json, PointSnapshot, Proposal, QueryResult, ScheduleEntry, Weekday } from "./types.js";
 
 export interface ClientOptions extends StationHttpOptions {
   username?: string;
@@ -240,6 +240,63 @@ export class BaskStreamClient extends EventEmitter {
   /** "Agent" records from the station's audit history, newest first. */
   async agentLog(options: { since?: number; limit?: number } = {}): Promise<AgentLog> {
     return (await this.call("read_agent_log", options as Json)).log as AgentLog;
+  }
+
+  // ---- Headless Workbench (API 1.10+): queries, station files, jobs and discovery ----
+
+  /** One read-only BQL select or NEQL tag query. BQL returns columns and rows; NEQL returns entities. */
+  async query(query: { bql: string } | { neql: string }, options: { ord?: string; limit?: number; timeoutMillis?: number } = {}): Promise<QueryResult> {
+    const fields: Json = { ...query, ...options };
+    if (options.ord) fields.ord = toSlotOrd(options.ord);
+    return (await this.call("query", fields, { timeoutMs: (options.timeoutMillis ?? 10000) + 20000 })).result as QueryResult;
+  }
+
+  /** A folder of the station file space, e.g. "^px". */
+  async listFiles(path = "^"): Promise<{ path: string; entries: FileEntry[]; truncated: boolean }> {
+    return (await this.call("list_files", { path })).folder as { path: string; entries: FileEntry[]; truncated: boolean };
+  }
+
+  /** A station file. UTF-8 files come back with `text`, others with `base64`, unless `encoding` says which. */
+  async readFile(path: string, options: { encoding?: "text" | "base64"; maxBytes?: number } = {}): Promise<FileContent> {
+    return (await this.call("read_file", { path, ...options })).file as FileContent;
+  }
+
+  /** Creates a station file, or replaces one with `overwrite: true`. */
+  async writeFile(path: string, content: { text: string } | { base64: string }, options: { overwrite?: boolean; createDirs?: boolean; dryRun?: boolean; reason?: string } = {}): Promise<Json> {
+    return (await this.call("write_file", { path, ...content, ...options })).file as Json;
+  }
+
+  /** Deletes a station file, or a folder and its contents with `recursive: true`. */
+  async deleteFile(path: string, options: { recursive?: boolean; dryRun?: boolean; reason?: string } = {}): Promise<Json> {
+    return (await this.call("delete_file", { path, ...options })).file as Json;
+  }
+
+  async jobs(): Promise<JobSummary[]> {
+    return (await this.call("list_jobs")).jobs as JobSummary[];
+  }
+
+  /** A job's state, log and results (discovered devices or points, for example), paged. */
+  async job(job: string, options: { offset?: number; limit?: number } = {}): Promise<JobDetail> {
+    return (await this.call("read_job", { job: toSlotOrd(job), ...options })).job as JobDetail;
+  }
+
+  async cancelJob(job: string, reason?: string): Promise<JobSummary> {
+    return (await this.call("cancel_job", { job: toSlotOrd(job), ...(reason ? { reason } : {}) })).job as JobSummary;
+  }
+
+  /** Starts discovery on a BACnet network (devices) or device (its points). Follow the returned job with `job()`. */
+  async discover(ord: string, options: { lowLimit?: number; highLimit?: number; reason?: string } = {}): Promise<Discovery> {
+    return (await this.call("discover", { ord: toSlotOrd(ord), ...options }, { timeoutMs: 60000 })).discovery as Discovery;
+  }
+
+  /**
+   * Turns chosen results of a discovery job into a model plan preview. Nothing is added until the
+   * plan is applied with `call("apply_model_changes", { planId, planHash, idempotencyKey })`.
+   */
+  async addDiscovered(job: string, items: DiscoveredItem[], options: { parent?: string; verbose?: boolean } = {}): Promise<Json> {
+    const fields: Json = { job: toSlotOrd(job), items: items as unknown as Json[], ...options };
+    if (options.parent) fields.parent = toSlotOrd(options.parent);
+    return (await this.call("add_discovered", fields, { timeoutMs: 120000 })).result as Json;
   }
 
   subscriptionStatus(includePoints = false): Promise<Json> {

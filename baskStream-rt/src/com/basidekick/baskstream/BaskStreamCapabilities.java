@@ -12,7 +12,7 @@ import javax.baja.sys.Context;
 final class BaskStreamCapabilities
 {
   /** The protocol version reported by capabilities and /stream/health. Keep in step with spec/baskstream-protocol.json. */
-  static final String API_VERSION = "1.9";
+  static final String API_VERSION = "1.10";
 
   private final BaskStreamClientSession session;
   private final BaskStreamWebSocketRuntime runtime;
@@ -85,6 +85,7 @@ final class BaskStreamCapabilities
     schemas.put("cov", "2");
     schemas.put("tags", "1");
     schemas.put("agents", "1");
+    schemas.put("workbench", "1");
     capabilities.put("schemas", schemas);
 
     Map<String, Object> subscriptionsMeta = new LinkedHashMap<String, Object>();
@@ -130,6 +131,16 @@ final class BaskStreamCapabilities
     tagsMeta.put("maxTargetsPerRequest", Long.valueOf(runtime.getTagResolver().getMaxTargetsPerRequest()));
     tagsMeta.put("note", "Tags are dictionary-neutral: address Haystack (hs:), Niagara (n:), and hierarchy/site dictionary tags by qualified name.");
     capabilities.put("tags", tagsMeta);
+
+    // Headless Workbench (API 1.10): what an engineering client can do beyond points and plans.
+    capabilities.put("workbench", BaskStreamModelPlans.map(
+        "query", BaskStreamModelPlans.map("bql", BaskStreamAccessPolicy.isDefaultWideOpen(runtime.getService()), "neql", true,
+            "maxRows", BaskStreamQueryResolver.MAX_LIMIT),
+        "files", BaskStreamModelPlans.map("root", "^", "maxReadBytes", BaskStreamFileResolver.MAX_READ_BYTES,
+            "write", runtime.getService().writesAllowed()),
+        "jobs", true,
+        "discovery", BaskStreamModelPlans.map("drivers", session.listOf("bacnet"), "addNeedsModelEdits", true),
+        "securityEdits", runtime.getService().securityEditsAllowed() && !runtime.getAgents().isAgent(session)));
 
     Map<String, Object> graphics = new LinkedHashMap<String, Object>();
     graphics.put("plainPx", Boolean.FALSE);

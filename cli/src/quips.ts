@@ -10,7 +10,8 @@ export const QUIPS = {
   searching: ["Looking under every folder…", "Asking every point if it's the one…", "Checking behind the Drivers folder…"],
   history: ["Rolling up the trends…", "Averaging out the bumps…", "Digging through the history database…"],
   alarms: ["Reading the alarm console…", "Checking who hasn't acked…"],
-  writing: ["Waiting for the point to make up its mind…", "Checking who else is commanding it…"]
+  writing: ["Waiting for the point to make up its mind…", "Checking who else is commanding it…"],
+  discovering: ["Asking who's out there…", "Waiting for the last I-Am…", "Reading object lists…"]
 } as const;
 
 export type QuipKind = keyof typeof QUIPS;

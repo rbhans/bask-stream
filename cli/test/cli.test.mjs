@@ -89,3 +89,27 @@ test("doctor explains an expired session", async () => {
   assert.equal(code, 1);
   assert.match(out, /✗ Session/);
 });
+
+test("query, station files, discovery and add (API 1.10)", async () => {
+  const rows = await bask("query", "select slotPath, out.value from control:NumericPoint", "-o", "json");
+  assert.equal(rows.code, 0, rows.out);
+  assert.equal(JSON.parse(rows.out).rows[0][1], 72.5);
+  assert.match((await bask("query", "--neql", "hs:vav")).out, /VAV 01/);
+
+  assert.match((await bask("files", "^px")).out, /\^px\/Home\.px/);
+  assert.equal((await bask("cat", "^px/Home.px")).out, "<px/>");
+  const refused = await bask("put", main, "^px/Home.px");
+  assert.equal(refused.code, 1);
+  assert.match(refused.out, /--allow-writes/);
+  assert.match((await bask("put", main, "^px/Main.js", "--allow-writes", "--yes")).out, /Created \^px\/Main\.js/);
+  assert.match((await bask("rm", "^px/Main.js", "--allow-writes", "--yes")).out, /Deleted/);
+
+  const found = await bask("discover", "Drivers/Net/VAV_01", "--allow-writes", "--yes");
+  assert.equal(found.code, 0, found.out);
+  assert.match(found.out, /analogInput_3\s+SpaceTemp\s+analogInput:3/);
+  const job = /bask add (\S+)/.exec(found.out)[1];
+  assert.match((await bask("jobs")).out, /success/);
+  const plan = await bask("add", job, "analogInput_3");
+  assert.match(plan.out, /Nothing added yet/);
+  assert.match((await bask("add", job, "all", "--apply", "--allow-writes", "--yes")).out, /Added 1/);
+});

@@ -125,4 +125,75 @@ export interface AgentLog {
   records: AgentLogRecord[];
 }
 
+/** The reply to a `query`: a BQL table (`columns`, `rows`) or NEQL `entities`. */
+export interface QueryResult {
+  language: "bql" | "neql";
+  ord: string;
+  columns?: { name: string; display: string; typeSpec: string | null }[];
+  rows?: unknown[][];
+  entities?: { ord: string; name: string; display: string; typeSpec: string }[];
+  count: number;
+  /** Rows dropped because the user may not see them. */
+  hidden: number;
+  truncated: boolean;
+  stoppedBy?: "limit" | "timeout";
+}
+
+export interface FileEntry {
+  /** Station file path, e.g. "^px/Home.px". */
+  path: string;
+  name: string;
+  directory: boolean;
+  size?: number;
+  modified: number | null;
+  readonly: boolean;
+}
+
+export interface FileContent extends FileEntry {
+  encoding: "text" | "base64";
+  text?: string;
+  base64?: string;
+}
+
+export interface JobSummary {
+  job: string | null;
+  name: string;
+  display: string;
+  typeSpec: string;
+  state: "unknown" | "running" | "canceling" | "canceled" | "success" | "failed";
+  complete: boolean;
+  progress: number;
+  startTime: number | null;
+  endTime: number | null;
+}
+
+export interface JobDetail extends JobSummary {
+  log: { kind: string; timestamp: number | null; message: string; details?: string }[];
+  logItems: number;
+  /** What the job left on itself, such as discovered devices or points, in plain form. */
+  results: { slot: string; typeSpec: string; values: unknown }[];
+  resultCount: number;
+  nextOffset: number | null;
+  /** Set on discovery jobs baskStream can add from. */
+  discovery?: "devices" | "points";
+}
+
+export interface Discovery {
+  job: string;
+  kind: "devices" | "points";
+  driver: string;
+  target: string;
+}
+
+/** One discovery result to add: `slot` comes from the job's `results`. */
+export interface DiscoveredItem {
+  slot: string;
+  name?: string;
+  parent?: string;
+  collision?: "fail" | "suffix";
+  writable?: boolean;
+  typeSpec?: string;
+  properties?: Record<string, unknown>;
+}
+
 export type Weekday = "sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday";

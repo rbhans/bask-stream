@@ -163,6 +163,96 @@ final class BaskStreamRequests
     session.send(response);
   }
 
+  void handleQuery(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("query_result", id);
+    response.put("result", runtime.getQueryResolver().query(request, context));
+    session.send(response);
+  }
+
+  void handleListFiles(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("files_result", id);
+    response.put("folder", runtime.getFileResolver().list(request, context));
+    session.send(response);
+  }
+
+  void handleReadFile(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("file_result", id);
+    response.put("file", runtime.getFileResolver().read(request, context));
+    session.send(response);
+  }
+
+  void handleWriteFile(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("file_written", id);
+    response.put("file", runtime.getFileResolver().write(request, context));
+    session.send(response);
+  }
+
+  void handleDeleteFile(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("file_deleted", id);
+    response.put("file", runtime.getFileResolver().delete(request, context));
+    session.send(response);
+  }
+
+  void handleListJobs(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("jobs_result", id);
+    response.put("jobs", runtime.getJobResolver().list(context));
+    session.send(response);
+  }
+
+  void handleReadJob(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("job_result", id);
+    response.put("job", runtime.getJobResolver().read(request, context));
+    session.send(response);
+  }
+
+  void handleCancelJob(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("job_result", id);
+    response.put("job", runtime.getJobResolver().cancel(request, context));
+    session.send(response);
+  }
+
+  void handleDiscover(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("discovery_started", id);
+    response.put("discovery", runtime.getJobResolver().discover(request, context));
+    session.send(response);
+  }
+
+  /**
+   * Chosen discovery results become "create" changes in an ordinary plan preview, so nothing is
+   * added until apply_model_changes and every model-editing check still runs.
+   */
+  void handleAddDiscovered(String id, Map<String, Object> request) throws Exception
+  {
+    Map<String, Object> built = runtime.getJobResolver().discoveredChanges(request, context);
+    BaskStreamModelResolver model = runtime.getModelResolver();
+    Map<String, Object> result;
+    model.agentCall(runtime.getAgents().isAgent(session));
+    try
+    {
+      result = model.preview(BaskStreamModelPlans.map("changes", built.get("changes")), context);
+    }
+    finally
+    {
+      model.agentCall(false);
+    }
+    if (!Boolean.TRUE.equals(request.get("verbose"))) result = compactModelResult(result);
+    result.put("items", built.get("items"));
+    result.put("discovery", built.get("kind"));
+    Map<String, Object> response = session.baseMessage("model_result", id);
+    response.put("operation", "add_discovered");
+    response.put("result", result);
+    session.send(response);
+  }
+
   void handleBrowse(String id, Map<String, Object> request) throws BaskStreamProtocolException
   {
     String baseOrd = runtime.getCodec().optionalString(request, "base");
@@ -319,6 +409,19 @@ final class BaskStreamRequests
   void handleModelOperation(String id, String op, Map<String, Object> request) throws Exception
   {
     BaskStreamModelResolver model = runtime.getModelResolver();
+    model.agentCall(runtime.getAgents().isAgent(session));
+    try
+    {
+      handleModelOperation(id, op, request, model);
+    }
+    finally
+    {
+      model.agentCall(false);
+    }
+  }
+
+  private void handleModelOperation(String id, String op, Map<String, Object> request, BaskStreamModelResolver model) throws Exception
+  {
     Map<String, Object> result;
     if ("describe_component_types".equals(op)) result = model.types(request, context);
     else if ("describe_component".equals(op)) result = model.describe(request, context);
