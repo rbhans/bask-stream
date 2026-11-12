@@ -812,8 +812,13 @@ program
     if (!opts.demo && !opts.agentProfile) {
       const store = loadStore();
       const mine = store.profiles[profile];
-      const candidate = Object.entries(store.profiles).find(([name, p]) => name !== profile && p.station === mine.station && p.username !== mine.username && /agent|^ai\b|ai[-_]/i.test(`${name} ${p.username ?? ""}`));
-      if (candidate) agentProfile = candidate[0];
+      // A profile for the same station under another user that looks like an AI's: "ai" first, then agent.
+      const rank = (name: string, user: string) => (/^ai$/i.test(name) ? 4 : /^ai[-_ ]|[-_ ]ai$/i.test(name) || /^ai[-_]/i.test(user) ? 3 : /claude|codex|gpt|gemini/i.test(`${name} ${user}`) ? 2 : /agent/i.test(`${name} ${user}`) ? 1 : 0);
+      const candidate = Object.entries(store.profiles)
+        .filter(([name, p]) => name !== profile && p.station === mine.station && p.username !== mine.username)
+        .map(([name, p]) => ({ name, rank: rank(name, p.username ?? "") }))
+        .sort((x, y) => y.rank - x.rank)[0];
+      if (candidate && candidate.rank > 0) agentProfile = candidate.name;
     }
     let session = opts.session ?? `bask-${profile.replace(/[^\w-]/g, "-")}`;
     if (!opts.dryRun) for (let n = 2; sessionExists(found.mux, session, found.rex); n += 1) session = `${(opts.session ?? `bask-${profile.replace(/[^\w-]/g, "-")}`)}-${n}`;

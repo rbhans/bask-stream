@@ -67,6 +67,14 @@ It uses the multiplexer the terminal is already in, else Rex, else tmux (`--mux 
 
 **Panes work together.** They share the watch list, so `w` in the Explorer pane adds a row to the Watch pane. `t` (trend) and `e` (show in the Explorer) go to the pane that shows that view when there is one. `bask show <ord>`, `bask show --trend <ord>` and `bask show --watch <ord>` do the same from any shell, which is how the agent points at things for you.
 
+**MCP tools in terminal Claude Code.** The baskStream extension for the Claude desktop app is an MCP server, and it can read a saved `bask` profile. Registered once like this, terminal Claude Code gets the same `baskStream` tools, on the workspace's station inside a workspace pane and on the profile named `ai` anywhere else:
+
+```bash
+claude mcp add --scope user baskStream -e 'BASKSTREAM_PROFILE=${BASKSTREAM_PROFILE:-ai}' -e 'BASKSTREAM_PASSWORD=${BASKSTREAM_PASSWORD:-}' -- node "<the extension's folder>/server/index.mjs"
+```
+
+On macOS the folder is `~/Library/Application Support/Claude/Claude Extensions/local.mcpb.basidekick.baskstream`. The profile is the agent's login: `bask login <station> -u <the AI's Niagara user> --name ai`.
+
 **The agent** starts with a briefing on the station and how to use `bask` (`bask agent-brief` prints it). It connects with `--agent-profile <name>`, or a saved profile for the same station whose name or user says agent or ai, or else your own profile. Give it its own Niagara user and list that user in the service's agent users: then its writes become proposals in the AI Activity pane, every change carries its reason, and the audit history shows which changes were its own. Another agent: `--agent "<command>"`; it finds the briefing at `$BASK_STATION_BRIEF`.
 
 ## Commands
