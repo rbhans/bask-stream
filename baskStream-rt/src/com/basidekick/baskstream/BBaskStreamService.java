@@ -271,8 +271,8 @@ public final class BBaskStreamService extends BWebServlet
 
 //region /*+ ------------ BEGIN BAJA AUTO GENERATED CODE ------------ +*/
 //@formatter:off
-/*@ $com.basidekick.baskstream.BBaskStreamService(3460251306)1.0$ @*/
-/* Generated Wed Oct 21 21:00:04 MST 2026 by Slot-o-Matic (c) Tridium, Inc. 2012-2026 */
+/*@ $com.basidekick.baskstream.BBaskStreamService(2461330926)1.0$ @*/
+/* Generated Thu Nov 12 12:09:33 MST 2026 by Slot-o-Matic (c) Tridium, Inc. 2012-2026 */
 
   //region Property "writesEnabled"
 

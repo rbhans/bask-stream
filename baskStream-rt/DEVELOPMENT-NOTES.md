@@ -100,7 +100,7 @@ Three WebSocket-security items were addressed. Defaults keep current clients (Gr
 
 ## Headless Workbench (API 1.10)
 
-New operations in `BaskStreamQueryResolver`, `BaskStreamFileResolver` and `BaskStreamJobResolver`; guide in `docs/HEADLESS_WORKBENCH.md`. Signatures were read with `javap` from the 4.15.3.28 jars (`baja.jar`, `bacnet-rt.jar`, `driver-rt.jar`, `control-rt.jar`). Written without a build: verify on-station before relying on any of it.
+New operations in `BaskStreamQueryResolver`, `BaskStreamFileResolver` and `BaskStreamJobResolver`; guide in `docs/HEADLESS_WORKBENCH.md`. Signatures were read with `javap` from the 4.15.3.28 jars (`baja.jar`, `bacnet-rt.jar`, `driver-rt.jar`, `control-rt.jar`). Built and checked on the HVAC Lab Simulator station on 2026-11-12 (results below).
 
 - **Queries.** `BOrd.make(slotOrd + "|bql:" + text).resolve(service, cx).get()` returns a `javax.baja.collection.BITable`; NEQL returns a `BQueryResult`, which is also a `BITable` whose row objects are the entities. BQL is refused while `allowedPathPatterns` is narrowed, because a column can walk to components outside it.
 - **Files.** `file:^` is the station's shared folder, which the Developer Guide (`doc/security/securityManager.html`) says every module may read, write and delete, so no extra module permission was requested. `^^` (protected station home: `config.bog`, security) is refused by path. Permission checks use `BFileSystem.INSTANCE.checkReadPermission` / `checkWritePermission(FilePath, Context)`.
@@ -112,4 +112,6 @@ New operations in `BaskStreamQueryResolver`, `BaskStreamFileResolver` and `BaskS
   - An object id encodes as `tag:instance` (`analogInput:3`), which is how the point type is chosen.
 - **Security edits.** `securityEditsEnabled` was hand-added to the generated region in the existing style. `protectedName` in the model resolver decides per request; an agent's request is marked with `agentCall` so agents never get it.
 
-Still to verify on a station: every operation above, and in particular that a user created through a plan can sign in after its password is set with `plain`, that the discovery jobs keep their results long enough to add from, and that `BPassword` values fingerprint without a SecurityException under the Security Manager.
+Checked live on 2026-11-12 (4.15.3.28, admin, through `bask` 0.5.0): BQL and NEQL queries; file list, read, write, the `file_exists` guard, recursive delete, and `forbidden_file` for `^^` and `..` (no Security Manager errors); job list and read; BACnet device discovery and point discovery (619 objects); `add_discovered` preview and apply for an analog input, which read live with learned units. Discovery jobs stay under `JobService` after they finish, so their results remain addable. Slot-o-matic regenerated `BBaskStreamService` with no change beyond its header, so the hand-added `securityEditsEnabled` slot code matched.
+
+Open: `discoverFacets` returned no facets and no error for every binary object on the simulator (analog and multistate learned). The SDK asks binary objects for Active_Text and Inactive_Text; whether the simulator publishes them is unconfirmed. Still to verify: a user created through a plan with a `plain` password can sign in, and `BPassword` fingerprints without a SecurityException.
