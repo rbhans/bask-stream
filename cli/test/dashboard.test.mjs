@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { mount, settle, startStation } from "./harness.mjs";
+import { mount, mountFleet, settle, startFleet, startStation } from "./harness.mjs";
 
 const NET = "slot:/Drivers/BacnetNetwork";
 const SAT = `${NET}/AHU_01/points/SupplyAirTemp`;
@@ -24,7 +24,8 @@ after(async () => {
 });
 
 /** Runs a test body on a mounted dashboard and always unmounts it. */
-async function withApp(props, size, body) {
+const withApp = (props, size, body) => withStation(client, props, size, body);
+async function withStation(client, props, size, body) {
   const app = mount(client, props, size);
   try {
     await body(app);
@@ -313,4 +314,78 @@ test("audit records are read from the station's text form", async () => {
   assert.equal(parseAudit({ timestamp: 1, summary: "12-Nov-26 12:57 PM MST model_preview slot:/Services/BASkStreamService 8096  [{action=delete}] admin", value: "12-Nov-26 12:57 PM MST[admin] model_preview;slotName=8096;value=[{action=delete}]" }), undefined);
   // Agent records come from the agent log instead, with their fields.
   assert.equal(parseAudit({ timestamp: 1, summary: "x", value: "12-Nov-26 12:50 PM MST[ai-claude] Agent;slotName=override;value=outcome=refused" }), undefined);
+});
+
+test("each demo site is its own building with its own alarms and agent history", async () => {
+  const expected = {
+    riverside: [/Riverside/, /Isolation room pressure low/, /AHU_OR\/SupplyFanSpeed/],
+    harbor: [/Harbor/, /Freezer 2 box temperature high/, /Freezer_2\/BoxSetpoint/],
+    summit: [/Summit/, /Hot aisle temperature high/, /CRAC_4\/FanSpeed/]
+  };
+  for (const [site, patterns] of Object.entries(expected)) {
+    const { client, close } = await startStation({ site });
+    try {
+      await withStation(client, {}, { columns: 150, rows: 36 }, async (app) => {
+        const frame = await app.until(/waiting for you/);
+        for (const pattern of patterns) assert.match(frame, pattern);
+        // A second driver network shows up where the site has one.
+        if (site !== "riverside") {
+          await app.press("2");
+          await app.until(/Drivers/);
+          await app.press("down", "right");
+          await app.until(site === "harbor" ? /ModbusNetwork/ : /SnmpNetwork/);
+        }
+      });
+    } finally {
+      await close();
+    }
+  }
+});
+
+test("the all-stations view shows every station, their alarms together, and opens one", async () => {
+  const fleet = await startFleet();
+  const app = mountFleet(fleet.entries, {}, { columns: 170, rows: 46 });
+  try {
+    const frame = await app.until(/4 stations · 4 live/);
+    for (const name of ["1 Northgate", "2 Riverside", "3 Harbor", "4 Summit"]) assert.match(frame, new RegExp(name));
+    await app.until(/18 unacked\s+24 open\s+4 waiting for approval/);
+    const all = await app.until(/Newest alarms, all stations ─+ 24 open across 4 stations/);
+    assert.match(all, /Summit\s+unacked Hall_A\/HotAisleTemp/);
+    assert.match(all, /Harbor\s+unacked Freezer_2\/BoxTemp/);
+    assert.match(all, /Freezer_2\/BoxTemp\s+4\.\d °F/);
+    await app.press("right", "enter");
+    const station = await app.until(/Riverside · admin@/);
+    assert.match(station, /1 Home\s+2 Explorer/);
+    await app.press("4");
+    await app.until(/Isolation room pressure low/);
+    await app.press("q");
+    await app.until(/All stations/);
+    await app.press("3");
+    await app.until(/Harbor · admin@/);
+  } finally {
+    app.unmount();
+    await fleet.close();
+  }
+});
+
+test("the all-stations view fits small and large windows, and says why a station is unreachable", async () => {
+  const fleet = await startFleet(["northgate", "harbor"]);
+  const broken = { profile: "gone", label: "Old plant", host: "10.0.0.9", link: fleet.entries[0].link, connect: () => Promise.reject(new Error("The saved login expired. Run: bask login https://10.0.0.9 -u ops --name gone")) };
+  try {
+    for (const [columns, rows] of [[80, 24], [60, 18], [210, 56]]) {
+      const app = mountFleet([...fleet.entries, broken], {}, { columns, rows });
+      try {
+        await app.until(/2 live/);
+        await settle(400);
+        const lines = app.frame().split("\n");
+        assert.ok(lines.length <= rows, `${columns}x${rows}: ${lines.length} lines`);
+        for (const line of lines) assert.ok(line.length <= columns, `${columns}x${rows}: "${line}"`);
+        if (columns === 210) assert.match(app.frame(), /The saved login expired\. Run: bask login https:\/\/10\.0\.0\.9/);
+      } finally {
+        app.unmount();
+      }
+    }
+  } finally {
+    await fleet.close();
+  }
 });

@@ -161,6 +161,24 @@ test("workspace --dry-run on the demo station prints the plan", async () => {
   // Rex's command-line tool may not be installed where the tests run.
   if (code !== 0) return assert.match(out, /Rex's command-line tool was not found/);
   assert.match(out, /session bask-demo, layout monitor/);
-  assert.match(out, /pane Home: .* demo --view home --pane/);
+  assert.match(out, /pane Home: .* demo --site northgate --view home --pane/);
   assert.equal((out.match(/ split -s /g) ?? []).length, 3);
+});
+
+test("demo --list names the simulated buildings, and each gets its own workspace", async () => {
+  const list = await bask("demo", "--list");
+  assert.equal(list.code, 0, list.out);
+  for (const site of ["northgate", "riverside", "harbor", "summit"]) assert.match(list.out, new RegExp(`${site}\\s+\\w+\\s+47[89]\\d\\d`));
+  const plan = await bask("workspace", "--demo", "--site", "all", "--dry-run", "--mux", "rex");
+  if (plan.code !== 0) return assert.match(plan.out, /Rex's command-line tool was not found/);
+  for (const session of ["bask-demo", "bask-demo-riverside", "bask-demo-harbor", "bask-demo-summit"]) assert.match(plan.out, new RegExp(`session ${session},`));
+  assert.match(plan.out, /demo --site harbor --view explorer --pane/);
+  // One agent per building is opt-in.
+  assert.doesNotMatch(plan.out, /pane Claude Code/);
+});
+
+test("fleet needs a terminal and says so", async () => {
+  const { code, out } = await bask("fleet", "--demo");
+  assert.equal(code, 1);
+  assert.match(out, /needs a terminal/);
 });

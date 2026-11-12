@@ -24,6 +24,7 @@ This downloads a single executable from the latest `bask-v*` [release](https://g
 bask login https://192.168.0.126 -u test --insecure   # asks for the password; saves only the session
 bask                                                   # the dashboard: every view in one window
 bask workspace                                         # a multi-pane workspace in Rex or tmux, with an AI agent
+bask fleet                                             # every saved station at once
 bask demo                                              # try it on a built-in simulated building, no station needed
 ```
 
@@ -50,6 +51,30 @@ The dashboard starts read-only. Press `W` (or start with `--allow-writes`) to al
 
 Colours follow the terminal; force one with `--theme dark|light` or `BASK_THEME`.
 
+## Several stations at once
+
+`bask fleet` connects to every saved station (or the profiles you name) and shows a card for each: its link, unacknowledged and open alarms, what the AI is waiting on or did last, and the first points on its watch list, live. Underneath, the newest alarms from all stations in one list. `⏎` or a number opens a station's full dashboard; `q` there comes back. A station whose saved login has expired says so on its card, with the `bask login` command to run.
+
+## Demo buildings
+
+`bask demo` needs no station. There are four simulated buildings, each with its own equipment, alarms, schedules, files and AI agent history, and each keeps changing while it runs:
+
+| `--site` | Station | What it is |
+|---|---|---|
+| `northgate` (default) | Northgate | An office: two air handlers, eight VAV boxes, a chilled water plant |
+| `riverside` | Riverside | A surgery center: operating rooms, isolation rooms, a boiler plant, medical gas |
+| `harbor` | Harbor | Cold storage: freezers, coolers, a compressor rack, dock doors, a Modbus power meter |
+| `summit` | Summit | A data hall: CRAC units, hot and cold aisles, chillers, UPS and PDUs over SNMP |
+
+```bash
+bask demo --site harbor              # one building's dashboard
+bask demo --fleet                    # all four in the all-stations view (same as bask fleet --demo)
+bask workspace --demo --site summit  # a workspace on one building
+bask workspace --demo --site all     # a Rex or tmux session per building
+```
+
+Each site is saved as a profile (`demo`, `demo-riverside`, `demo-harbor`, `demo-summit`) on its own local port, so every other `bask` command works on it too. The first window to open a site hosts its station; closing that window stops it.
+
 ## Workspace
 
 `bask workspace` lays out a station workspace in Rex (Superlogical's terminal multiplexer) or tmux: an Explorer, Alarms and AI Activity pane, and an AI agent session (Claude Code by default) that works on the station through `bask`.
@@ -59,7 +84,7 @@ bask workspace                      # Explorer · Alarms · AI Activity · Claud
 bask workspace --no-agent           # Explorer · Watch · Alarms · AI Activity
 bask workspace --layout monitor     # Home · Alarms · Watch · AI Activity
 bask workspace --layout duo         # the full dashboard beside the agent
-bask workspace --demo               # the same on the simulated building
+bask workspace --demo               # the same on a simulated building (--site to choose)
 bask workspace --dry-run            # print what would be started
 ```
 
@@ -107,7 +132,8 @@ On macOS the folder is `~/Library/Application Support/Claude/Claude Extensions/l
 | `bask workspace [--layout ops\|monitor\|duo] [--mux rex\|tmux] [--agent <cmd>\|--no-agent] [--agent-profile <name>] [--demo] [--dry-run]` | A multi-pane station workspace in Rex or tmux |
 | `bask show <ord> [--trend] [--watch]` | Select an ORD in the open Explorer, chart it, or add it to the watch list |
 | `bask agent-brief` | The briefing an AI agent gets on working with this station |
-| `bask demo [--view <name>] [--serve] [--port n]` | The dashboard on a simulated building; `--serve` only runs the station |
+| `bask fleet [profiles...] [--demo]` | Every saved station at once: alarms, AI activity and live values per station, and all alarms in one list |
+| `bask demo [--site <name>] [--fleet] [--list] [--view <name>] [--serve]` | The dashboard on a simulated building; `--serve` only runs the station |
 
 `-o json` or `-o csv` on any listing command; `-p <profile>` picks a station. ORDs may drop the `slot:/` prefix.
 

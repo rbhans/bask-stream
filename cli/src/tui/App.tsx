@@ -7,7 +7,7 @@ import { Link, type Shared } from "../link.js";
 import { Finder } from "./Finder.js";
 import { mouseMode, useKeyPump, useKeys, useMouse } from "./input.js";
 import { Palette, type Command } from "./Palette.js";
-import { useActivity, useAlarms, useJobs, useProposals, useWatchList } from "./stores.js";
+import { useActivity, useAlarms, useJobs, useProposals, useStationName, useWatchList } from "./stores.js";
 import { setTheme } from "./theme.js";
 import { Hint, ModalBox, UiContext, VIEWS, VIEW_LABEL, clip, theme, toneColor, type Modal, type Rect, type Tone, type Ui, type ViewName } from "./ui.js";
 import { ACTIVITY_RANGES, ActivityView, proposalActor } from "./views/Activity.js";
@@ -53,13 +53,16 @@ export interface AppProps {
   suspend?: (work: () => void) => void;
   /** Sends a control sequence (mouse mode, window title, clipboard) straight to the terminal. */
   terminal?: (data: string) => void;
+  /** Opened from the all-stations view: q and F go back there, and that view reads the keyboard. */
+  onBack?: () => void;
 }
 
 export function App(props: AppProps) {
   const { client, profileName, view: initialView, points: initialPoints = [], pane = false } = props;
   const { exit } = useApp();
   const { stdout } = useStdout();
-  useKeyPump();
+  useKeyPump(!props.onBack);
+  const leave = props.onBack ?? exit;
   const link = useMemo(() => props.link ?? new Link(client.http.url.origin, false), []);
   const [size, setSize] = useState({ columns: stdout.columns || 100, rows: stdout.rows || 30 });
   const [view, setView] = useState<ViewName>(initialView ?? "home");
@@ -75,7 +78,8 @@ export function App(props: AppProps) {
   const [queryRun, setQueryRun] = useState<{ n: number; bql?: string; neql?: string }>();
   const [focusJob, setFocusJob] = useState<{ job: string; n: number }>();
   const [rangeIndex, setRangeIndex] = useState(1);
-  const [station, setStation] = useState<string | undefined>(typeof client.capabilities.station === "string" ? client.capabilities.station : undefined);
+  // The station's name, for the header and to find its audit history.
+  const station = useStationName(client);
   const [shared, setShared] = useState<Shared>(link.get());
   const [mouseOn, setMouseOn] = useState(props.mouse ?? false);
   const [, repaint] = useState(0);
@@ -95,16 +99,6 @@ export function App(props: AppProps) {
   }, [stdout]);
 
   useEffect(() => setVisited((set) => (set.has(view) ? set : new Set(set).add(view))), [view]);
-
-  // The station's name, for the header and to find its audit history.
-  useEffect(() => {
-    if (station) return;
-    void client.describe("slot:/Services", "full").then((node) => {
-      const tags = (((node.metadata ?? {}) as Json).tags ?? []) as Json[];
-      const name = tags.find((t) => t.id === "n:station")?.value;
-      if (typeof name === "string" && name) setStation(name);
-    }, () => {});
-  }, [client]);
 
   // Connection state and a latency sample every 10 s.
   useEffect(() => {
@@ -330,7 +324,8 @@ export function App(props: AppProps) {
       } },
       ...(!props.terminal ? [] : [{ title: mouseOn ? "Turn the mouse off (to select text)" : "Turn the mouse on", group: "Look", run: () => setMouseOn((on) => !on) }]),
       { title: "Help", group: "bask", keys: "?", run: () => setOverlay("help") },
-      { title: "Quit", group: "bask", keys: "q", run: () => exit() }
+      ...(props.onBack ? [{ title: "All stations", group: "bask", keys: "F", run: () => props.onBack!() }] : []),
+      { title: "Quit", group: "bask", keys: props.onBack ? "" : "q", run: () => exit() }
     ],
     [writes, ui, mouseOn, alarmStore.alarms]
   );
@@ -340,7 +335,7 @@ export function App(props: AppProps) {
     if (modal || overlay) return;
     if (key.ctrl && input === "k") return setOverlay("palette");
     if (typing) return;
-    if (input === "q") return exit();
+    if (input === "q" || (input === "F" && props.onBack)) return leave();
     if (input === ":") return setOverlay("palette");
     if (input === "?") return setOverlay("help");
     if (input === "/") return setOverlay("find");
@@ -424,7 +419,7 @@ export function App(props: AppProps) {
   const headerGap = Math.max(1, width - title.length - 2 - shownName.length - (shownIdentity.length > 4 ? shownIdentity.length : 0) - lengthOf(right));
 
   // Footer hints: the ones that work everywhere always show; the view's own fill what is left.
-  const everywhere: [string, string][] = overlay || typing ? [] : [["/", "find"], [":", "commands"], ...(pane ? ([["1-0", "views"]] as [string, string][]) : []), ["?", "help"], ["q", "quit"]];
+  const everywhere: [string, string][] = overlay || typing ? [] : [["/", "find"], [":", "commands"], ...(pane ? ([["1-0", "views"]] as [string, string][]) : []), ["?", "help"], ["q", props.onBack ? "all stations" : "quit"]];
   const hintLength = ([k, label]: [string, string]) => k.length + label.length + 4;
   let hintRoom = width - everywhere.reduce((n, h) => n + hintLength(h), 0);
   const hints = (overlay ? [] : HINTS[view]).filter((h) => (hintRoom -= hintLength(h)) >= 0);

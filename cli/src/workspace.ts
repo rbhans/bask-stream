@@ -87,8 +87,8 @@ export interface LayoutOptions {
   env?: Record<string, string>;
   /** The agent's command, or undefined for no agent pane. */
   agent?: { shell: string; env: Record<string, string>; cwd?: string; label: string };
-  /** Run the demo station inside the panes instead of a saved profile. */
-  demo?: boolean;
+  /** Run this demo site's station inside the panes instead of a saved profile. */
+  demo?: string;
 }
 
 /** The panes of a named layout, in the order they are created. */
@@ -97,7 +97,7 @@ export function buildLayout(options: LayoutOptions): Pane[] {
   const flags = options.allowWrites ? " --allow-writes" : "";
   const view = (id: string, label: string, name: string, full = false): Pane => ({
     id, label, env: options.env,
-    shell: options.demo ? `${self} demo --view ${name}${full ? "" : " --pane"}` : `${self} -p ${shq(options.profile)}${flags} tui --view ${name}${full ? "" : " --pane"}`
+    shell: options.demo ? `${self} demo --site ${options.demo} --view ${name}${full ? "" : " --pane"}` : `${self} -p ${shq(options.profile)}${flags} tui --view ${name}${full ? "" : " --pane"}`
   });
   const agent = options.agent ? { id: "agent", label: options.agent.label, shell: options.agent.shell, env: { ...options.env, ...options.agent.env }, cwd: options.agent.cwd } : undefined;
   if (options.layout === "duo") {

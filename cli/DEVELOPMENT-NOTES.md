@@ -19,6 +19,7 @@ Short notes on problems that were solved, so they are not solved twice.
 ## Demo station
 
 - `src/demo/station.ts` speaks the real protocol and is what the dashboard tests run on (`live: false` freezes its values). When the module's replies change shape, change the demo to match; do not special-case the demo in the views.
+- The buildings are in `src/demo/sites.ts`: a site fills in the tree, alarms, a day of agent history, files, and what keeps happening. To add one, add a `Site` there with its own port and profile; nothing else needs to know.
 - The first `bask demo` to start hosts the station on the port; later ones (other panes, an agent's `bask`) join it. When the host window closes the others reconnect to nothing.
 
 ## Checked on the live station, and not yet

@@ -8,9 +8,11 @@ import http from "node:http";
 import { decode, encode } from "@msgpack/msgpack";
 import { WebSocketServer, type WebSocket } from "ws";
 
+import { DEMO_SITES, type SiteContext, type SiteName } from "./sites.js";
+
+export { DEMO_SITES, SITE_NAMES, type SiteName } from "./sites.js";
 export const DEMO_USER = "admin";
 export const DEMO_PASSWORD = "demo";
-export const DEMO_STATION = "Northgate";
 const AGENT_USER = "ai-claude";
 const AGENT = { kind: "agent", name: "Claude Code", model: "claude-fable-5-2", onBehalfOf: "ben" };
 
@@ -45,6 +47,9 @@ interface Node {
 
 export interface DemoStation {
   url: string;
+  site: SiteName;
+  /** The station's name, as its capabilities report it. */
+  station: string;
   user: string;
   password: string;
   state: any;
@@ -89,8 +94,10 @@ const stamp = (ms: number) => {
   return `${d.getDate()}-${MONTHS[d.getMonth()]}-${String(d.getFullYear()).slice(2)} ${h % 12 || 12}:${pad2(d.getMinutes())} ${h < 12 ? "AM" : "PM"} MST`;
 };
 
-export async function startDemoStation(options: { live?: boolean; port?: number } = {}): Promise<DemoStation> {
+export async function startDemoStation(options: { live?: boolean; port?: number; site?: SiteName } = {}): Promise<DemoStation> {
   const live = options.live !== false;
+  const site = DEMO_SITES[options.site ?? "northgate"];
+  const stationName = site.station;
   const started = Date.now();
   /** Simulation time: frozen when not live so tests see steady values. */
   const clock = () => (live ? Date.now() : started);
@@ -122,8 +129,10 @@ export async function startDemoStation(options: { live?: boolean; port?: number 
     actions: ["ping", "submitDeviceManagerJob"],
     props: { enabled: { typeSpec: "baja:Boolean", encoded: "true", writable: true }, health: { typeSpec: "baja:String", encoded: "Ok [12-Nov-26 2:04 PM MST]" } }
   });
-  const device = (name: string, instance: number, address: string, extra: Partial<Node> = {}) => {
-    const ord = add(network, name, "bacnet:BacnetDevice", "container", {
+  const addNetwork = (name: string, typeSpec: string) =>
+    add(drivers, name, typeSpec, "container", { actions: ["ping"], props: { enabled: { typeSpec: "baja:Boolean", encoded: "true", writable: true }, health: { typeSpec: "baja:String", encoded: "Ok [12-Nov-26 2:04 PM MST]" } } });
+  const device = (name: string, instance: number, address: string, extra: Partial<Node> = {}, parent = network) => {
+    const ord = add(parent, name, "bacnet:BacnetDevice", "container", {
       actions: ["ping", "upload"],
       props: {
         enabled: { typeSpec: "baja:Boolean", encoded: "true", writable: true },
@@ -134,63 +143,16 @@ export async function startDemoStation(options: { live?: boolean; port?: number 
       },
       ...extra
     });
-    return add(ord, "points", "bacnet:BacnetPointDeviceExt", "container", { display: "Points" });
+    return add(ord, "points", String(nodes.get(ord)!.typeSpec).replace(/Device$/, "PointDeviceExt"), "container", { display: "Points" });
   };
 
-  for (const [i, ahu] of ["AHU_01", "AHU_02"].entries()) {
-    const p = device(ahu, 1001 + i, `192.168.10.${11 + i}`, { tags: ["hs:ahu", "hs:equip"] });
-    num(p, "SupplyAirTemp", "°F", wave(55, 1.4, 22 + i * 5, seed++));
-    num(p, "ReturnAirTemp", "°F", wave(74, 0.9, 45, seed++));
-    num(p, "MixedAirTemp", "°F", wave(63, 2.6, 35, seed++));
-    num(p, "OutdoorAirTemp", "°F", outdoor);
-    numW(p, "SupplyAirSetpoint", "°F", 55);
-    numW(p, "SupplyFanSpeed", "%", 70, { sim: wave(72 - i * 6, 7, 28, seed++) });
-    bool(p, "SupplyFanStatus", ["On", "Off"], true);
-    num(p, "DuctStaticPressure", "inH₂O", wave(1.5, 0.14, 12, seed++), { precision: 2 });
-    numW(p, "CoolingValve", "%", 35, { sim: wave(38 + i * 9, 18, 40, seed++) });
-    num(p, "FilterDP", "inH₂O", wave(0.82 + i * 0.5, 0.04, 90, seed++), { precision: 2 });
-    bool(p, "OccupiedCmd", ["Occupied", "Unoccupied"], true, { writable: true });
-  }
-  for (let i = 1; i <= 8; i += 1) {
-    const name = `VAV_10${i}`;
-    const hot = i === 5;
-    const p = device(name, 2000 + i, `MSTP 2:${10 + i}`, { down: i === 7, tags: ["hs:vav", "hs:equip"] });
-    num(p, "ZoneTemp", "°F", wave(hot ? 78.6 : 72 + (i % 3) * 0.6, hot ? 0.5 : 1.1, 30 + i * 3, seed++), { alarm: hot });
-    numW(p, "ZoneSetpoint", "°F", 72);
-    num(p, "Airflow", "cfm", wave(420 + i * 25, 130, 18 + i, seed++), { precision: 0 });
-    numW(p, "DamperPosition", "%", 45, { sim: wave(48, 20, 18 + i, seed++), precision: 0 });
-    numW(p, "ReheatValve", "%", 0, { sim: (t) => Math.max(0, wave(4, 14, 50, 40 + i)(t)), precision: 0 });
-    enumW(p, "OccupancyMode", ["occupied", "unoccupied", "standby"], i === 6 ? "standby" : "occupied");
-  }
-  {
-    const p = device("CHW_Plant", 3001, "192.168.10.30", { tags: ["hs:chilledWaterPlant", "hs:equip"] });
-    num(p, "ChwSupplyTemp", "°F", wave(44, 0.5, 26, seed++));
-    num(p, "ChwReturnTemp", "°F", wave(54.5, 1.1, 38, seed++));
-    num(p, "ChwFlow", "gpm", wave(410, 55, 33, seed++), { precision: 0 });
-    numW(p, "ChwSupplySetpoint", "°F", 44);
-    numW(p, "ChwPump1Speed", "%", 65, { sim: wave(64, 9, 33, seed++), precision: 0 });
-    bool(p, "Chiller1Status", ["Running", "Off"], true);
-    bool(p, "Chiller2Status", ["Running", "Off"], false, { fault: true });
-    bool(p, "PlantEnable", ["Enabled", "Disabled"], true, { writable: true });
-  }
-  const point = (path: string) => `${network}/${path.replace("/", "/points/")}`;
-  nodes.get(point("AHU_02/SupplyFanSpeed"))!.override = { value: 85 };
-
+  const point = (path: string, net = network) => `${net}/${path.replace("/", "/points/")}`;
   const schedules = add("slot:/", "Schedules", "baja:Folder", "container");
   const weekdays = (entries: any[], weekend: any[] = []) =>
     Object.fromEntries(DAYS.map((day) => [day, day === "saturday" || day === "sunday" ? weekend : entries]));
-  add(schedules, "OfficeHours", "schedule:BooleanSchedule", "schedule", {
-    defaultOutput: { value: false, text: "Unoccupied" },
-    week: weekdays([{ start: "06:30", finish: "18:00", value: true, text: "Occupied" }], [{ start: "08:00", finish: "13:00", value: true, text: "Occupied" }])
-  });
-  add(schedules, "ZoneSetback", "schedule:NumericSchedule", "schedule", {
-    defaultOutput: { value: 78, text: "78.0 °F" },
-    week: weekdays([{ start: "06:00", finish: "08:00", value: 74, text: "74.0 °F" }, { start: "08:00", finish: "18:00", value: 72, text: "72.0 °F" }, { start: "18:00", finish: "21:00", value: 75, text: "75.0 °F" }])
-  });
-  add(schedules, "LobbyLighting", "schedule:EnumSchedule", "schedule", {
-    defaultOutput: { value: "off", text: "Off" },
-    week: weekdays([{ start: "05:30", finish: "07:00", value: "dim", text: "Dim" }, { start: "07:00", finish: "19:00", value: "on", text: "On" }, { start: "19:00", finish: "23:00", value: "dim", text: "Dim" }], [{ start: "08:00", finish: "20:00", value: "dim", text: "Dim" }])
-  });
+  // What the site builds with. The rest is filled in below as each piece is defined.
+  const c = { add, num, numW, bool, enumW, device, network: addNetwork, point, net: network, nodes, schedules, weekdays, wave, outdoor, agentUser: AGENT_USER, past: (minutesAgo: number) => Date.now() - minutesAgo * MIN } as unknown as SiteContext;
+  site.tree(c);
 
   // ---- Values -------------------------------------------------------------------------------------
   const deviceOf = (ord: string): Node | undefined => {
@@ -236,6 +198,9 @@ export async function startDemoStation(options: { live?: boolean; port?: number 
   const alarms = new Map<string, any>();
   let alarmSeq = 0;
   const raise = (source: string, message: string, o: { cls?: string; priority?: number; state?: string; ago?: number; acked?: boolean } = {}) => {
+    // An alarm that is already open is not raised a second time.
+    const existing = [...alarms.values()].find((a) => a.isOpen && a.sources[0] === source && a.message === message);
+    if (existing) return existing;
     const uuid = `a${String(++alarmSeq).padStart(3, "0")}-${crypto.randomBytes(3).toString("hex")}`;
     const alarm = {
       uuid, timestamp: Date.now() - (o.ago ?? 0), sourceState: o.state ?? "offnormal", ackState: o.acked ? "acked" : "unacked", ackRequired: true, isOpen: true,
@@ -245,13 +210,8 @@ export async function startDemoStation(options: { live?: boolean; port?: number 
     alarms.set(uuid, alarm);
     return alarm;
   };
-  raise(point("VAV_105/ZoneTemp"), "Zone temperature high: 78.6 °F (limit 76.0 °F)", { cls: "critical", priority: 40, ago: 14 * MIN });
-  raise(`${network}/VAV_107`, "Device down: no response to ping", { cls: "critical", priority: 30, state: "fault", ago: 23 * MIN });
-  raise(point("CHW_Plant/Chiller2Status"), "Chiller 2 failed to start", { cls: "critical", priority: 20, state: "fault", ago: 2 * HOUR, acked: true });
-  raise(point("AHU_02/FilterDP"), "Filter differential pressure high: change filters", { cls: "maintenance", priority: 180, ago: 5 * HOUR });
-  raise(point("AHU_01/DuctStaticPressure"), "Duct static pressure returned to normal", { priority: 120, state: "normal", ago: 49 * MIN });
-  raise(point("VAV_103/Airflow"), "Airflow below minimum for 10 minutes", { priority: 110, ago: 3 * HOUR, acked: true });
-  raise(point("AHU_02/SupplyFanSpeed"), "Point overridden for more than 8 hours", { cls: "maintenance", priority: 200, state: "alert", ago: 8 * HOUR });
+  Object.assign(c, { raise, alarms });
+  site.alarms(c);
 
   // ---- AI agents: proposals, the agent log and the station's audit history -----------------------
   const proposals = new Map<string, any>();
@@ -290,42 +250,14 @@ export async function startDemoStation(options: { live?: boolean; port?: number 
   const pendingCount = () => [...proposals.values()].filter((p) => p.status === "pending").length;
 
   // A day of history so the activity page has something to show before the first live event.
-  {
-    const now = Date.now();
-    const past = (minutesAgo: number) => now - minutesAgo * MIN;
-    let p = propose(point("VAV_102/ZoneSetpoint"), "override", 71, "Room 102 has read 74.9 °F for 40 minutes against a 72 °F setpoint; lowering 1 °F while the afternoon load passes.", past(1310), 60);
-    decide(p, "approved", "admin", past(1306));
-    auditAdd(past(1306), "admin", "Invoked", "/Drivers/BacnetNetwork/VAV_102/points/ZoneSetpoint", "override", "", "71.0 °F, 60 min");
-    agentRecord(past(1190), AGENT_USER, "slot:/Drivers/BacnetNetwork/AHU_01", "write_tags", { outcome: "completed", ...who, change: "add hs:ahu, hs:equip, hs:siteRef", reason: "Tagging AHU-01 so the Air Systems hierarchy picks it up, as asked." });
-    auditAdd(past(1190), AGENT_USER, "Added", "/Drivers/BacnetNetwork/AHU_01", "hs$3aahu", "", "M");
-    p = propose(point("AHU_01/SupplyAirSetpoint"), "override", 58, "Outdoor air is 52 °F and all zones are satisfied; raising supply air 3 °F saves cooling energy.", past(960), 120);
-    decide(p, "rejected", "admin", past(951), "Leave SAT alone until the economizer is fixed.");
-    agentRecord(past(700), AGENT_USER, point("VAV_104/ZoneSetpoint"), "override", { outcome: "refused", code: "agent_value_out_of_bounds", ...who, change: "override 82.0 °F", reason: "Occupant asked for a much warmer room." });
-    agentRecord(past(420), AGENT_USER, "slot:/Drivers/BacnetNetwork/VAV_108", "apply_model_changes", { outcome: "completed", ...who, change: "rename point ZnTmp → ZoneTemp", reason: "Point name did not match the other VAV boxes; renamed to keep queries and graphics consistent." });
-    auditAdd(past(420), AGENT_USER, "Renamed", "/Drivers/BacnetNetwork/VAV_108/points", "ZnTmp", "ZnTmp", "ZoneTemp");
-    p = propose(point("CHW_Plant/ChwSupplySetpoint"), "override", 45, "Plant load is under 40%; a 1 °F reset on chilled water supply reduces chiller lift.", past(250), 180);
-    decide(p, "approved", "admin", past(247));
-    auditAdd(past(247), "admin", "Invoked", "/Drivers/BacnetNetwork/CHW_Plant/points/ChwSupplySetpoint", "override", "", "45.0 °F, 180 min");
-    agentRecord(past(95), AGENT_USER, "file:^notes/commissioning.md", "write_file", { outcome: "completed", ...who, change: "write 1.4 KB", reason: "Saved today's commissioning notes for VAV 105 and 107." });
-    auditAdd(past(95), AGENT_USER, "file_write", "file:^notes/commissioning.md", "", "", "1432 bytes");
-    p = propose(point("VAV_106/OccupancyMode"), "set", "occupied", "Room 106 is booked 3 to 5 pm today but the box is in standby.", past(61));
-    decide(p, "expired", "", past(46));
-    agentRecord(past(18), AGENT_USER, point("AHU_02/SupplyFanSpeed"), "override", { outcome: "refused", code: "agent_rate_limited", ...who, change: "override 60.0 %", reason: "Trimming fan speed after hours." });
-    propose(point("VAV_105/ZoneSetpoint"), "override", 70, "Room 105 is in high-temperature alarm at 78.6 °F; lowering the setpoint 2 °F for 30 minutes to drive more air.", past(3), 30);
-    auditAdd(past(380), "admin", "Changed", "/Services/AlarmService/critical", "priority", "40", "30");
-    auditAdd(past(140), "admin", "Login", "/Services/WebService", "", "", "192.168.0.125");
-  }
+  Object.assign(c, { propose, decide, agentRecord, auditAdd, who, pendingCount });
+  site.history(c);
 
   // ---- Files and jobs -----------------------------------------------------------------------------
   const files = new Map<string, { text: string; modified: number }>();
   const file = (path: string, text: string, hoursAgo = 30) => files.set(path, { text, modified: Date.now() - hoursAgo * HOUR });
-  file("^px/Home.px", '<?xml version="1.0" encoding="UTF-8"?>\n<px version="1.0" media="workbench:WbPxMedia">\n<import>\n  <module name="bajaui"/>\n  <module name="kitPx"/>\n</import>\n<content>\n<CanvasPane name="content" viewSize="1280.0,720.0">\n  <Label layout="40,30,400,40" text="Northgate Office"/>\n  <BoundLabel layout="40,90,220,30">\n    <BoundLabelBinding ord="station:|slot:/Drivers/BacnetNetwork/AHU_01/points/SupplyAirTemp"/>\n  </BoundLabel>\n</CanvasPane>\n</content>\n</px>\n', 200);
-  file("^px/AHU_01.px", '<?xml version="1.0" encoding="UTF-8"?>\n<px version="1.0" media="workbench:WbPxMedia">\n<content>\n<CanvasPane name="content" viewSize="1280.0,720.0"/>\n</content>\n</px>\n', 96);
-  file("^px/VAV_Template.px", '<?xml version="1.0" encoding="UTF-8"?>\n<px version="1.0" media="workbench:WbPxMedia">\n<content>\n<CanvasPane name="content" viewSize="800.0,600.0"/>\n</content>\n</px>\n', 400);
-  file("^nav/NavFile.nav", "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<nav version='1.0'>\n<node name='Home' ord='file:^px/Home.px' icon='module://icons/x16/home.png'>\n  <node name='AHU 01' ord='file:^px/AHU_01.px'/>\n</node>\n</nav>\n", 96);
-  file("^notes/commissioning.md", "# Commissioning notes\n\n## VAV 105\n- Zone temp 78.6 °F against a 72 °F setpoint, damper at 100%.\n- Airflow reads 310 cfm against a 620 cfm maximum: check the flow ring and the box inlet.\n\n## VAV 107\n- Device down since 1:41 pm. MS/TP trunk 2, address 17.\n- Controller power LED is off; ticket opened with the electrician.\n", 1.6);
-  file("^config/points.csv", "equipment,point,type,units\nAHU_01,SupplyAirTemp,AI,degF\nAHU_01,SupplyFanSpeed,AO,%\nVAV_101,ZoneTemp,AI,degF\nVAV_101,ZoneSetpoint,AV,degF\n", 700);
-  file("^images/logo.svg", '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#7aa2f7"/></svg>\n', 900);
+  Object.assign(c, { file });
+  site.files(c);
 
   const jobs = new Map<string, any>();
   let jobSeq = 0;
@@ -473,14 +405,14 @@ export async function startDemoStation(options: { live?: boolean; port?: number 
     }
     const isPoint = n.kind === "point";
     const snap = isPoint ? snapshot(n.ord) : undefined;
-    const tags = [{ id: "n:name", value: n.name }, { id: "n:type", value: n.typeSpec }, { id: "n:station", value: DEMO_STATION }, ...(isPoint ? [{ id: "n:point", value: "Marker" }] : []), ...(n.hasHistory ? [{ id: "n:history", value: `/${DEMO_STATION}/${n.ord.split("/").slice(-3).filter((s) => s !== "points").join("_")}` }] : []), ...(n.tags ?? []).map((id) => ({ id, value: "Marker" }))];
+    const tags = [{ id: "n:name", value: n.name }, { id: "n:type", value: n.typeSpec }, { id: "n:station", value: stationName }, ...(isPoint ? [{ id: "n:point", value: "Marker" }] : []), ...(n.hasHistory ? [{ id: "n:history", value: `/${stationName}/${n.ord.split("/").slice(-3).filter((s) => s !== "points").join("_")}` }] : []), ...(n.tags ?? []).map((id) => ({ id, value: "Marker" }))];
     return {
       ...wire(n), description: n.typeSpec,
       metadata: {
         classification: { isComponent: true, isControlPoint: isPoint, isWritablePoint: Boolean(n.writable), isDriverDevice: /Device$/.test(n.typeSpec), isDriverNetwork: /Network$/.test(n.typeSpec), isSchedule: n.kind === "schedule", hasHistory: Boolean(n.hasHistory), hasAlarm: Boolean(n.alarm) },
         parent: n.ord === "slot:/" ? null : brief(nodes.get(parentOf(n.ord))!),
         ancestors: n.ord === "slot:/" ? [] : ancestors,
-        ...(dev ? { driver: { isDriverBacked: true, network: { ...brief(nodes.get(network)!), status: "{ok}" }, device: { ...brief(dev), status: dev.down ? "{down}" : "{ok}" }, ...(isPoint ? { proxyExtType: `bacnet:Bacnet${n.vt === "numeric" ? "Numeric" : n.vt === "boolean" ? "Boolean" : "Enum"}ProxyExt`, readWriteMode: n.writable ? "RW" : "RO", tuningPolicyName: "defaultPolicy" } : {}) } } : {}),
+        ...(dev ? { driver: { isDriverBacked: true, network: { ...brief(nodes.get(parentOf(dev.ord))!), status: "{ok}" }, device: { ...brief(dev), status: dev.down ? "{down}" : "{ok}" }, ...(isPoint ? { proxyExtType: `bacnet:Bacnet${n.vt === "numeric" ? "Numeric" : n.vt === "boolean" ? "Boolean" : "Enum"}ProxyExt`, readWriteMode: n.writable ? "RW" : "RO", tuningPolicyName: "defaultPolicy" } : {}) } } : {}),
         ...(isPoint ? {
           point: { recognizedAsPoint: true, writable: Boolean(n.writable), facets: facetsOf(n), hasHistoryExt: Boolean(n.hasHistory), hasAlarmExt: Boolean(n.alarm), activeLevel: snap.activeLevel },
           write: n.writable ? { writable: true, valueKind: n.vt, actions: ["set", "override", "auto", "emergency_override", "emergency_auto"], supportsDuration: true, activeLevel: snap.activeLevel } : { writable: false },
@@ -561,7 +493,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number 
       case "slotPath": return n.ord;
       case "type": return n.typeSpec;
       case "parent.slotPath": return n.ord;
-      case "historyConfig.id": return n.hasHistory ? `/${DEMO_STATION}/${n.ord.split("/").slice(-3).filter((s) => s !== "points").join("_")}` : null;
+      case "historyConfig.id": return n.hasHistory ? `/${stationName}/${n.ord.split("/").slice(-3).filter((s) => s !== "points").join("_")}` : null;
       case "historyConfig.capacity": return n.hasHistory ? "2016 records" : null;
       case "alarmClass": return n.alarm ? "critical" : n.fault ? "critical" : null;
       case "activeLevel": return snap?.activeLevel ?? null;
@@ -612,7 +544,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number 
     for (const ws of sockets) send(ws, frame);
   };
   const isAgent = (ws: any) => Boolean(ws.actor && ws.actor.kind !== "person");
-  const rules = (ws: any) => ({ isAgent: isAgent(ws), actor: ws.actor ?? null, agentUsersConfigured: true, approvalRequired: true, reasonRequired: true, maxChangesPerMinute: 10, allowEmergency: false, bounds: ["*/ZoneSetpoint 65..78", "*/SupplyAirSetpoint 50..62"], pointLimitsFromFacets: true, proposalMinutes: 15, pendingProposals: pendingCount() });
+  const rules = (ws: any) => ({ isAgent: isAgent(ws), actor: ws.actor ?? null, agentUsersConfigured: true, approvalRequired: true, reasonRequired: true, maxChangesPerMinute: 10, allowEmergency: false, bounds: site.bounds, pointLimitsFromFacets: true, proposalMinutes: 15, pendingProposals: pendingCount() });
   const pushProposal = (proposal: any) => broadcast({ op: "proposal_cov", timestamp: Date.now(), proposal, pendingProposals: pendingCount() });
   const pushAlarm = (alarm: any) => {
     for (const ws of sockets) if (ws.alarmEvents) send(ws, { op: "alarm_cov", timestamp: Date.now(), inScope: alarm.isOpen, event: alarm });
@@ -637,7 +569,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number 
   };
 
   const CAPS = (ws: any) => ({
-    apiVersion: "1.10", module: "baskStream", transport: "websocket-msgpack", serverTime: Date.now(), authenticatedUser: DEMO_USER, station: DEMO_STATION, demo: true,
+    apiVersion: "1.10", module: "baskStream", transport: "websocket-msgpack", serverTime: Date.now(), authenticatedUser: DEMO_USER, station: stationName, demo: true,
     writesEnabled: true, agents: rules(ws),
     modelEditing: { enabled: true, actions: ["create", "update", "rename", "delete", "invoke"], maxChanges: 100, previewRequired: true, atomic: false },
     limits: { maxConnections: 10, maxConnectionsPerUser: 0, maxMessageBytes: 1048576, activeConnections: sockets.size, maxSubscriptionsPerClient: 500, maxPointSnapshotPoints: 1000, totalSubscriptions: [...sockets].reduce((n, s) => n + [...s.groups.values()].flat().length, 0), heartbeatIntervalSec: 30, subscriptionLeaseSec: 300, covBatchWindowMillis: 100, defaultBrowseDepth: 1, maxBrowseDepth: 4, defaultSearchDepth: 32, maxSearchDepth: 64 },
@@ -733,19 +665,19 @@ export async function startDemoStation(options: { live?: boolean; port?: number 
         const avg = samples.reduce((a, b) => a + b, 0) / samples.length;
         buckets.push({ start: t, count: Math.max(1, Math.round(r.interval / 300000)), min: Math.min(...samples), max: Math.max(...samples), sum: avg * Math.max(1, Math.round(r.interval / 300000)), avg, first: samples[0], last: samples[3] });
       }
-      return { op: "history_rollup_result", rollup: { interval: r.interval, histories: [{ historyId: `/${DEMO_STATION}/${n.ord.split("/").slice(-3).filter((s) => s !== "points").join("_")}`, buckets, bucketCount: buckets.length, coverage: 1, longestGapMillis: 0, truncated: false }] } };
+      return { op: "history_rollup_result", rollup: { interval: r.interval, histories: [{ historyId: `/${stationName}/${n.ord.split("/").slice(-3).filter((s) => s !== "points").join("_")}`, buckets, bucketCount: buckets.length, coverage: 1, longestGapMillis: 0, truncated: false }] } };
     },
     read_history: (_ws, r) => {
       const start = Number(r.start ?? Date.now() - 24 * HOUR), end = Number(r.end ?? Date.now()), limit = Number(r.limit ?? 1000);
       if (/AuditHistory$/.test(r.ord)) {
         const records = audit.filter((a) => a.timestamp >= start && a.timestamp <= end).sort((a, b) => a.timestamp - b.timestamp);
-        return { op: "history_result", history: { requestOrd: r.ord, start, end, limit, histories: [{ historyId: `/${DEMO_STATION}/AuditHistory`, recordType: "history:AuditRecord", totalCount: audit.length, records: records.slice(0, limit), truncated: records.length > limit, count: Math.min(records.length, limit) }] } };
+        return { op: "history_result", history: { requestOrd: r.ord, start, end, limit, histories: [{ historyId: `/${stationName}/AuditHistory`, recordType: "history:AuditRecord", totalCount: audit.length, records: records.slice(0, limit), truncated: records.length > limit, count: Math.min(records.length, limit) }] } };
       }
       const n = nodes.get(r.ord);
       if (!n?.hasHistory) return { op: "history_result", history: { requestOrd: r.ord, start, end, limit, histories: [] } };
       const records: any[] = [];
       for (let t = Math.ceil(start / 300000) * 300000; t <= Math.min(end, Date.now()) && records.length < limit; t += 300000) records.push({ timestamp: t, value: Number(n.sim ? n.sim(t) : n.fallback), status: "{ok}" });
-      return { op: "history_result", history: { requestOrd: r.ord, start, end, limit, histories: [{ historyId: `/${DEMO_STATION}/${n.name}`, records, count: records.length, truncated: false }] } };
+      return { op: "history_result", history: { requestOrd: r.ord, start, end, limit, histories: [{ historyId: `/${stationName}/${n.name}`, records, count: records.length, truncated: false }] } };
     },
     read_schedule: (_ws, r) => {
       const s = need(r.ord);
@@ -839,7 +771,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number 
     },
     discover: (_ws, r) => {
       const n = need(r.ord);
-      const kind = /Network$/.test(n.typeSpec) ? "devices" : /Device$|PointDeviceExt$/.test(n.typeSpec) ? "points" : undefined;
+      const kind = !/^bacnet:/.test(n.typeSpec) ? undefined : /Network$/.test(n.typeSpec) ? "devices" : /Device$|PointDeviceExt$/.test(n.typeSpec) ? "points" : undefined;
       if (!kind) throw refuse("discovery_unsupported", `No built-in discovery for ${n.typeSpec}. Try a BACnet network or device.`);
       auditAdd(Date.now(), DEMO_USER, "Invoked", r.ord.replace(/^slot:/, ""), kind === "devices" ? "submitDeviceManagerJob" : "submitPointDiscoveryJob");
       return { op: "discovery_started", discovery: { job: startJob(kind, /Device$/.test(n.typeSpec) ? `${r.ord}/points` : r.ord), kind, driver: "bacnet", target: r.ord } };
@@ -1002,29 +934,8 @@ export async function startDemoStation(options: { live?: boolean; port?: number 
       }
     }, 2000));
 
-    const zone = (i: number) => point(`VAV_10${i}/ZoneSetpoint`);
-    const agentMoves: (() => void)[] = [
-      () => {
-        if (pendingCount() >= 2) return;
-        const i = 1 + Math.floor(Math.random() * 4);
-        const temp = snapshot(point(`VAV_10${i}/ZoneTemp`)).displayValue;
-        pushProposal(propose(zone(i), "override", 71, `Room 10${i} reads ${temp} and has been above setpoint for 20 minutes; lowering 1 °F for 30 minutes.`, Date.now(), 30));
-      },
-      () => {
-        const ord = `${network}/VAV_10${1 + Math.floor(Math.random() * 6)}`;
-        agentRecord(Date.now(), AGENT_USER, ord, "write_tags", { outcome: "completed", ...who, change: "add hs:vav, hs:airRef", reason: "Linking the box to its air handler so the Air Systems hierarchy groups it." });
-        auditAdd(Date.now(), AGENT_USER, "Added", ord.replace(/^slot:/, ""), "hs$3aairRef", "", "h:2c45e");
-      },
-      () => agentRecord(Date.now(), AGENT_USER, zone(3), "override", { outcome: "refused", code: "agent_value_out_of_bounds", ...who, change: "override 80.0 °F", reason: "Occupant asked for 80 °F; outside the 65 to 78 °F limit set for agents." }),
-      () => {
-        if (pendingCount() >= 2) return;
-        pushProposal(propose(point("AHU_01/SupplyAirSetpoint"), "override", 56, "Outdoor air has cooled and every zone damper is under 60% open; a 1 °F supply air reset trims cooling.", Date.now(), 60));
-      },
-      () => {
-        agentRecord(Date.now(), AGENT_USER, "file:^notes/commissioning.md", "write_file", { outcome: "completed", ...who, change: "write 1.6 KB", reason: "Added the latest VAV 105 airflow readings to the commissioning notes." });
-        auditAdd(Date.now(), AGENT_USER, "file_write", "file:^notes/commissioning.md", "", "", "1611 bytes");
-      }
-    ];
+    Object.assign(c, { snapshot, pushProposal, pushAlarm });
+    const agentMoves = site.agentMoves(c);
     let move = 0;
     timers.push(setInterval(() => agentMoves[move++ % agentMoves.length](), 23000));
     timers.push(setInterval(() => {
@@ -1036,17 +947,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number 
       }
     }, 5000));
 
-    const alarmMoves: (() => void)[] = [
-      () => pushAlarm(raise(point("VAV_102/ZoneTemp"), "Zone temperature high: 76.4 °F (limit 76.0 °F)", { priority: 100 })),
-      () => {
-        const a = [...alarms.values()].find((x) => x.message.startsWith("Zone temperature high: 76.4"));
-        if (!a) return;
-        Object.assign(a, { sourceState: "normal", message: "Zone temperature returned to normal", data: { ...a.data, msgText: "Zone temperature returned to normal" } });
-        pushAlarm(a);
-      },
-      () => pushAlarm(raise(point("CHW_Plant/ChwFlow"), "Chilled water flow low: 352 gpm", { cls: "maintenance", priority: 150, state: "alert" })),
-      () => pushAlarm(raise(point("AHU_01/MixedAirTemp"), "Mixed air temperature low: freeze protection warning", { cls: "critical", priority: 25 }))
-    ];
+    const alarmMoves = site.alarmMoves(c);
     let alarmMove = 0;
     timers.push(setInterval(() => {
       if ([...alarms.values()].filter((a) => a.isOpen).length < 14) alarmMoves[alarmMove++ % alarmMoves.length]();
@@ -1063,6 +964,8 @@ export async function startDemoStation(options: { live?: boolean; port?: number 
   const { port } = server.address() as { port: number };
   return {
     url: `http://127.0.0.1:${port}`,
+    site: site.key,
+    station: stationName,
     user: DEMO_USER,
     password: DEMO_PASSWORD,
     state: { nodes, alarms, proposals, agentLog, audit, files, jobs, sockets, counters, propose, pushProposal, raise, pushAlarm, agentRecord, auditAdd, snapshot, point },

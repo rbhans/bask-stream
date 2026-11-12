@@ -67,15 +67,15 @@ function pump(): void {
   setImmediate(wait);
 }
 
-/** Reads keyboard and mouse input from Ink. Use once, at the top of the app. */
-export function useKeyPump(): void {
+/** Reads keyboard and mouse input from Ink. Exactly one component on screen should have it enabled. */
+export function useKeyPump(enabled = true): void {
   useInput((input, key) => {
     queue.push({ input, key });
     if (!pumping) {
       pumping = true;
       pump();
     }
-  });
+  }, { isActive: enabled });
   useEffect(() => () => void (queue.length = 0), []);
 }
 

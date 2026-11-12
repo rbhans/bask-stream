@@ -5,7 +5,9 @@ import React from "react";
 import { render } from "ink";
 import { BaskStreamClient } from "@basidekick/baskstream";
 import { App } from "../dist/tui/App.js";
-import { startDemoStation } from "../dist/demo/station.js";
+import { Fleet } from "../dist/tui/Fleet.js";
+import { Link } from "../dist/link.js";
+import { DEMO_SITES, startDemoStation } from "../dist/demo/station.js";
 
 const ANSI = /\x1b\[[0-9;]*m/g;
 
@@ -52,11 +54,39 @@ export async function startStation(options = {}) {
   return { station, client, async close() { client.close(); await station.close(); } };
 }
 
+/** One demo station per site, and the entries the all-stations view takes for them. */
+export async function startFleet(sites = ["northgate", "riverside", "harbor", "summit"], options = {}) {
+  const stations = await Promise.all(sites.map((site) => startDemoStation({ live: false, site, ...options })));
+  const clients = [];
+  const entries = stations.map((station) => {
+    const link = new Link(station.url, false);
+    link.update((s) => void (s.watch = DEMO_SITES[station.site].watch.map((path) => `slot:/Drivers/BacnetNetwork/${path.replace("/", "/points/")}`)));
+    return {
+      profile: DEMO_SITES[station.site].profile, label: station.station, host: new URL(station.url).host, link,
+      connect: async () => {
+        const client = await BaskStreamClient.connect({ station: station.url, username: station.user, password: station.password });
+        clients.push(client);
+        return client;
+      }
+    };
+  });
+  return { stations, entries, async close() { for (const client of clients) client.close(); await Promise.all(stations.map((s) => s.close())); } };
+}
+
 /** Mounts the dashboard on a `columns` x `rows` screen. */
-export function mount(client, props = {}, { columns = 120, rows = 36 } = {}) {
+export function mount(client, props = {}, size = {}) {
+  return show(React.createElement(App, { client, profileName: "demo", allowWrites: false, ...props }), size);
+}
+
+/** Mounts the all-stations view. */
+export function mountFleet(entries, props = {}, size = {}) {
+  return show(React.createElement(Fleet, { entries, allowWrites: false, ...props }), size);
+}
+
+function show(element, { columns = 120, rows = 36 } = {}) {
   const stdout = new Screen(columns, rows);
   const stdin = new Keyboard();
-  const instance = render(React.createElement(App, { client, profileName: "demo", allowWrites: false, ...props }), { stdout, stderr: new Screen(columns, rows), stdin, debug: true, exitOnCtrlC: false, patchConsole: false });
+  const instance = render(element, { stdout, stderr: new Screen(columns, rows), stdin, debug: true, exitOnCtrlC: false, patchConsole: false });
   const frame = () => stdout.frame.replace(ANSI, "");
   return {
     frame,

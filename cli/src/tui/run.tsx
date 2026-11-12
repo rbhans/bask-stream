@@ -4,6 +4,7 @@ import { render } from "ink";
 import { Link } from "../link.js";
 import type { Connection } from "../session.js";
 import { App, type ViewName } from "./App.js";
+import { Fleet, type FleetEntry } from "./Fleet.js";
 import { mouseMode } from "./input.js";
 import { detectTheme, setTheme } from "./theme.js";
 
@@ -66,8 +67,16 @@ class Painter {
   }
 }
 
-/** Runs the full-screen dashboard on the terminal's alternate screen until the user quits. */
-export async function runDashboard(conn: Connection, options: DashboardOptions): Promise<void> {
+interface ScreenIo {
+  mouse: boolean;
+  /** Gives the screen to another program (an editor), then draws again. */
+  suspend: (work: () => void) => void;
+  /** Sends a control sequence straight to the terminal. */
+  terminal: (data: string) => void;
+}
+
+/** Shows a full-screen Ink app on the terminal's alternate screen until it exits. */
+async function onScreen(options: { mouse?: boolean; theme?: "dark" | "light" }, element: (io: ScreenIo) => React.ReactElement): Promise<void> {
   const out = process.stdout;
   const mouse = options.mouse !== false;
   setTheme(options.theme ?? detectTheme());
@@ -85,9 +94,6 @@ export async function runDashboard(conn: Connection, options: DashboardOptions):
     painter.repaint();
   };
   out.on("resize", onResize);
-
-  const link = new Link(conn.client.http.url.origin, options.shared !== false);
-  /** Gives the screen to another program (an editor), then draws the dashboard again. */
   const suspend = (work: () => void) => {
     const stdin = process.stdin;
     const wasRaw = stdin.isTTY && stdin.isRaw;
@@ -102,15 +108,28 @@ export async function runDashboard(conn: Connection, options: DashboardOptions):
     }
   };
   try {
-    const app = render(
-      <App client={conn.client} profileName={conn.profileName} allowWrites={options.allowWrites} view={options.view} points={options.points} pane={options.pane} mouse={mouse} link={link} suspend={suspend} terminal={(data) => void out.write(data)} />,
-      { stdout: screen as unknown as NodeJS.WriteStream, debug: true, exitOnCtrlC: false, patchConsole: false }
-    );
+    const app = render(element({ mouse, suspend, terminal: (data) => void out.write(data) }), { stdout: screen as unknown as NodeJS.WriteStream, debug: true, exitOnCtrlC: false, patchConsole: false });
     await app.waitUntilExit();
   } finally {
     out.off("resize", onResize);
     painter.stop();
     leave();
+  }
+}
+
+/** Runs the dashboard for one station until the user quits. */
+export async function runDashboard(conn: Connection, options: DashboardOptions): Promise<void> {
+  const link = new Link(conn.client.http.url.origin, options.shared !== false);
+  try {
+    await onScreen(options, (io) => (
+      <App client={conn.client} profileName={conn.profileName} allowWrites={options.allowWrites} view={options.view} points={options.points} pane={options.pane} mouse={io.mouse} link={link} suspend={io.suspend} terminal={io.terminal} />
+    ));
+  } finally {
     conn.client.close();
   }
+}
+
+/** Runs the all-stations view until the user quits. The caller closes the connections it handed out. */
+export async function runFleet(entries: FleetEntry[], options: { allowWrites: boolean; mouse?: boolean; theme?: "dark" | "light" }): Promise<void> {
+  await onScreen(options, (io) => <Fleet entries={entries} allowWrites={options.allowWrites} mouse={io.mouse} suspend={io.suspend} terminal={io.terminal} />);
 }

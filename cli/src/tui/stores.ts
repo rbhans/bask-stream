@@ -116,6 +116,20 @@ export function useWatchList(client: BaskStreamClient, link: Link, initial: stri
   return { points, add, remove };
 }
 
+/** The station's own name, from its capabilities or from the `n:station` tag every component carries. */
+export function useStationName(client: BaskStreamClient): string | undefined {
+  const [name, setName] = useState<string | undefined>(typeof client.capabilities.station === "string" ? client.capabilities.station : undefined);
+  useEffect(() => {
+    if (name) return;
+    void client.describe("slot:/Services", "full").then((node) => {
+      const tags = (((node.metadata ?? {}) as Json).tags ?? []) as Json[];
+      const found = tags.find((t) => t.id === "n:station")?.value;
+      if (typeof found === "string" && found) setName(found);
+    }, () => {});
+  }, [client]);
+  return name;
+}
+
 export type AlarmMap = Map<string, Json>;
 
 /** Open alarms, kept live from alarm events and reloaded on resync or reconnect. */
