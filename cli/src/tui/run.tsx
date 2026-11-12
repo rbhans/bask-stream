@@ -7,7 +7,7 @@ import { App, type ViewName } from "./App.js";
 import { Fleet, type FleetEntry } from "./Fleet.js";
 import { Gallery } from "./symbols/Gallery.js";
 import { mouseMode } from "./input.js";
-import { detectTheme, setTheme } from "./theme.js";
+import { askTerminalTheme, setTheme, themeFromEnvironment } from "./theme.js";
 
 export interface DashboardOptions {
   allowWrites: boolean;
@@ -80,7 +80,8 @@ interface ScreenIo {
 async function onScreen(options: { mouse?: boolean; theme?: "dark" | "light" }, element: (io: ScreenIo) => React.ReactElement): Promise<void> {
   const out = process.stdout;
   const mouse = options.mouse !== false;
-  setTheme(options.theme ?? detectTheme());
+  // Colours: what was asked for, else what the environment says, else what the terminal answers.
+  setTheme(options.theme ?? themeFromEnvironment() ?? (await askTerminalTheme()) ?? "dark");
   const enter = () => out.write(`\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l${mouse ? mouseMode(true) : ""}`);
   const leave = () => out.write(`${mouseMode(false)}\x1b[?1049l\x1b[?25h`);
   enter();

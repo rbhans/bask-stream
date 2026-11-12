@@ -5,6 +5,8 @@ import { useInput, type Key } from "ink";
 
 /** One SGR mouse report: ESC [ < button ; column ; row (M = press, m = release). */
 const MOUSE = /^\x1b?\[<(\d+);(\d+);(\d+)([Mm])$/;
+/** A terminal's answer to a question (its colours, what it is). A slow one can arrive after the wait for it ended; it is not a key. */
+const REPLY = /^\x1b?(\]1[01];|\[\?[\d;]*[cn]$)/;
 
 export interface MouseEvent {
   /** Zero-based column and row on the screen. */
@@ -70,6 +72,7 @@ function pump(): void {
 /** Reads keyboard and mouse input from Ink. Exactly one component on screen should have it enabled. */
 export function useKeyPump(enabled = true): void {
   useInput((input, key) => {
+    if (REPLY.test(input)) return;
     queue.push({ input, key });
     if (!pumping) {
       pumping = true;

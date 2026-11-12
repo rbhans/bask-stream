@@ -49,7 +49,7 @@ Everywhere: `/` finds a point or component by name, `:` (or `ctrl+k`) opens ever
 
 The dashboard starts read-only. Press `W` (or start with `--allow-writes`) to allow changes; each one still asks before it is sent. Edits to components go through a model plan that is previewed first.
 
-Colours follow the terminal; force one with `--theme dark|light` or `BASK_THEME`.
+Colours follow the terminal: bask asks it whether it is light or dark as it starts, and uses dark when there is no answer. Force one with `--theme dark|light` or `BASK_THEME`.
 
 ## Several stations at once
 
