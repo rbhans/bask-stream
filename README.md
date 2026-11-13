@@ -131,6 +131,8 @@ All optional; see [docs/AI_AGENTS.md](docs/AI_AGENTS.md). In short:
 
 That agent's point writes then become proposals that a person approves in Workbench, with `bask approve P7`, or in the dashboard's Proposals view. Each change needs a reason, stays within simple limits (rate, no emergency level, value ranges), and leaves an `Agent` record next to Niagara's own audit record. With `bask`, an agent declares itself with `--agent "Claude Code" --reason "…"`.
 
+To let the agent do some kinds of work by itself while its point writes still wait for approval, turn on the matching **`agentDirect…`** setting: `agentDirectFiles` (station files under named paths, such as `^bask/*` for graphics), `agentDirectDiscovery`, `agentDirectModelEdits`, `agentDirectTags`, `agentDirectSchedules`, `agentDirectAlarms`. All are off by default, and a refused change names the setting that would allow it.
+
 ## Grafana integration
 
 The first product integration is a read-only Grafana backend data source at [integrations/grafana/basidekick-baskstream-datasource](integrations/grafana/basidekick-baskstream-datasource). It connects Grafana directly to a Niagara station running baskStream:

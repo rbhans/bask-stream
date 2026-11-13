@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import javax.baja.control.BIWritablePoint;
 import javax.baja.naming.BOrd;
 import javax.baja.naming.OrdTarget;
 import javax.baja.registry.TypeInfo;
@@ -59,6 +60,52 @@ final class BaskStreamModelResolver
   {
     if (agent) agentCall.set(Boolean.TRUE);
     else agentCall.remove();
+  }
+
+  /** Notes where a previewed plan came from: add_discovered marks its plans "discovery". */
+  void markPlan(Object planId, String kind)
+  {
+    if (planId instanceof String) plans.mark((String)planId, kind);
+  }
+
+  /** Where a plan came from, or null. */
+  String planKind(Object planId)
+  {
+    return planId instanceof String ? plans.kind((String)planId) : null;
+  }
+
+  private static final List<String> POINT_COMMANDS = Arrays.asList("set", "override", "auto", "emergencyOverride", "emergencyAuto",
+      "active", "inactive", "emergencyActive", "emergencyInactive");
+
+  private static boolean commandInput(String slot)
+  {
+    return "fallback".equals(slot) || slot.matches("in([1-9]|1[0-6])");
+  }
+
+  private static BaskStreamProtocolException useWrite(String what)
+  {
+    return error("agent_use_write", "Agents command points with the write operation, where approval and value limits apply. A model plan cannot "
+        + what + " on a writable point.");
+  }
+
+  /**
+   * An agent's plan may not set a writable point's priority inputs or fallback: that is a point
+   * command, and those go through write, where they become proposals and meet the value limits.
+   * Linking logic into an input is programming and stays allowed.
+   */
+  private void notAPointCommand(BComplex root, String path) throws Exception
+  {
+    if (agentCall.get() == null) return;
+    BComplex at = root;
+    for (String part : path.split("/", -1))
+    {
+      if (at instanceof BIWritablePoint && commandInput(part)) throw useWrite("set " + part);
+      Property p = at.getProperty(part);
+      if (p == null) return;
+      BValue value = at.get(p);
+      if (!(value instanceof BComplex)) return;
+      at = (BComplex)value;
+    }
   }
 
   private static final List<String> TYPE_FIELDS = Arrays.asList("op", "id", "typeSpec", "typeSpecs", "module", "baseType", "offset", "limit");
@@ -381,6 +428,7 @@ final class BaskStreamModelResolver
         String key = child(ord(c), path);
         touch(key);
         PropertyTarget pt = property(c, path);
+        notAPointCommand(c, path);
         BaskStreamModelPlans.Check identity = () -> {
           PropertyTarget current = property(c, path);
           if (current.owner != pt.owner || current.property != pt.property) throw error("stale_plan", "Property owner changed: " + path);
@@ -436,6 +484,7 @@ final class BaskStreamModelResolver
       String slotName = required(change, "slot"); name(slotName);
       Action action = c.getAction(slotName);
       if (action == null) throw error("invalid_action", "No such action.");
+      if (agentCall.get() != null && c instanceof BIWritablePoint && POINT_COMMANDS.contains(slotName)) throw useWrite("invoke " + slotName);
       if (withinProtected(c))
         throw error("protected_component", "Actions on protected services must be invoked in Workbench.");
       final boolean confirmRequired = Flags.isConfirmRequired(c, action);
@@ -940,6 +989,7 @@ final class BaskStreamModelResolver
     for (Map.Entry<String, Object> entry : properties.entrySet())
     {
       PropertyTarget pt = property(value, entry.getKey());
+      notAPointCommand(value, entry.getKey());
       if (Flags.isReadonly(pt.owner, pt.property)) throw error("readonly", "Cannot initialize a read-only property: " + entry.getKey());
       BValue decoded = decode(entry.getValue(), pt.property.getType(), cx, depth);
       pt.owner.set(pt.property, decoded, cx);

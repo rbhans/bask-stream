@@ -175,6 +175,17 @@ The first time, bask asks for that user's password once (it says so: "Password f
 
 As it starts, the workspace says who is who: "Claude Code is signed in as ai-claude; you are admin", and whether the station itself counts that user as an agent. It does when the user is listed in `agentUsers` on BASkStreamService; then the agent rules (approval, reasons, limits) follow that user however it connects, and its changes are under its own name in the audit history. In the agent's pane, `bask status` shows the user and the rules it works under. With no agent login the agent shares yours, and the workspace says so.
 
+**What the agent may do by itself.** With `agentApprovalRequired` on (the default), the station turns an agent's point writes into proposals and refuses every other change unless the matching `agentDirect…` setting on BASkStreamService is on (baskStream API 1.11):
+
+| To let the agent | Set |
+|---|---|
+| save and delete graphics | `agentDirectFiles` = `^bask/*` |
+| run BACnet discovery and add what it finds | `agentDirectDiscovery` = true |
+| build and change the station (logic, renames, deletes) | `agentDirectModelEdits` = true |
+| tag, schedule, acknowledge alarms | `agentDirectTags`, `agentDirectSchedules`, `agentDirectAlarms` |
+
+The workspace says what the agent may do as it starts, and warns when the layout needs something the station does not allow (graphics in the `graphics` layout, discovery in `build`). `bask status` in the agent's pane lists it under "may do by itself", and the AI Activity header shows it. A refused change names the setting that would allow it. Discovery over a whole building is many changes: `bask discover` waits its turn under `agentMaxChangesPerMinute` rather than failing, so raise that limit if it should go faster. The demo buildings allow files under `^bask/*` and `^notes/*`, discovery, model edits and tags, and leave schedules and alarms to people.
+
 A saved login lapses when nothing uses it for a while, and an agent cannot type a password, so the agent's pane keeps its login in use for as long as it runs. If the agent does report an expired session, log it in again with the `bask login` command it prints.
 
 **The agent** starts with a briefing on the station and how to use `bask` (`bask agent-brief` prints it): how to read, how to change things with a reason, how to bring BACnet equipment in, and how to draw graphics.

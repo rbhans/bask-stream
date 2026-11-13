@@ -18,6 +18,7 @@ import { DEMO_SITES, SITE_NAMES, type SiteName } from "./demo/sites.js";
 import { Link } from "./link.js";
 import { agentBrief, buildLayout, detectMux, launch, selfArgv, sessionExists, shq, writeShim, type LayoutName } from "./workspace.js";
 import { chooseAgentLogin, describeChoice, openAgentLogin, type AgentChoice, type AgentLogin } from "./agent-login.js";
+import { directWork, mayWriteFile, type AgentRules } from "./agent-rules.js";
 
 const VIEW_NAMES = ["home", "explorer", "watch", "alarms", "trends", "schedules", "query", "files", "jobs", "activity", "graphics"] as const;
 type ViewName = (typeof VIEW_NAMES)[number];
@@ -167,10 +168,14 @@ program
         ["connections", `${limits.activeConnections ?? "?"} / ${limits.maxConnections ?? "?"}`],
         ["subscriptions", `${limits.totalSubscriptions ?? "?"} (max ${limits.maxSubscriptionsPerClient ?? "?"} per client)`]
       ];
-      const agents = caps.agents as (Json & { actor?: Json; bounds?: string[] }) | undefined;
+      const agents = caps.agents as AgentRules | undefined;
       if (agents?.isAgent) {
         rows.push(["acting as", `an AI agent${agents.actor?.name ? `: ${agents.actor.name}` : ""}${agents.actor?.onBehalfOf ? ` for ${agents.actor.onBehalfOf}` : ""}`]);
         rows.push(["agent rules", [agents.approvalRequired ? "point writes wait for a person's approval" : "point writes go straight through", agents.reasonRequired ? "every change needs --reason" : "", agents.maxChangesPerMinute ? `${agents.maxChangesPerMinute} changes a minute` : "", agents.allowEmergency ? "" : "no emergency overrides"].filter(Boolean).join(" · ")]);
+        if (agents.approvalRequired) {
+          const work = directWork(agents);
+          rows.push(["may do by itself", !work.known ? `only propose point writes (this station's baskStream, API ${caps.apiVersion ?? "?"}, is older than 1.11)` : work.kinds.join(" · ") || "nothing: every change but a point-write proposal is refused"]);
+        }
         if (agents.bounds?.length) rows.push(["value limits", agents.bounds.join(" · ")]);
       } else if (agents) rows.push(["acting as", "a person"]);
       for (const line of metrics.split("\n")) {
@@ -634,6 +639,45 @@ program
     })
   );
 
+/**
+ * A station lets an agent make only so many changes a minute (agentMaxChangesPerMinute). Work that
+ * makes many, such as discovery over a building, waits its turn here rather than being refused part
+ * way through. For a person, or with no limit, it runs straight away.
+ */
+function changePacer(rules: AgentRules | undefined, say: (text: string) => void): <T>(change: () => Promise<T>) => Promise<T> {
+  const max = rules?.isAgent ? Number(rules.maxChangesPerMinute ?? 0) : 0;
+  const sent: number[] = [];
+  let told = false;
+  let gate: Promise<void> = Promise.resolve();
+  const turn = async () => {
+    for (;;) {
+      const now = Date.now();
+      while (sent.length && now - sent[0] >= 61000) sent.shift();
+      if (sent.length < max) return void sent.push(now);
+      if (!told) say(`The station lets an agent make ${max} changes a minute (agentMaxChangesPerMinute on BASkStreamService): waiting between them.`);
+      told = true;
+      await new Promise((resolve) => setTimeout(resolve, sent[0] + 61000 - now));
+    }
+  };
+  return async (change) => {
+    if (max > 0) {
+      // One at a time through the gate, so work running side by side shares the same minute.
+      const mine = gate.then(turn);
+      gate = mine.catch(() => undefined);
+      await mine;
+    }
+    for (let tries = 0; ; tries += 1) {
+      try {
+        return await change();
+      } catch (error) {
+        // Another bask may be using the same minute: wait once or twice more before giving up.
+        if (!(error instanceof BaskStreamError) || error.code !== "agent_rate_limited" || tries >= 3) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 20000));
+      }
+    }
+  };
+}
+
 /** Every result of a job, a page at a time. */
 async function jobResults(client: Connection["client"], job: string): Promise<JobDetail["results"]> {
   const all: JobDetail["results"] = [];
@@ -659,11 +703,11 @@ async function jobDone(client: Connection["client"], job: string, timeout: strin
 const looseName = (name: unknown) => String(name ?? "").replace(/\$([0-9a-fA-F]{2})/g, (_m, hex: string) => String.fromCharCode(parseInt(hex, 16))).toLowerCase().replace(/[^a-z0-9]+/g, "");
 
 /** Makes and applies the plan that adds some results of a discovery job, 100 at a time. Returns the ORDs added. */
-async function addResults(client: Connection["client"], g: Globals, job: string, slots: string[], parent?: string): Promise<string[]> {
+async function addResults(client: Connection["client"], g: Globals, job: string, slots: string[], parent: string | undefined, pace: ReturnType<typeof changePacer>): Promise<string[]> {
   const added: string[] = [];
   for (let at = 0; at < slots.length; at += 100) {
     const plan = await client.addDiscovered(job, slots.slice(at, at + 100).map((slot) => ({ slot })), parent ? { parent } : {});
-    const applied = (await client.call("apply_model_changes", { planId: plan.planId, planHash: plan.planHash, idempotencyKey: randomUUID(), ...reasonOf(g) }, { timeoutMs: 300000 })).result as Json;
+    const applied = (await pace(() => client.call("apply_model_changes", { planId: plan.planId, planHash: plan.planHash, idempotencyKey: randomUUID(), ...reasonOf(g) }, { timeoutMs: 300000 }))).result as Json;
     const results = (applied.results ?? []) as Json[];
     const failed = results.filter((r) => r.ok === false);
     if (applied.state !== "applied" || failed.length > 0) throw new Error(`The plan ended ${applied.state}: ${failed.length} of ${results.length} changes failed. bask call model_plan_status '{"planId":"${plan.planId}"}'`);
@@ -711,9 +755,10 @@ program
       const simple = targets.length === 1 && !opts.add;
       if (!opts.wait && !simple) throw new Error("--no-wait starts one job and returns its ORD; it does not go with --add or several devices.");
       await requireWrite(g, `Start discovery on ${targets.length === 1 ? shortOrd(targets[0], 3) : `${targets.length} devices`}${opts.add ? " and add what it finds" : ""}? This puts traffic on the driver's network.`);
+      const pace = changePacer(client.capabilities.agents as AgentRules | undefined, (text) => g.output === "table" && console.error(chalk.dim(`  ${text}`)));
 
       if (simple) {
-        const discovery = await client.discover(targets[0], reasonOf(g));
+        const discovery = await pace(() => client.discover(targets[0], reasonOf(g)));
         if (!opts.wait) return console.log(g.output === "json" ? JSON.stringify(discovery, null, 2) : discovery.job);
         const spin = g.output === "table" ? spinner("discovering") : undefined;
         try {
@@ -731,7 +776,7 @@ program
 
       // Several devices, or adding: one line as each finishes, then the totals.
       const outcomes = await pooled(targets, 6, async (target) => {
-        const discovery = await client.discover(target, reasonOf(g));
+        const discovery = await pace(() => client.discover(target, reasonOf(g)));
         await jobDone(client, discovery.job, opts.timeout);
         const results = await jobResults(client, discovery.job);
         const names = results.map((r) => String((r.values as Json | undefined)?.objectName ?? (r.values as Json | undefined)?.deviceName ?? r.slot));
@@ -744,7 +789,7 @@ program
           const there = new Set(((await client.browse(where, { depth: 1 }).catch(() => undefined))?.children ?? []).map((child) => looseName(child.name)));
           const fresh = results.filter((_r, i) => !there.has(looseName(names[i])));
           skipped = results.length - fresh.length;
-          added = await addResults(client, g, discovery.job, fresh.map((r) => r.slot), parent);
+          added = await addResults(client, g, discovery.job, fresh.map((r) => r.slot), parent, pace);
         }
         if (g.output === "table") {
           const count = `${results.length} ${discovery.kind === "devices" ? "device" : "point"}${results.length === 1 ? "" : "s"}`;
@@ -791,7 +836,7 @@ program
         return console.error(chalk.dim(`\nNothing added yet${wanted.length > 100 ? ` (the first 100 of ${wanted.length} are shown)` : ""}. Run again with --apply to add ${wanted.length === 1 ? "it" : `these ${wanted.length}`}.`));
       }
       await requireWrite(g, `Add ${wanted.length} discovered ${wanted.length === 1 ? "result" : "results"}?`);
-      const added = await addResults(client, g, job, wanted, parent);
+      const added = await addResults(client, g, job, wanted, parent, changePacer(client.capabilities.agents as AgentRules | undefined, (text) => g.output === "table" && console.error(chalk.dim(`  ${text}`))));
       if (added.length) new Link(client.http.url.origin).show("reveal", added[0]);
       if (g.output !== "table") return console.log(JSON.stringify({ added }, null, 2));
       console.log(`${chalk.green("✓")} Added ${wanted.length}.`);
@@ -1062,6 +1107,18 @@ program
         if (opts.dryRun && !site) lines.push(`# agent login: ${choice ? `${choice.user} (${describeChoice(choice)})${choice.create ? ", logged in and saved when this runs" : ""}` : `${info.user}, shared with you`}`);
         if (login) {
           lines.push(`${label} is signed in as ${chalk.bold(login.user)}; you are ${chalk.bold(info.user)}.${login.listed ? ` The station counts ${login.user} as an agent${login.approval ? ": its point writes wait for your approval" : ""}.` : ""}`);
+          const rules = login.rules;
+          const work = directWork(rules);
+          if (rules?.approvalRequired === false) lines.push("Approval is off on this station: what it changes, point writes included, goes straight through.");
+          else if (rules && !work.known) notes.push(`This station's baskStream (API ${login.api ?? "?"}) refuses everything from an agent except point-write proposals while agentApprovalRequired is on, so ${label} cannot save graphics, run discovery or build anything here. Install baskStream API 1.11 and turn on the agentDirect settings you want, or turn approval off.`);
+          else if (rules) {
+            lines.push(`By itself it may change: ${work.kinds.join(", ") || "nothing"}. Its point writes wait for your approval.`);
+            const wants = [
+              (opts.layout === "graphics" || opts.layout === "build") && mayWriteFile(rules, "^bask/graphics/x.json") === false ? "save graphics: set agentDirectFiles to ^bask/*" : "",
+              opts.layout === "build" && !rules.direct?.discovery ? "run discovery and add what it finds: turn on agentDirectDiscovery" : ""
+            ].filter(Boolean);
+            if (wants.length) notes.push(`On this station ${label} may not ${wants.join("; nor ")} (BASkStreamService in Workbench).`);
+          }
           if (login.listed === false) notes.push(`${login.user} is not in agentUsers on the station's BASkStreamService. bask tells the station that this session is an agent, so the agent rules apply to what ${label} does through bask; add ${login.user} to agentUsers in Workbench and the station applies them to that user however it connects.`);
         } else if (!site && !choice) {
           notes.push(`${label} shares your login (${info.user}), so the station cannot tell its changes from yours by user. Give it the Niagara user made for it: bask workspace --agent-user <user>`);

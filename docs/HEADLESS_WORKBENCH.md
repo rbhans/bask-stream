@@ -101,6 +101,10 @@ The reply is a `model_result` plan preview, like `create_components`, plus `item
 
 Other drivers return `discovery_unsupported` from `discover`. Their discovery can still be driven by invoking the driver's discovery action in a model plan and reading the job; adding the results is then ordinary `create` changes.
 
+## AI agents
+
+While `agentApprovalRequired` is on, an agent's `write_file` and `delete_file` are allowed only under the paths in `agentDirectFiles`, and `discover`, `cancel_job` and applying an `add_discovered` plan only with `agentDirectDiscovery` (API 1.11). Otherwise they return `approval_required`. Reads, queries, listing and previews are always allowed. See [AI_AGENTS.md](AI_AGENTS.md#what-an-agent-may-do-by-itself).
+
 ## Users, roles and categories
 
 Model plans leave the services that decide who can reach the station to Workbench (see [Protected objects](MODEL_EDITING_API.md#protected-objects)). `securityEditsEnabled` on the service (default off) opens three of them to model plans: the User, Role and Category services. Authentication, Fox, Web, platform, audit and program services stay closed, and so does the baskStream service itself.

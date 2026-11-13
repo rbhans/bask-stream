@@ -41,6 +41,8 @@ agent.on("proposal", (p) => console.log(p.id, p.status)); // approved, rejected,
 
 People use `proposals()`, `approveProposal(id)` and `rejectProposal(id, note)`; `agentLog()` reads the `Agent` records from the station's audit history.
 
+While approval is required, an agent's other changes (files, discovery, model plans, tags, schedules, alarms) fail with `approval_required` unless the station's `agentDirect…` setting for that kind is on. `agent.capabilities.agents.direct` (API 1.11) says what is allowed: `{ pointWrites, files, discovery, modelEdits, tags, schedules, alarms }`. An agent's model plan cannot command a writable point (`agent_use_write`); use `write`.
+
 ## Develop
 
 ```bash

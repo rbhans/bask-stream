@@ -161,6 +161,7 @@ The \`bask\` command is on your PATH and already points at this station. You act
 - Points: \`bask write <ord> override <value> --for 30m\`, \`bask write <ord> auto\`, \`bask write <ord> set <value>\`.
 - A write that prints "Proposed P7" has not happened yet: it waits for a person to approve it. Say so, do not repeat it, and check later with \`bask proposals --all\`.
 - If a change is refused, do not retry or work around it. Report the refusal and its code.
+- The station decides which kinds of change an agent may make by itself: \`bask status\` lists them under "may do by itself". Anything else comes back \`approval_required\`, and the message names the setting a person would have to turn on. Tell the person that; it is theirs to decide.
 - Alarms: \`bask ack <uuid>...\`. Files: \`bask put <local> <^path>\`. Components, properties, links and actions: \`bask call preview_model_changes\` then \`bask call apply_model_changes\`.
 
 ## Bringing BACnet equipment into the station

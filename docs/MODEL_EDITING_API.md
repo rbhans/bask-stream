@@ -23,6 +23,8 @@ Some parts of a station decide who can reach it and what they may do. Model edit
 
 Service types that are not installed on a station are skipped.
 
+**AI agents (API 1.11).** While `agentApprovalRequired` is on, an agent applies a plan only when `agentDirectModelEdits` is on, or `agentDirectDiscovery` for a plan that `add_discovered` built; otherwise `apply_model_changes` returns `approval_required`. Previews are always allowed. An agent's plan can never command a writable point (`agent_use_write`): that goes through `write`. See [AI_AGENTS.md](AI_AGENTS.md#what-an-agent-may-do-by-itself).
+
 `securityEditsEnabled` on the service (default off, API 1.10) opens the User, Role and Category services to model plans for people; agent sessions never get it, and the other protected services stay closed. See [HEADLESS_WORKBENCH.md](HEADLESS_WORKBENCH.md#users-roles-and-categories).
 
 ## Operations

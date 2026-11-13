@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { Box, Text } from "ink";
 import type { BaskStreamClient, Json, Proposal } from "@basidekick/baskstream";
 import { ago, fmtDuration, fmtTime, place, sparkline } from "../../format.js";
+import { directShort, type AgentRules } from "../../agent-rules.js";
 import { useKeys, type Rect } from "../input.js";
 import type { Activity } from "../stores.js";
 import { Badge, Panel, Table, clip, fit, theme, useCursor, useTick, useUi, type Column } from "../ui.js";
@@ -211,6 +212,7 @@ export function ActivityView(props: {
           <>
             <Text wrap="truncate-end">
               {chip(rules.approvalRequired ? "writes need approval" : "agents write directly", rules.approvalRequired ? theme.good : theme.warn)}
+              {directShort(rules as AgentRules) ? chip(directShort(rules as AgentRules)!, theme.info) : null}
               {chip(rules.reasonRequired ? "reason required" : "reason optional", rules.reasonRequired ? theme.good : theme.warn)}
               {chip(rules.maxChangesPerMinute ? `${String(rules.maxChangesPerMinute)} changes / min` : "no rate limit", rules.maxChangesPerMinute ? theme.good : theme.warn)}
               {chip(rules.allowEmergency ? "emergency allowed" : "emergency blocked", rules.allowEmergency ? theme.warn : theme.good)}

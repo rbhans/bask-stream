@@ -1,3 +1,4 @@
+import { directWork, type AgentRules } from "./agent-rules.js";
 import chalk from "chalk";
 import { BaskStreamClient, BaskStreamError, StationHttp } from "@basidekick/baskstream";
 import { getProfile, type Profile } from "./config.js";
@@ -154,12 +155,13 @@ export async function runDoctor(profileName: string | undefined, stationArg: str
       outcome: "ok",
       detail: `user ${caps.authenticatedUser ?? "?"} · service writes ${caps.writesEnabled ? "on" : "off"} · model edits ${(caps.modelEditing as { enabled?: boolean } | undefined)?.enabled ? "on" : "off"}`
     });
-    const agents = caps.agents as { isAgent?: boolean; approvalRequired?: boolean; agentUsersConfigured?: boolean; pendingProposals?: number } | undefined;
+    const agents = caps.agents as AgentRules | undefined;
     if (agents) {
+      const work = directWork(agents);
       print({
         name: "AI agents",
         outcome: "ok",
-        detail: `${agents.isAgent ? "this login is treated as an agent" : "this login is a person"} · ${agents.agentUsersConfigured ? "agent users configured" : "no agent users listed"} · approval ${agents.approvalRequired ? "required" : "off"} · ${agents.pendingProposals ?? 0} waiting`
+        detail: `${agents.isAgent ? "this login is treated as an agent" : "this login is a person"} · ${agents.agentUsersConfigured ? "agent users configured" : "no agent users listed"} · approval ${agents.approvalRequired ? "required" : "off"}${agents.approvalRequired ? ` · agents may do by themselves: ${!work.known ? "only propose point writes (baskStream older than API 1.11)" : work.kinds.join(", ") || "nothing but propose point writes"}` : ""} · ${agents.pendingProposals ?? 0} waiting`
       });
     }
   } catch (error) {

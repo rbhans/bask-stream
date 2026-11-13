@@ -1,4 +1,4 @@
-# AI agents (API 1.8)
+# AI agents (API 1.8; direct kinds of work since 1.11)
 
 baskStream can tell an AI agent apart from a person, ask it why it is changing something, keep it within limits, and let a person approve its writes before they run. All of it is optional: with nothing configured, nothing changes.
 
@@ -13,7 +13,8 @@ It sits on top of Niagara rather than replacing it:
 | --- | --- | --- |
 | 0 | Nothing | Agents that call `declare_actor` follow the agent rules below and leave `Agent` records. Everyone else is unaffected. |
 | 1 | Put the agent's Niagara login in **`agentUsers`** | That login follows the agent rules whether or not it declares itself. This is the one setting most stations need. |
-| 2 | Adjust the other `agent…` settings | Turn approval off, change limits, add value ranges. |
+| 2 | Turn on the **`agentDirect…`** settings you want | The agent can do those kinds of work by itself (draw graphics, run discovery, build logic, tag, schedule, acknowledge alarms) while its point writes still wait for a person. |
+| 3 | Adjust the other `agent…` settings | Turn approval off, change limits, add value ranges. |
 
 Recommended setup: give each agent its own Niagara user (for example `ai-claude`) with a role covering only what it should touch, and list it in `agentUsers`.
 
@@ -28,7 +29,13 @@ All are properties on **BASkStreamService**, grouped under `agent…` in the pro
 | Property | Default | Meaning |
 | --- | --- | --- |
 | `agentUsers` | blank | Niagara logins that are agents, comma separated. |
-| `agentApprovalRequired` | true | Agent point writes become **proposals** a person approves. Other agent changes (schedules, alarm actions, tags, model plans) are refused. Off: agents change things directly, within the limits below. |
+| `agentApprovalRequired` | true | Agent point writes become **proposals** a person approves. Every other kind of agent change is refused unless its `agentDirect…` setting below is on. Off: agents change things directly, within the limits below. |
+| `agentDirectFiles` | blank | With approval required: station file paths an agent may still write and delete, comma separated, `*` matching anything. `^bask/*` covers the graphics bask keeps in the station. Blank = none. |
+| `agentDirectDiscovery` | false | With approval required: agents may still start BACnet discovery, cancel a job, and add the devices and points discovery found. |
+| `agentDirectModelEdits` | false | With approval required: agents may still apply any model plan: create, change, link, rename, move and delete components, and invoke actions. This is the broad one (see below). |
+| `agentDirectTags` | false | With approval required: agents may still write tags and relations. |
+| `agentDirectSchedules` | false | With approval required: agents may still change schedules. |
+| `agentDirectAlarms` | false | With approval required: agents may still acknowledge and clear alarms. |
 | `agentRequireReason` | true | Every agent change or proposal must include a `reason`. |
 | `agentMaxChangesPerMinute` | 10 | Changes and proposals per agent user per minute. `0` = no limit. |
 | `agentAllowEmergency` | false | Allow emergency (priority level 1) commands. Normal agent commands use level 8 or the fallback. |
@@ -37,6 +44,29 @@ All are properties on **BASkStreamService**, grouped under `agent…` in the pro
 | `pendingProposals` | read-only | One line per waiting proposal: id, change, point, agent and reason. |
 
 A point's own `min`/`max` facets always limit agent writes too.
+
+## What an agent may do by itself
+
+While `agentApprovalRequired` is on, every change an agent can ask for is one of these kinds, and each kind has its own switch:
+
+| Kind of work | Operations | Allowed directly when |
+| --- | --- | --- |
+| Commanding a point | `write` | never: it becomes a proposal |
+| Station files, such as graphics | `write_file`, `delete_file` | the path is under one listed in `agentDirectFiles` |
+| Discovery | `discover`, `cancel_job`, applying a plan that `add_discovered` built | `agentDirectDiscovery` |
+| Building and changing the station (programming) | `apply_model_changes` for any plan | `agentDirectModelEdits` |
+| Tags and relations | `write_tags`, `write_relations` | `agentDirectTags` |
+| Schedules | `write_schedule` | `agentDirectSchedules` |
+| Alarms | `ack_alarm(s)`, `clear_alarm(s)` | `agentDirectAlarms` |
+| Deciding a proposal | `approve_proposal`, `reject_proposal` | never: a person decides |
+
+- A refused change comes back as `approval_required`, with a message that names the setting that would allow it, and it is recorded as `refused`.
+- Direct changes still need a reason, count against `agentMaxChangesPerMinute`, and are limited by the agent's Niagara role. Each leaves a `completed` record.
+- `agentDirectModelEdits` reaches whatever the Niagara role allows in the station tree, which includes the things the narrower switches cover (a plan can add a tag slot or edit a schedule's properties). Leave it off and use the narrower ones unless the agent is meant to build.
+- **Commanding a point always goes through `write`.** An agent's model plan may not invoke `set`, `override`, `auto` (or the emergency and boolean forms) on a writable point, nor set its `in1`…`in16` inputs or `fallback`; that is refused with `agent_use_write`, whether approval is on or off. Linking logic into a point's input is programming and is allowed with model edits.
+- `capabilities.agents.direct` reports what agents may do directly right now: `pointWrites`, `files` (the path patterns), `discovery`, `modelEdits`, `tags`, `schedules`, `alarms`.
+
+For an agent that draws graphics and brings equipment in through bask, a typical setting is `agentDirectFiles = ^bask/*` and `agentDirectDiscovery = true`, with `agentMaxChangesPerMinute` raised for discovery (each job and each batch of up to 100 additions is one change).
 
 ## Approving proposals
 

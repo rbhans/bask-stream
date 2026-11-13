@@ -98,6 +98,18 @@ Three WebSocket-security items were addressed. Defaults keep current clients (Gr
 - Device and point detection can be deterministic through Niagara types such as `BDevice` and `BControlPoint`; equipment detection should be treated as confirmed only when tags/relations/user mappings say so, otherwise inferred and reviewed by the app.
 - See `docs/THIRD_PARTY_API.md` for the external API guide and client-side discovery recommendations.
 
+## Agents: direct kinds of work (API 1.11)
+
+Written 2026-11-12; **not built or run on a station yet**.
+
+- Before this, `agentApprovalRequired` refused every agent change except a point write (which becomes a proposal). So an agent login could not save a graphic, run discovery or apply a plan unless approval was turned off for point writes too.
+- Six properties on the service, read by name in `BaskStreamAgents` like the other agent settings: `agentDirectFiles` (path patterns), `agentDirectDiscovery`, `agentDirectModelEdits`, `agentDirectTags`, `agentDirectSchedules`, `agentDirectAlarms`. Their slot code was hand-added to the generated region in the existing style; Slot-o-matic should regenerate it unchanged apart from the header.
+- `BaskStreamAgents.DIRECT_SETTINGS` maps every changing operation to its setting. `tests/protocol_contract.py` fails if an operation with the WRITES gate (or `apply_model_changes`) is missing from it, so a new changing operation cannot be left refused to agents for good. The spec carries the same mapping as `agentDirect` on each operation.
+- A plan that `add_discovered` builds is marked `discovery` on the plan ledger (`BaskStreamModelPlans.mark`), so `agentDirectDiscovery` lets an agent apply it without `agentDirectModelEdits`. An unknown or expired plan has no kind, which can only make the check stricter.
+- Point commands cannot go round approval through a plan: for an agent's request `BaskStreamModelResolver` refuses (`agent_use_write`) an `invoke` of a writable point's command actions and a property edit or initial value on its `in1`…`in16` or `fallback`. The check is on `BIWritablePoint`, already used by the write resolver. It applies with approval off too, where a plan used to be a way past the value limits.
+- File paths are compared in the form `BaskStreamFileResolver` itself uses (`canonical`), case-sensitively, with `*` matching across folders as in `allowedPathPatterns`. A pattern that does not start with `^` is ignored.
+- To verify on a station: with `agentUsers` set and approval on, an agent's `write_file` to `^bask/graphics/x.json` is `approval_required` until `agentDirectFiles = ^bask/*`, then succeeds and leaves a `completed` Agent record; a path outside stays refused; `discover` and applying an `add_discovered` plan need `agentDirectDiscovery`; a hand-made plan needs `agentDirectModelEdits`; an agent plan that invokes `override` on a writable point is `agent_use_write`; `capabilities.agents.direct` reflects the settings; a person's requests are unchanged.
+
 ## Headless Workbench (API 1.10)
 
 New operations in `BaskStreamQueryResolver`, `BaskStreamFileResolver` and `BaskStreamJobResolver`; guide in `docs/HEADLESS_WORKBENCH.md`. Signatures were read with `javap` from the 4.15.3.28 jars (`baja.jar`, `bacnet-rt.jar`, `driver-rt.jar`, `control-rt.jar`). Built and checked on the HVAC Lab Simulator station on 2026-11-12 (results below).

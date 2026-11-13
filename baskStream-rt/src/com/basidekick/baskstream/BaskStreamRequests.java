@@ -244,6 +244,8 @@ final class BaskStreamRequests
     {
       model.agentCall(false);
     }
+    // Remembered on the plan, so an agent allowed to run discovery may apply it without wider model edits.
+    model.markPlan(result.get("planId"), "discovery");
     if (!Boolean.TRUE.equals(request.get("verbose"))) result = compactModelResult(result);
     result.put("items", built.get("items"));
     result.put("discovery", built.get("kind"));

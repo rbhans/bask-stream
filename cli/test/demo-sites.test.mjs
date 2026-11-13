@@ -139,7 +139,8 @@ test("Eastgate is a new station: an agent discovers the BACnet network, adds the
     // The agent can see the rules it works under, read tags, and narrow a query with and / or.
     const status = await bask("status");
     assert.match(status.out, /acting as\s+an AI agent: Claude Code for pat/);
-    assert.match(status.out, /agent rules\s+point writes wait for a person's approval · every change needs --reason · 10 changes a minute · no emergency overrides/);
+    assert.match(status.out, /agent rules\s+point writes wait for a person's approval · every change needs --reason · 120 changes a minute · no emergency overrides/);
+    assert.match(status.out, /may do by itself\s+station files under \^bask\/\*, \^notes\/\* · discovery · model edits · tags/);
     const tags = JSON.parse((await bask("call", "read_tags", JSON.stringify({ ords: [`${NET}/VAV_05`] }))).out);
     assert.deepEqual(tags.targets[0].tags.filter((t) => t.dictionary === "hs").map((t) => t.id), ["hs:vav", "hs:equip"]);
     const rows = JSON.parse((await bask("query", "select slotPath from control:NumericPoint where name = 'Supply_Airflow' or name = 'Airflow' and parent.parent.name = 'VAV_03'", "-o", "json")).out).rows;

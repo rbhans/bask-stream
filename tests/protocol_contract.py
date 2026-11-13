@@ -55,6 +55,21 @@ check('API_VERSION = "' + str(spec.get('apiVersion')) + '"' in java('BaskStreamC
 check(not re.search(r'apiVersion\\"\s*:\s*\\?"\d', java('BBaskStreamService')) and 'BaskStreamCapabilities.API_VERSION' in java('BBaskStreamService'),
       '/stream/health must report BaskStreamCapabilities.API_VERSION, not a literal version')
 
+# 3b. Agents: every operation that changes the station has a kind an agentDirect setting can allow
+# while approval is required. A point write is a proposal instead, and proposals are never an agent's
+# to decide. A new changing operation that is left out here would be refused to agents for good.
+agents = java('BaskStreamAgents')
+direct = dict(re.findall(r'DIRECT_SETTINGS\.put\("([a-z_]+)", "(agentDirect[A-Za-z]+)"\)', agents))
+changing = {name for name in names if gates[name] == 'writes'} | {'apply_model_changes'}
+expected = changing - {'write', 'approve_proposal', 'reject_proposal'}
+check(set(direct) == expected, f'agentDirect kinds vs changing operations: missing {sorted(expected - set(direct))}, '
+                               f'extra {sorted(set(direct) - expected)}')
+service_properties = set(re.findall(r'name = "([A-Za-z0-9]+)"', (src / 'BBaskStreamService.java').read_text()))
+check(set(direct.values()) <= service_properties, f'agentDirect settings missing from BBaskStreamService: {sorted(set(direct.values()) - service_properties)}')
+for name in names:
+    check(spec['operations'][name].get('agentDirect') == direct.get(name),
+          f'spec agentDirect for {name} is {spec["operations"][name].get("agentDirect")}, BaskStreamAgents says {direct.get(name)}')
+
 # 4. Error codes: every code raised in source is in the spec, and every spec code exists in source.
 sources = '\n'.join(p.read_text() for p in src.glob('*.java') if not p.name.startswith('._'))
 patterns = [r'BaskStreamProtocolException\(\s*"([a-z_]+)"', r'\berror\(\s*"([a-z_]+)"',

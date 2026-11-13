@@ -177,11 +177,53 @@ import javax.baja.sys.Action;
   defaultValue = "",
   flags = Flags.SUMMARY
 )
-/** Agent point writes become proposals that a person approves; other agent changes are refused. Off = agents change things directly, within the limits below. */
+/** Agent point writes become proposals that a person approves. Other agent changes are refused unless an agentDirect setting below allows that kind. Off = agents change things directly, within the limits below. */
 @NiagaraProperty(
   name = "agentApprovalRequired",
   type = "boolean",
   defaultValue = "true",
+  flags = Flags.SUMMARY
+)
+/** With approval required: station file paths an agent may still write and delete directly, comma separated, where * matches anything. For the graphics bask keeps: ^bask/* (blank = none). */
+@NiagaraProperty(
+  name = "agentDirectFiles",
+  type = "baja:String",
+  defaultValue = "",
+  flags = Flags.SUMMARY
+)
+/** With approval required: agents may still start BACnet discovery, cancel a job, and add the devices and points discovery found. */
+@NiagaraProperty(
+  name = "agentDirectDiscovery",
+  type = "boolean",
+  defaultValue = "false",
+  flags = Flags.SUMMARY
+)
+/** With approval required: agents may still apply any model plan (create, change, link, rename, move and delete components, invoke actions). Commanding a point stays a proposal. */
+@NiagaraProperty(
+  name = "agentDirectModelEdits",
+  type = "boolean",
+  defaultValue = "false",
+  flags = Flags.SUMMARY
+)
+/** With approval required: agents may still write tags and relations. */
+@NiagaraProperty(
+  name = "agentDirectTags",
+  type = "boolean",
+  defaultValue = "false",
+  flags = Flags.SUMMARY
+)
+/** With approval required: agents may still change schedules. */
+@NiagaraProperty(
+  name = "agentDirectSchedules",
+  type = "boolean",
+  defaultValue = "false",
+  flags = Flags.SUMMARY
+)
+/** With approval required: agents may still acknowledge and clear alarms. */
+@NiagaraProperty(
+  name = "agentDirectAlarms",
+  type = "boolean",
+  defaultValue = "false",
   flags = Flags.SUMMARY
 )
 /** Agents must give a reason with every change or proposal. */
@@ -882,7 +924,7 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Slot for the {@code agentApprovalRequired} property.
-   * Agent point writes become proposals that a person approves; other agent changes are refused. Off = agents change things directly, within the limits below.
+   * Agent point writes become proposals that a person approves. Other agent changes are refused unless an agentDirect setting below allows that kind. Off = agents change things directly, within the limits below.
    * @see #getAgentApprovalRequired
    * @see #setAgentApprovalRequired
    */
@@ -890,19 +932,175 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Get the {@code agentApprovalRequired} property.
-   * Agent point writes become proposals that a person approves; other agent changes are refused. Off = agents change things directly, within the limits below.
+   * Agent point writes become proposals that a person approves. Other agent changes are refused unless an agentDirect setting below allows that kind. Off = agents change things directly, within the limits below.
    * @see #agentApprovalRequired
    */
   public boolean getAgentApprovalRequired() { return getBoolean(agentApprovalRequired); }
 
   /**
    * Set the {@code agentApprovalRequired} property.
-   * Agent point writes become proposals that a person approves; other agent changes are refused. Off = agents change things directly, within the limits below.
+   * Agent point writes become proposals that a person approves. Other agent changes are refused unless an agentDirect setting below allows that kind. Off = agents change things directly, within the limits below.
    * @see #agentApprovalRequired
    */
   public void setAgentApprovalRequired(boolean v) { setBoolean(agentApprovalRequired, v, null); }
 
   //endregion Property "agentApprovalRequired"
+
+  //region Property "agentDirectFiles"
+
+  /**
+   * Slot for the {@code agentDirectFiles} property.
+   * With approval required: station file paths an agent may still write and delete directly, comma separated, where * matches anything. For the graphics bask keeps: ^bask/* (blank = none).
+   * @see #getAgentDirectFiles
+   * @see #setAgentDirectFiles
+   */
+  public static final Property agentDirectFiles = newProperty(Flags.SUMMARY, "", null);
+
+  /**
+   * Get the {@code agentDirectFiles} property.
+   * With approval required: station file paths an agent may still write and delete directly, comma separated, where * matches anything. For the graphics bask keeps: ^bask/* (blank = none).
+   * @see #agentDirectFiles
+   */
+  public String getAgentDirectFiles() { return getString(agentDirectFiles); }
+
+  /**
+   * Set the {@code agentDirectFiles} property.
+   * With approval required: station file paths an agent may still write and delete directly, comma separated, where * matches anything. For the graphics bask keeps: ^bask/* (blank = none).
+   * @see #agentDirectFiles
+   */
+  public void setAgentDirectFiles(String v) { setString(agentDirectFiles, v, null); }
+
+  //endregion Property "agentDirectFiles"
+
+  //region Property "agentDirectDiscovery"
+
+  /**
+   * Slot for the {@code agentDirectDiscovery} property.
+   * With approval required: agents may still start BACnet discovery, cancel a job, and add the devices and points discovery found.
+   * @see #getAgentDirectDiscovery
+   * @see #setAgentDirectDiscovery
+   */
+  public static final Property agentDirectDiscovery = newProperty(Flags.SUMMARY, false, null);
+
+  /**
+   * Get the {@code agentDirectDiscovery} property.
+   * With approval required: agents may still start BACnet discovery, cancel a job, and add the devices and points discovery found.
+   * @see #agentDirectDiscovery
+   */
+  public boolean getAgentDirectDiscovery() { return getBoolean(agentDirectDiscovery); }
+
+  /**
+   * Set the {@code agentDirectDiscovery} property.
+   * With approval required: agents may still start BACnet discovery, cancel a job, and add the devices and points discovery found.
+   * @see #agentDirectDiscovery
+   */
+  public void setAgentDirectDiscovery(boolean v) { setBoolean(agentDirectDiscovery, v, null); }
+
+  //endregion Property "agentDirectDiscovery"
+
+  //region Property "agentDirectModelEdits"
+
+  /**
+   * Slot for the {@code agentDirectModelEdits} property.
+   * With approval required: agents may still apply any model plan (create, change, link, rename, move and delete components, invoke actions). Commanding a point stays a proposal.
+   * @see #getAgentDirectModelEdits
+   * @see #setAgentDirectModelEdits
+   */
+  public static final Property agentDirectModelEdits = newProperty(Flags.SUMMARY, false, null);
+
+  /**
+   * Get the {@code agentDirectModelEdits} property.
+   * With approval required: agents may still apply any model plan (create, change, link, rename, move and delete components, invoke actions). Commanding a point stays a proposal.
+   * @see #agentDirectModelEdits
+   */
+  public boolean getAgentDirectModelEdits() { return getBoolean(agentDirectModelEdits); }
+
+  /**
+   * Set the {@code agentDirectModelEdits} property.
+   * With approval required: agents may still apply any model plan (create, change, link, rename, move and delete components, invoke actions). Commanding a point stays a proposal.
+   * @see #agentDirectModelEdits
+   */
+  public void setAgentDirectModelEdits(boolean v) { setBoolean(agentDirectModelEdits, v, null); }
+
+  //endregion Property "agentDirectModelEdits"
+
+  //region Property "agentDirectTags"
+
+  /**
+   * Slot for the {@code agentDirectTags} property.
+   * With approval required: agents may still write tags and relations.
+   * @see #getAgentDirectTags
+   * @see #setAgentDirectTags
+   */
+  public static final Property agentDirectTags = newProperty(Flags.SUMMARY, false, null);
+
+  /**
+   * Get the {@code agentDirectTags} property.
+   * With approval required: agents may still write tags and relations.
+   * @see #agentDirectTags
+   */
+  public boolean getAgentDirectTags() { return getBoolean(agentDirectTags); }
+
+  /**
+   * Set the {@code agentDirectTags} property.
+   * With approval required: agents may still write tags and relations.
+   * @see #agentDirectTags
+   */
+  public void setAgentDirectTags(boolean v) { setBoolean(agentDirectTags, v, null); }
+
+  //endregion Property "agentDirectTags"
+
+  //region Property "agentDirectSchedules"
+
+  /**
+   * Slot for the {@code agentDirectSchedules} property.
+   * With approval required: agents may still change schedules.
+   * @see #getAgentDirectSchedules
+   * @see #setAgentDirectSchedules
+   */
+  public static final Property agentDirectSchedules = newProperty(Flags.SUMMARY, false, null);
+
+  /**
+   * Get the {@code agentDirectSchedules} property.
+   * With approval required: agents may still change schedules.
+   * @see #agentDirectSchedules
+   */
+  public boolean getAgentDirectSchedules() { return getBoolean(agentDirectSchedules); }
+
+  /**
+   * Set the {@code agentDirectSchedules} property.
+   * With approval required: agents may still change schedules.
+   * @see #agentDirectSchedules
+   */
+  public void setAgentDirectSchedules(boolean v) { setBoolean(agentDirectSchedules, v, null); }
+
+  //endregion Property "agentDirectSchedules"
+
+  //region Property "agentDirectAlarms"
+
+  /**
+   * Slot for the {@code agentDirectAlarms} property.
+   * With approval required: agents may still acknowledge and clear alarms.
+   * @see #getAgentDirectAlarms
+   * @see #setAgentDirectAlarms
+   */
+  public static final Property agentDirectAlarms = newProperty(Flags.SUMMARY, false, null);
+
+  /**
+   * Get the {@code agentDirectAlarms} property.
+   * With approval required: agents may still acknowledge and clear alarms.
+   * @see #agentDirectAlarms
+   */
+  public boolean getAgentDirectAlarms() { return getBoolean(agentDirectAlarms); }
+
+  /**
+   * Set the {@code agentDirectAlarms} property.
+   * With approval required: agents may still acknowledge and clear alarms.
+   * @see #agentDirectAlarms
+   */
+  public void setAgentDirectAlarms(boolean v) { setBoolean(agentDirectAlarms, v, null); }
+
+  //endregion Property "agentDirectAlarms"
 
   //region Property "agentRequireReason"
 

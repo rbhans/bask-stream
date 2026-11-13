@@ -12,7 +12,7 @@ import javax.baja.sys.Context;
 final class BaskStreamCapabilities
 {
   /** The protocol version reported by capabilities and /stream/health. Keep in step with spec/baskstream-protocol.json. */
-  static final String API_VERSION = "1.10";
+  static final String API_VERSION = "1.11";
 
   private final BaskStreamClientSession session;
   private final BaskStreamWebSocketRuntime runtime;

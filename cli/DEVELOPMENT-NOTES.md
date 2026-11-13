@@ -47,6 +47,12 @@ Short notes on problems that were solved, so they are not solved twice.
 - The agent's pane runs `bask keep-alive --while $$` before its command, so the saved session is touched every four minutes while the agent runs and stops with it. Niagara web sessions lapse on inactivity; whether four minutes is enough on a real station is not checked yet.
 - The demo station takes any user name with its password and counts `ai-claude` as an agent user, which is how this is tested (`test/agent-login.test.mjs`).
 
+## What an agent may do by itself
+
+- `src/agent-rules.ts` reads `capabilities.agents.direct` (baskStream API 1.11). A station older than that does not say, and with approval on it refuses everything from an agent but point-write proposals: `directWork` reports `known: false` rather than guessing, and the workspace says so.
+- Found on 2026-11-12 by reading the module: the demo station let an agent save graphics, run discovery and apply plans with approval on, which the real module refused. The demo now applies the same per-kind rules as the module (`agentChange` in `src/demo/station.ts`): a reason, the kind's setting, then the rate limit, with the module's wording for refusals, and `agent_use_write` for a plan that commands a point.
+- `bask discover` and `bask add` pace their changes under `agentMaxChangesPerMinute` (`changePacer` in `main.ts`) instead of sending them and being refused, because the station records every refusal.
+
 ## Demo station
 
 - `src/demo/station.ts` speaks the real protocol and is what the dashboard tests run on (`live: false` freezes its values). When the module's replies change shape, change the demo to match; do not special-case the demo in the views.

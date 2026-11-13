@@ -285,6 +285,12 @@ final class BaskStreamFileResolver
     }
   }
 
+  /** The path a request names, in the one form every file check uses (^px/Home.px). */
+  static String canonical(Object raw) throws BaskStreamProtocolException
+  {
+    return body(raw);
+  }
+
   /** The path as text after the file: scheme, e.g. ^px/Home.px. Only the station file space is accepted. */
   private static String body(Object raw) throws BaskStreamProtocolException
   {

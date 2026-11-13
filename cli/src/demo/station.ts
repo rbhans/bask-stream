@@ -326,7 +326,10 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
   };
 
   // ---- Model plans --------------------------------------------------------------------------------
-  const plans = new Map<string, { hash: string; changes: any[]; apply: () => any[]; target: string; summary: string }>();
+  const plans = new Map<string, { hash: string; changes: any[]; apply: () => any[]; target: string; summary: string; discovery?: boolean }>();
+  // An agent commands points with write, where approval and limits apply: a plan is not a way round them.
+  const POINT_COMMANDS = ["set", "override", "auto", "emergencyOverride", "emergencyAuto", "active", "inactive", "emergencyActive", "emergencyInactive"];
+  const useWrite = (what: string) => refuse("agent_use_write", `Agents command points with the write operation, where approval and value limits apply. A model plan cannot ${what} on a writable point.`);
   const refuse = (code: string, message: string) => Object.assign(new Error(message), { code });
   const need = (ord: string) => {
     const n = nodes.get(ord);
@@ -343,13 +346,14 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     }
   };
   const parentOf = (ord: string) => (ord.lastIndexOf("/") <= 5 ? "slot:/" : ord.slice(0, ord.lastIndexOf("/")));
-  const planFor = (user: string, changes: any[], label?: string) => {
+  const planFor = (user: string, changes: any[], label?: string, agent = false) => {
     if (!Array.isArray(changes) || changes.length === 0) throw refuse("bad_request", "changes must be a nonempty array.");
     const steps = changes.map((c, index) => {
       switch (c.action) {
         case "update": {
           const n = need(c.ord);
           for (const name of Object.keys(c.properties ?? {})) if (!n.props?.[name] && !(name === "fallback" && n.writable) && name !== "displayName") throw refuse("invalid_slot", `${n.name} has no property "${name}".`);
+          if (agent && n.writable && "fallback" in (c.properties ?? {})) throw useWrite("set fallback");
           return { wire: { action: "update", ord: c.ord, properties: Object.fromEntries(Object.entries(c.properties ?? {}).map(([k, v]: [string, any]) => [k, { before: n.props?.[k]?.encoded ?? null, after: v.encoded }])) },
             run: () => {
               for (const [name, v] of Object.entries<any>(c.properties ?? {})) {
@@ -423,6 +427,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
         case "invoke": {
           const n = need(c.ord);
           if (!n.actions?.includes(c.slot) && !(n.kind === "point")) throw refuse("invalid_slot", `${n.name} has no action "${c.slot}".`);
+          if (agent && n.writable && POINT_COMMANDS.includes(c.slot)) throw useWrite(`invoke ${c.slot}`);
           return { wire: { action: "invoke", ord: c.ord, slot: c.slot, parameter: c.parameter ?? null }, run: () => {
             auditAdd(Date.now(), user, "Invoked", c.ord.replace(/^slot:/, "") || "/", c.slot, "", c.parameter?.encoded ?? "");
             return { index, action: "invoke", ord: c.ord, slot: c.slot, ok: true, outcome: c.slot === "save" ? "completed" : "submitted" };
@@ -621,7 +626,42 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
   };
   /** Set once a real agent session declares itself: the scripted agent then leaves the station to it. */
   let realAgent = false;
-  const rules = (ws: any) => ({ isAgent: isAgent(ws), actor: ws.actor ?? null, agentUsersConfigured: true, approvalRequired: true, reasonRequired: true, maxChangesPerMinute: 10, allowEmergency: false, bounds: site.bounds, pointLimitsFromFacets: true, proposalMinutes: 15, pendingProposals: pendingCount() });
+  // The station's agentDirect settings: what an agent may do by itself while its point writes wait
+  // for approval. Graphics and notes, discovery, model plans and tags are on; schedules and alarms
+  // are left to people, so a refusal can be seen too.
+  const DIRECT = { files: ["^bask/*", "^notes/*"], discovery: true, modelEdits: true, tags: true, schedules: false, alarms: false };
+  const SETTING = { files: "agentDirectFiles", discovery: "agentDirectDiscovery", modelEdits: "agentDirectModelEdits", tags: "agentDirectTags", schedules: "agentDirectSchedules", alarms: "agentDirectAlarms" };
+  const MAX_CHANGES_PER_MINUTE = 120;
+  const ASK = " A person can change that on BASkStreamService, or make this change themselves.";
+  const underDirectFiles = (path: string) => DIRECT.files.some((pattern) => new RegExp(`^${pattern.replace(/[.*+?^${}()|[\]\\]/g, (ch) => (ch === "*" ? ".*" : `\\${ch}`))}$`).test(path));
+  const changeTimes: number[] = [];
+  /** Counts one agent change or proposal against the limit, as the module does per agent user. */
+  const takeChangeSlot = (ws: any, r: any, op: string, target: string) => {
+    const now = Date.now();
+    while (changeTimes.length && now - changeTimes[0] >= 60000) changeTimes.shift();
+    if (changeTimes.length >= MAX_CHANGES_PER_MINUTE) {
+      agentRecord(now, AGENT_USER, target, op, { outcome: "refused", code: "agent_rate_limited", ...whoIs(ws.actor ?? {}), reason: r.reason });
+      throw refuse("agent_rate_limited", `Agents may make ${MAX_CHANGES_PER_MINUTE} changes or proposals per minute (agentMaxChangesPerMinute). Try again shortly.`);
+    }
+    changeTimes.push(now);
+  };
+  /**
+   * Before an agent's change that is not a point write: it needs a reason, the setting for its kind
+   * has to allow it, and it counts against the rate limit. People pass straight through.
+   */
+  const agentChange = (ws: any, r: any, op: string, target: string, kind: keyof typeof DIRECT) => {
+    if (!isAgent(ws)) return;
+    needReason(ws, r);
+    const allowed = kind === "files" ? underDirectFiles(target.replace(/^file:/, "")) : DIRECT[kind];
+    if (!allowed) {
+      agentRecord(Date.now(), AGENT_USER, target, op, { outcome: "refused", code: "approval_required", ...whoIs(ws.actor ?? {}), reason: r.reason });
+      throw refuse("approval_required", kind === "files"
+        ? `With agentApprovalRequired on, agents write and delete station files only under the paths in agentDirectFiles (now [${DIRECT.files.join(", ")}]), and ${target.replace(/^file:/, "")} is not under one.${ASK}`
+        : `With agentApprovalRequired on, agents cannot ${op} directly unless ${SETTING[kind]} is on; it is off.${ASK}`);
+    }
+    takeChangeSlot(ws, r, op, target);
+  };
+  const rules = (ws: any) => ({ isAgent: isAgent(ws), actor: ws.actor ?? null, agentUsersConfigured: true, approvalRequired: true, direct: { pointWrites: false, ...DIRECT }, reasonRequired: true, maxChangesPerMinute: MAX_CHANGES_PER_MINUTE, allowEmergency: false, bounds: site.bounds, pointLimitsFromFacets: true, proposalMinutes: 15, pendingProposals: pendingCount() });
   const pushProposal = (proposal: any) => broadcast({ op: "proposal_cov", timestamp: Date.now(), proposal, pendingProposals: pendingCount() });
   const pushAlarm = (alarm: any) => {
     for (const ws of sockets) if (ws.alarmEvents) send(ws, { op: "alarm_cov", timestamp: Date.now(), inScope: alarm.isOpen, event: alarm });
@@ -646,7 +686,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
   };
 
   const CAPS = (ws: any) => ({
-    apiVersion: "1.10", module: "baskStream", transport: "websocket-msgpack", serverTime: Date.now(), authenticatedUser: ws.user ?? DEMO_USER, station: stationName, demo: true,
+    apiVersion: "1.11", module: "baskStream", transport: "websocket-msgpack", serverTime: Date.now(), authenticatedUser: ws.user ?? DEMO_USER, station: stationName, demo: true,
     writesEnabled: true, agents: rules(ws),
     modelEditing: { enabled: true, actions: ["create", "update", "rename", "delete", "invoke"], maxChanges: 100, previewRequired: true, atomic: false },
     limits: { maxConnections: 10, maxConnectionsPerUser: 0, maxMessageBytes: 1048576, activeConnections: sockets.size, maxSubscriptionsPerClient: 500, maxPointSnapshotPoints: 1000, totalSubscriptions: [...sockets].reduce((n, s) => n + [...s.groups.values()].flat().length, 0), heartbeatIntervalSec: 30, subscriptionLeaseSec: 300, covBatchWindowMillis: 100, defaultBrowseDepth: 1, maxBrowseDepth: 4, defaultSearchDepth: 32, maxSearchDepth: 64 },
@@ -695,6 +735,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       if (isAgent(ws)) {
         if (!r.reason) throw refuse("reason_required", "Agents must say why: add a 'reason' to the request.");
         need(ord);
+        takeChangeSlot(ws, r, r.action ?? "set", ord);
         const proposal = propose(ord, r.action ?? "set", r.value, r.reason, Date.now(), r.durationSec ? Math.round(r.durationSec / 60) : undefined, ws.actor ?? { kind: "agent", name: AGENT_USER });
         pushProposal(proposal);
         return { op: "write_result", points: [{ point: ord, ok: true, outcome: "proposed", proposal }] };
@@ -714,7 +755,8 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       ws.alarmEvents = true;
       return { op: "alarms_subscribed", alarms: { count: alarms.size, alarms: [] } };
     },
-    ack_alarms: (_ws, r) => {
+    ack_alarms: (ws, r) => {
+      if (!r.dryRun) agentChange(ws, r, "ack_alarms", r.uuids?.[0] ?? "slot:/Services/AlarmService", "alarms");
       const targets = (r.uuids ?? [...alarms.values()].filter((a) => a.isOpen && a.ackState === "unacked").map((a) => a.uuid)) as string[];
       const results = targets.map((uuid) => {
         const alarm = alarms.get(uuid);
@@ -814,9 +856,9 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       return { op: "file_result", file: { path: r.path, name: r.path.split("/").pop(), directory: false, size: Buffer.byteLength(f.text), modified: f.modified, readonly: false, encoding: "text", text: f.text } };
     },
     write_file: (ws, r) => {
-      needReason(ws, r);
       const exists = files.has(r.path);
       if (!/^\^[^^]/.test(r.path) || r.path.includes("..")) throw refuse("forbidden_file", "Only the station file space is reachable: paths start with ^.");
+      if (!r.dryRun) agentChange(ws, r, "write_file", `file:${r.path}`, "files");
       if (exists && !r.overwrite) throw refuse("file_exists", `${r.path} already exists; send overwrite: true to replace it.`);
       const text = r.text ?? Buffer.from(r.base64 ?? "", "base64").toString("utf8");
       if (!r.dryRun) {
@@ -827,7 +869,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       return { op: "file_written", file: { path: r.path, size: Buffer.byteLength(text), created: !exists, ...(r.dryRun ? { dryRun: true } : {}) } };
     },
     delete_file: (ws, r) => {
-      if (!r.dryRun) needReason(ws, r);
+      if (!r.dryRun) agentChange(ws, r, "delete_file", `file:${r.path}`, "files");
       const doomed = [...files.keys()].filter((p) => p === r.path || p.startsWith(`${r.path}/`));
       if (doomed.length === 0) throw refuse("file_not_found", `No such file or folder: ${r.path}`);
       if (!files.has(r.path) && !r.recursive) throw refuse("bad_request", `${r.path} is a folder; send recursive: true to delete it and its contents.`);
@@ -844,14 +886,15 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       if (!j) throw refuse("invalid_job", `Not a job: ${r.job}`);
       return { op: "job_result", job: jobWire(j, true, Number(r.offset ?? 0), Number(r.limit ?? 1000)) };
     },
-    cancel_job: (_ws, r) => {
+    cancel_job: (ws, r) => {
       const j = jobs.get(r.job);
       if (!j) throw refuse("invalid_job", `Not a job: ${r.job}`);
+      agentChange(ws, r, "cancel_job", r.job, "discovery");
       if (Date.now() - j.startedAt < j.duration) j.canceled = true;
       return { op: "job_result", job: jobWire(j, true) };
     },
     discover: (ws, r) => {
-      needReason(ws, r);
+      agentChange(ws, r, "discover", r.ord, "discovery");
       const n = need(r.ord);
       const kind = !/^bacnet:/.test(n.typeSpec) ? undefined : /Network$/.test(n.typeSpec) ? "devices" : /Device$|PointDeviceExt$/.test(n.typeSpec) ? "points" : undefined;
       if (!kind) throw refuse("discovery_unsupported", `No built-in discovery for ${n.typeSpec}. Try a BACnet network or device.`);
@@ -874,7 +917,8 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
         const vt = /^analog/.test(type) ? "Numeric" : /^binary/.test(type) ? "Boolean" : "Enum";
         return { action: "create", parent, name: item.name ?? found.values.objectName, typeSpec: item.typeSpec ?? `control:${vt}${item.writable ?? /Output|Value/.test(type) ? "Writable" : "Point"}`, object: j.found.get(item.slot) };
       });
-      const plan = planFor(userOf(ws), changes, `add ${changes.length === 1 ? changes[0].name : `${changes.length} discovered ${j.kind}`}`);
+      const plan = planFor(userOf(ws), changes, `add ${changes.length === 1 ? changes[0].name : `${changes.length} discovered ${j.kind}`}`, isAgent(ws));
+      plans.get(plan.planId)!.discovery = true;
       return { op: "model_result", operation: "add_discovered", result: { ...plan, compact: true, discovery: j.kind, items: picked.map(({ item, found, parent }, i) => ({ slot: item.slot, objectId: found.values.objectId, name: changes[i].name, typeSpec: changes[i].typeSpec, parent, facetsLearned: j.kind === "points" ? true : undefined })) } };
     },
     read_tags: (_ws, r) => ({
@@ -894,12 +938,13 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       const n = need(r.ord);
       return { op: "model_result", operation: "describe_component", result: { ord: n.ord, typeSpec: n.typeSpec, name: n.name, slots: slotsOf(n), writesEnabled: true, modelEditsEnabled: true } };
     },
-    preview_model_changes: (ws, r) => ({ op: "model_result", operation: "preview_model_changes", result: planFor(userOf(ws), r.changes) }),
+    preview_model_changes: (ws, r) => ({ op: "model_result", operation: "preview_model_changes", result: planFor(userOf(ws), r.changes, undefined, isAgent(ws)) }),
     apply_model_changes: (ws, r) => {
       const plan = plans.get(r.planId);
       if (!plan || plan.hash !== r.planHash) throw refuse("plan_not_found", "No such plan, or it has changed; preview again.");
       if (!r.idempotencyKey) throw refuse("bad_request", "Missing idempotencyKey");
-      needReason(ws, r);
+      // A plan that add_discovered built needs discovery; any other needs model edits, which cover both.
+      agentChange(ws, r, "apply_model_changes", plan.target, plan.discovery && !DIRECT.modelEdits ? "discovery" : "modelEdits");
       plans.delete(r.planId);
       const results = plan.apply();
       agentDid(ws, r, plan.target, "apply_model_changes", plan.summary);
@@ -907,7 +952,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     }
   };
   for (const [op, action] of [["update_component_properties", "update"], ["rename_component", "rename"], ["delete_components", "delete"], ["create_components", "create"]])
-    handlers[op] = (ws, r) => ({ op: "model_result", operation: op, result: planFor(userOf(ws), (r.changes ?? [r]).map((c: any) => ({ ...c, action }))) });
+    handlers[op] = (ws, r) => ({ op: "model_result", operation: op, result: planFor(userOf(ws), (r.changes ?? [r]).map((c: any) => ({ ...c, action })), undefined, isAgent(ws)) });
 
   function decideRequest(ws: any, r: any, approve: boolean) {
     if (isAgent(ws)) throw refuse("agent_cannot_approve", "Agents cannot approve or reject proposals; a person decides.");
@@ -961,7 +1006,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     }
     if (req.url === "/stream/health") {
       if (!sessions.has(sid)) return void res.writeHead(302, { Location: "/prelogin" }).end();
-      return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, apiVersion: "1.10" }));
+      return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, apiVersion: "1.11" }));
     }
     if (req.url === "/stream/metrics") {
       if (!sessions.has(sid)) return void res.writeHead(302).end();

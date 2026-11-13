@@ -1,6 +1,6 @@
 {
   "protocol": "baskStream",
-  "apiVersion": "1.10",
+  "apiVersion": "1.11",
   "encoding": "msgpack",
   "transport": {
     "path": "/stream",
@@ -953,6 +953,7 @@
     "ack_alarm": {
       "summary": "Acknowledge alarm records (operator write on the alarm class); per-uuid results.",
       "gate": "writes",
+      "agentDirect": "agentDirectAlarms",
       "reply": "alarm_action_result",
       "request": {
         "type": "object",
@@ -1083,6 +1084,7 @@
     "ack_alarms": {
       "summary": "Alias of ack_alarm (batch form).",
       "gate": "writes",
+      "agentDirect": "agentDirectAlarms",
       "reply": "alarm_action_result",
       "request": {
         "type": "object",
@@ -1213,6 +1215,7 @@
     "clear_alarm": {
       "summary": "Force-clear alarm records (admin write on the alarm class); per-uuid results.",
       "gate": "writes",
+      "agentDirect": "agentDirectAlarms",
       "reply": "alarm_action_result",
       "request": {
         "type": "object",
@@ -1343,6 +1346,7 @@
     "clear_alarms": {
       "summary": "Alias of clear_alarm (batch form).",
       "gate": "writes",
+      "agentDirect": "agentDirectAlarms",
       "reply": "alarm_action_result",
       "request": {
         "type": "object",
@@ -1653,6 +1657,7 @@
     "write_schedule": {
       "summary": "Replace the entries of the given weekdays on a weekly schedule, applied through Niagara's audited schedule copy. dryRun returns before/after without applying.",
       "gate": "writes",
+      "agentDirect": "agentDirectSchedules",
       "reply": "schedule_write_result",
       "request": {
         "type": "object",
@@ -1867,6 +1872,7 @@
     "write_tags": {
       "summary": "Set/remove direct tags on components; per-target and per-op results.",
       "gate": "writes",
+      "agentDirect": "agentDirectTags",
       "reply": "tags_written",
       "request": {
         "type": "object",
@@ -2058,6 +2064,7 @@
     "write_relations": {
       "summary": "Add/remove direct relations on components; per-target and per-op results.",
       "gate": "writes",
+      "agentDirect": "agentDirectTags",
       "reply": "relations_written",
       "request": {
         "type": "object",
@@ -2358,6 +2365,7 @@
     "apply_model_changes": {
       "summary": "Apply a previewed plan once after revalidation (needs writesEnabled and modelEditsEnabled).",
       "gate": "modelEdits",
+      "agentDirect": "agentDirectModelEdits",
       "reply": "model_result",
       "request": {
         "type": "object",
@@ -3314,6 +3322,7 @@
     "write_file": {
       "summary": "Create or replace a file in the station file space. Replacing needs overwrite: true. Recorded in the audit history.",
       "gate": "writes",
+      "agentDirect": "agentDirectFiles",
       "reply": "file_written",
       "request": {
         "type": "object",
@@ -3363,6 +3372,7 @@
     "delete_file": {
       "summary": "Delete a file or folder in the station file space. A folder with contents needs recursive: true; at most 500 entries per request.",
       "gate": "writes",
+      "agentDirect": "agentDirectFiles",
       "reply": "file_deleted",
       "request": {
         "type": "object",
@@ -3447,6 +3457,7 @@
     "cancel_job": {
       "summary": "Cancel a running job. Needs invoke permission on its cancel action.",
       "gate": "writes",
+      "agentDirect": "agentDirectDiscovery",
       "reply": "job_result",
       "request": {
         "type": "object",
@@ -3473,6 +3484,7 @@
     "discover": {
       "summary": "Start a driver's discovery job. A BACnet network discovers devices; a BACnet device or its points container discovers that device's objects. Other drivers return discovery_unsupported.",
       "gate": "writes",
+      "agentDirect": "agentDirectDiscovery",
       "reply": "discovery_started",
       "request": {
         "type": "object",
@@ -3687,6 +3699,10 @@
       "meaning": "Agent user exceeded agentMaxChangesPerMinute, or has too many pending proposals; request or entry.",
       "scope": "entry"
     },
+    "agent_use_write": {
+      "meaning": "An agent's model plan tried to command a writable point (invoke set, override or auto, or set a priority input or the fallback). Agents command points with write, where approval and value limits apply.",
+      "scope": "request"
+    },
     "agent_value_out_of_bounds": {
       "meaning": "Agent value is outside the point's min/max facets or the matching agentBoundN rule.",
       "scope": "entry"
@@ -3696,7 +3712,7 @@
       "scope": "request"
     },
     "approval_required": {
-      "meaning": "Agents can only propose point writes while agentApprovalRequired is on; other agent changes need a person or approval turned off.",
+      "meaning": "While agentApprovalRequired is on, an agent's change other than a point write is refused unless the agentDirect setting for that kind of change allows it; the message names the setting.",
       "scope": "request"
     },
     "auth_required": {

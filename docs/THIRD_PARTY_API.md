@@ -1066,9 +1066,10 @@ Failures arrive in two ways. A **request** error fails the whole request with an
 | `agent_cannot_approve` | request | Agent sessions and agent users cannot approve or reject proposals. |
 | `agent_priority_blocked` | entry | Agent used an emergency (level 1) action while agentAllowEmergency is off. |
 | `agent_rate_limited` | entry | Agent user exceeded agentMaxChangesPerMinute, or has too many pending proposals; request or entry. |
+| `agent_use_write` | request | An agent's model plan tried to command a writable point (invoke set, override or auto, or set a priority input or the fallback). Agents command points with write, where approval and value limits apply. |
 | `agent_value_out_of_bounds` | entry | Agent value is outside the point's min/max facets or the matching agentBoundN rule. |
 | `alarm_failed` | request | AlarmService unavailable or alarm database/read failure; also a per-uuid entry for unexpected ack/clear failures. |
-| `approval_required` | request | Agents can only propose point writes while agentApprovalRequired is on; other agent changes need a person or approval turned off. |
+| `approval_required` | request | While agentApprovalRequired is on, an agent's change other than a point write is refused unless the agentDirect setting for that kind of change allows it; the message names the setting. |
 | `auth_required` | request | No authenticated Niagara user at the WebSocket handshake; the socket is closed (1008), no frame is sent. |
 | `bad_query` | request | Niagara rejected the BQL or NEQL text, the query is too long or contains a pipe character, or it did not return a table. |
 | `bad_reference` | request | Model @ref does not identify an earlier create/clone, or a ref is duplicated. |
@@ -1342,6 +1343,16 @@ Recommended client approach:
 The `metadata` block is additive and request-controlled. Clients can ignore it or omit it and continue using `ord`, `slotPath`, `name`, `typeSpec`, `features`, `operations`, and point read/write payloads.
 
 Third-party clients should not require every metadata subfield to be populated. Different protocols and station models expose different evidence.
+
+### API 1.11 changes
+
+`apiVersion` advanced from `1.10` to `1.11`. Additive for people; for agents it only allows more, when a station turns it on. See [AI_AGENTS.md](AI_AGENTS.md#what-an-agent-may-do-by-itself).
+
+- New service properties `agentDirectFiles`, `agentDirectDiscovery`, `agentDirectModelEdits`, `agentDirectTags`, `agentDirectSchedules` and `agentDirectAlarms` (all off or blank by default). While `agentApprovalRequired` is on, each lets agents do one kind of work directly; point writes stay proposals. With none set, behavior is as in 1.10.
+- `capabilities.agents.direct`: `{pointWrites, files, discovery, modelEdits, tags, schedules, alarms}`, what agents may change without a person right now.
+- `approval_required` messages name the setting that would allow the refused change.
+- New error code `agent_use_write`: an agent's model plan may not command a writable point (invoke `set`/`override`/`auto` and their emergency and boolean forms, or set `in1`…`in16` or `fallback`). **Changed for agents with approval off**, who could do this through a plan before; they use `write`, where value limits and the emergency rule apply.
+- The protocol spec lists `agentDirect` on each operation an agent setting covers.
 
 ### API 1.10 changes
 

@@ -38,7 +38,7 @@ test("home shows the station, its alarms and what the agent is waiting on", () =
   withApp({}, { columns: 140, rows: 40 }, async (app) => {
     const frame = await app.until(/waiting for you/);
     assert.match(frame, /Northgate/);
-    assert.match(frame, /API 1\.10 · demo station/);
+    assert.match(frame, /API 1\.11 · demo station/);
     assert.match(frame, /5 unacknowledged\s+7 open/);
     assert.match(frame, /P5 override 70\.0 °F/);
     assert.match(frame, /refused\s+override 60\.0 %/);
