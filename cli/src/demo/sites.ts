@@ -2,9 +2,35 @@
 // history, some files, and what keeps happening while it runs. The station itself (protocol, values,
 // plans, jobs) is the same for all of them and lives in station.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { eastgate } from "./eastgate.js";
 import { DEMO_GRAPHICS } from "./graphics.js";
 
-export type SiteName = "northgate" | "riverside" | "harbor" | "summit";
+export type SiteName = "northgate" | "riverside" | "harbor" | "summit" | "eastgate";
+
+/** One BACnet object on a controller: what point discovery lists, and what a point added from it does. */
+export interface FieldObject {
+  name: string;
+  /** analogInput, analogOutput, analogValue, binaryInput, binaryOutput, binaryValue, multiStateInput, multiStateOutput or multiStateValue. */
+  type: string;
+  description: string;
+  value: number | boolean | string;
+  units?: string;
+  precision?: number;
+  /** A number that moves. */
+  sim?: (t: number) => number;
+  texts?: [string, string];
+  options?: string[];
+}
+
+/** A controller on the BACnet network that the station has not added: what device discovery finds. */
+export interface FieldDevice {
+  name: string;
+  instance: number;
+  address: string;
+  model: string;
+  tags?: string[];
+  objects: FieldObject[];
+}
 
 type Extra = Record<string, any>;
 
@@ -19,6 +45,8 @@ export interface SiteContext {
   device(name: string, instance: number, address: string, extra?: Extra, network?: string): string;
   /** Another driver network under Drivers. */
   network(name: string, typeSpec: string): string;
+  /** The objects of a controller like one already in the station ("VAV_101"), with values of their own. */
+  like(device: string, shift?: number): FieldObject[];
   /** "AHU_01/SupplyAirTemp" as a point ORD on a network (the BACnet one unless given). */
   point(path: string, network?: string): string;
   /** The BACnet network's ORD. */
@@ -51,6 +79,8 @@ export interface Site {
   station: string;
   /** What kind of place it is, for people choosing a demo. */
   title: string;
+  /** What state it starts in, and so what it is good for showing. */
+  shows: string;
   port: number;
   /** The bask profile `bask demo` saves for it. */
   profile: string;
@@ -67,10 +97,12 @@ export interface Site {
   agentMoves(c: SiteContext): (() => void)[];
   /** Alarms that come and go, in turn, while the station runs. */
   alarmMoves(c: SiteContext): (() => void)[];
+  /** Controllers on the wire that are not in the station: what BACnet discovery finds. */
+  field(c: SiteContext): FieldDevice[];
 }
 
 /** Saves a site's starting graphics in its station files, where the dashboard looks for them. */
-const graphics = (file: SiteContext["file"], key: SiteName, hoursAgo: number) => {
+const graphics = (file: SiteContext["file"], key: keyof typeof DEMO_GRAPHICS, hoursAgo: number) => {
   for (const [name, doc] of Object.entries(DEMO_GRAPHICS[key])) file(`^bask/graphics/${name}.json`, `${JSON.stringify(doc, null, 2)}\n`, hoursAgo);
 };
 
@@ -102,6 +134,7 @@ const northgate: Site = {
   key: "northgate",
   station: "Northgate",
   title: "Northgate Office: two air handlers, eight VAV boxes, a chilled water plant",
+  shows: "Finished: a graphic for every piece of equipment",
   port: 47899,
   profile: "demo",
   bounds: ["*/ZoneSetpoint 65..78", "*/SupplyAirSetpoint 50..62"],
@@ -234,6 +267,23 @@ const northgate: Site = {
       () => pushAlarm(raise(point("CHW_Plant/ChwFlow"), "Chilled water flow low: 352 gpm", { cls: "maintenance", priority: 150, state: "alert" })),
       () => pushAlarm(raise(point("AHU_01/MixedAirTemp"), "Mixed air temperature low: freeze protection warning", { cls: "critical", priority: 25 }))
     ];
+  },
+  field({ like }) {
+    return [
+      { name: "VAV_109", instance: 2009, address: "MSTP 2:19", model: "Zone controller", tags: ["hs:vav", "hs:equip"], objects: like("VAV_101", 1) },
+      { name: "VAV_110", instance: 2010, address: "MSTP 2:20", model: "Zone controller", tags: ["hs:vav", "hs:equip"], objects: like("VAV_102", 2) },
+      { name: "RTU_03", instance: 1003, address: "192.168.10.13", model: "Rooftop unit", tags: ["hs:ahu", "hs:equip"], objects: like("AHU_01", 3) },
+      {
+        name: "Lighting_Panel_A", instance: 4001, address: "192.168.10.40", model: "Lighting controller", tags: ["hs:equip"],
+        objects: [
+          { name: "LobbyLevel", type: "analogOutput", description: "Lobby dimming level", units: "%", precision: 0, value: 80 },
+          { name: "CorridorLevel", type: "analogOutput", description: "Corridor dimming level", units: "%", precision: 0, value: 60 },
+          { name: "Photocell", type: "analogInput", description: "Daylight at the lobby glazing", units: "fc", precision: 0, value: 240 },
+          { name: "AfterHoursOverride", type: "binaryValue", description: "After-hours lighting override", value: false, texts: ["Override", "Schedule"] },
+          { name: "PanelStatus", type: "binaryInput", description: "Panel status", value: true, texts: ["Ok", "Fault"] }
+        ]
+      }
+    ];
   }
 };
 
@@ -243,6 +293,7 @@ const riverside: Site = {
   key: "riverside",
   station: "Riverside",
   title: "Riverside Surgery Center: operating rooms, isolation rooms, a boiler plant, medical gas",
+  shows: "Part done: two graphics, more to add",
   port: 47900,
   profile: "demo-riverside",
   bounds: ["*/RoomTempSetpoint 62..72", "*/HwSupplySetpoint 140..180", "ISO_*/* locked"],
@@ -369,6 +420,12 @@ const riverside: Site = {
       () => pushAlarm(raise(point("MedGas/VacuumLevel"), "Medical vacuum low: 17.8 inHg", { cls: "lifeSafety", priority: 15, state: "alert" })),
       ...comesAndGoes(c, point("OR_1/RoomPressure"), "Operating room pressure low: door open", "Operating room pressure restored", { cls: "critical", priority: 35 })
     ];
+  },
+  field({ like }) {
+    return [
+      { name: "OR_4", instance: 2104, address: "MSTP 1:24", model: "Room controller", tags: ["hs:room", "hs:equip"], objects: like("OR_3", 1) },
+      { name: "ISO_203", instance: 2203, address: "MSTP 1:43", model: "Room pressure controller", tags: ["hs:room", "hs:equip"], objects: like("ISO_201", 2) }
+    ];
   }
 };
 
@@ -378,6 +435,7 @@ const harbor: Site = {
   key: "harbor",
   station: "Harbor",
   title: "Harbor Cold Storage: freezers, coolers, a compressor rack, dock doors, power meters",
+  shows: "No graphics yet: have the agent draw them",
   port: 47901,
   profile: "demo-harbor",
   bounds: ["Freezer_*/BoxSetpoint -20..0", "Cooler_*/BoxSetpoint 33..40"],
@@ -467,7 +525,6 @@ const harbor: Site = {
   },
   files({ file }) {
     file("^px/Home.px", px("Harbor Cold Storage", ["slot:/Drivers/BacnetNetwork/Freezer_1/points/BoxTemp"]), 500);
-    graphics(file, "harbor", 26);
     file("^px/Freezers.px", px("Freezers", [1, 2, 3, 4].map((i) => `slot:/Drivers/BacnetNetwork/Freezer_${i}/points/BoxTemp`)), 90);
     file("^px/Rack_A.px", px("Compressor rack A", ["slot:/Drivers/BacnetNetwork/Rack_A/points/SuctionPressure", "slot:/Drivers/BacnetNetwork/Rack_A/points/DischargePressure"]), 90);
     file("^nav/NavFile.nav", nav(["Freezers", "Rack_A"]), 90);
@@ -499,6 +556,12 @@ const harbor: Site = {
       () => pushAlarm(raise(point("Freezer_1/BoxTemp"), "Freezer 1 box temperature rising: -4.8 °F", { cls: "critical", priority: 35 })),
       ...comesAndGoes(c, point("Dock/AmmoniaLevel"), "Ammonia level high: 27 ppm (limit 25)", "Ammonia level returned to normal", { cls: "lifeSafety", priority: 5 })
     ];
+  },
+  field({ like }) {
+    return [
+      { name: "Freezer_5", instance: 5005, address: "10.40.2.15", model: "Refrigeration controller", tags: ["hs:freezer", "hs:equip"], objects: like("Freezer_1", 1) },
+      { name: "Cooler_3", instance: 5103, address: "10.40.2.33", model: "Refrigeration controller", tags: ["hs:cooler", "hs:equip"], objects: like("Cooler_2", 2) }
+    ];
   }
 };
 
@@ -508,6 +571,7 @@ const summit: Site = {
   key: "summit",
   station: "Summit",
   title: "Summit Data Hall: CRAC units, hot and cold aisles, chillers, UPS and power distribution",
+  shows: "Part done: two graphics, more to add",
   port: 47902,
   profile: "demo-summit",
   bounds: ["CRAC_*/SupplyAirSetpoint 60..72", "CRAC_*/FanSpeed 40..100"],
@@ -630,8 +694,14 @@ const summit: Site = {
       () => pushAlarm(raise(point("Hall_A/Humidity"), "Hall humidity low: 31 %RH", { priority: 120, state: "alert" })),
       ...comesAndGoes(c, point("UPS_A/OnBattery", "slot:/Drivers/SnmpNetwork"), "UPS A on battery: utility sag", "UPS A back on utility power", { cls: "critical", priority: 10 })
     ];
+  },
+  field({ like }) {
+    return [
+      { name: "CRAC_5", instance: 7005, address: "10.60.0.15", model: "CRAC controller", tags: ["hs:crac", "hs:equip"], objects: like("CRAC_1", 1) },
+      { name: "Chiller_3", instance: 7203, address: "10.60.0.53", model: "Chiller panel", tags: ["hs:chiller", "hs:equip"], objects: like("Chiller_2", 2) }
+    ];
   }
 };
 
-export const DEMO_SITES: Record<SiteName, Site> = { northgate, riverside, harbor, summit };
+export const DEMO_SITES: Record<SiteName, Site> = { northgate, riverside, harbor, summit, eastgate };
 export const SITE_NAMES = Object.keys(DEMO_SITES) as SiteName[];

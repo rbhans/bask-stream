@@ -331,12 +331,12 @@ export const SYMBOLS: SymbolDef[] = [
 
   // Refrigeration and critical rooms.
   {
-    id: "compressor", title: "Compressor", group: "Refrigeration and critical rooms", note: "Pistons rise and fall while it runs.",
+    id: "compressor", title: "Compressor", group: "Refrigeration and critical rooms", note: "Pistons rise and fall while it runs (on).",
     uses: ["on"], sample: { on: true }, ports: { suction: [-1, 1], discharge: [5, 1] },
     draw: (s, f) => ({ rows: ["╭───╮", `┤${moving(s) && mod(Math.floor(f / 2), 2) ? "▀▄▀" : "▄▀▄"}├`, "╰───╯"], paint: ["     ", " sss ", "     "] })
   },
   {
-    id: "cold-room", title: "Cold room", group: "Refrigeration and critical rooms", note: "A freezer or cooler box with frost that twinkles, its temperature, and a door that shows open.",
+    id: "cold-room", title: "Cold room", group: "Refrigeration and critical rooms", note: "A freezer or cooler box: its reading (the box temperature) inside, frost that twinkles while it runs (on), and a door that shows open (open).",
     uses: ["on", "text", "open"], sample: { on: true, text: "-9.4 °F" },
     draw: (s, f) => {
       const twinkle = moving(s) && mod(Math.floor(f / 3), 2);

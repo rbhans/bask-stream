@@ -8,7 +8,7 @@ import path from "node:path";
 import { configDir } from "./config.js";
 
 export type Mux = "rex" | "tmux";
-export type LayoutName = "ops" | "graphics" | "monitor" | "duo";
+export type LayoutName = "ops" | "graphics" | "build" | "monitor" | "duo";
 
 export interface Pane {
   id: string;
@@ -110,6 +110,16 @@ export function buildLayout(options: LayoutOptions): Pane[] {
       { ...view("activity", "AI Activity", "activity"), split: { of: "graphics", direction: "below" as const, percent: 32 } }
     ];
   }
+  if (options.layout === "build") {
+    // Bringing a station up: the tree and the jobs on the left, what gets drawn in the middle, the agent on the right.
+    return [
+      view("explorer", "Explorer", "explorer"),
+      ...(agent ? [{ ...agent, split: { of: "explorer", direction: "right" as const, percent: 36 } }] : []),
+      { ...view("graphics", "Graphics", "graphics"), split: { of: "explorer", direction: "right" as const, percent: 56 } },
+      { ...view("jobs", "Jobs", "jobs"), split: { of: "explorer", direction: "below" as const, percent: 36 } },
+      { ...view("activity", "AI Activity", "activity"), split: { of: "graphics", direction: "below" as const, percent: 36 } }
+    ];
+  }
   if (options.layout === "monitor" || !agent) {
     const second = options.layout === "monitor" ? view("alarms", "Alarms", "alarms") : view("watch", "Watch", "watch");
     const third = options.layout === "monitor" ? view("watch", "Watch", "watch") : view("alarms", "Alarms", "alarms");
@@ -150,7 +160,12 @@ The \`bask\` command is on your PATH and already points at this station. You act
 - A write that prints "Proposed P7" has not happened yet: it waits for a person to approve it. Say so, do not repeat it, and check later with \`bask proposals --all\`.
 - If a change is refused, do not retry or work around it. Report the refusal and its code.
 - Alarms: \`bask ack <uuid>...\`. Files: \`bask put <local> <^path>\`. Components, properties, links and actions: \`bask call preview_model_changes\` then \`bask call apply_model_changes\`.
-- Discovery: \`bask discover <network or device ord>\`, then \`bask add <job> <slot>... --apply\`.
+
+## Bringing BACnet equipment into the station
+- \`bask discover <network ord>\` lists the controllers that answer on a BACnet network; with \`--add\` it adds the ones that are not in the station yet. Discovery puts traffic on the network, so even looking needs \`--allow-writes -y --reason "<why>"\`.
+- \`bask discover <network ord> --points --add\` then discovers the points of every device on that network and adds them. For some devices only, name them: \`bask discover <device ord>... --add\`.
+- To pick and choose instead of adding everything: \`bask discover <ord>\` to see the results, then \`bask add <job> <slot>... --apply\` (devices need \`--parent <network ord>\`).
+- The person sees each job in their Jobs pane and the new devices and points in their Explorer. Afterwards read a few of the new points to check they make sense.
 
 ## Showing the person things
 - \`bask show <ord>\` selects it in their Explorer pane, \`bask show --trend <ord>\` charts it, \`bask show --watch <ord>\` adds it to their watch list. Use these when you refer to a point, so they can see it.
@@ -158,6 +173,7 @@ The \`bask\` command is on your PATH and already points at this station. You act
 ## Drawing a graphic
 - A graphic is a drawing of equipment in the person's terminal, moving, with live values: an air handler, a plant, a row of freezers. You write a small JSON file with no coordinates, naming symbols and points.
 - Read \`bask graphic guide\` first: it has the format, every symbol and an example. Then \`bask graphic print <file>\` shows the result as text with live values and lists anything wrong; fix the file until it reads well.
+- Before drawing, find out what serves what (which boxes an air handler feeds, which pumps are on which loop): the names, the tags (\`bask call read_tags '{"ords":["<ord>"]}'\`) and the station's files (\`bask files\`: schedules and notes are often kept there) say so. If nothing does, say what you assumed.
 - \`bask graphic save <file> --allow-writes -y --reason "<why>"\` stores it on the station and opens it in the person's Graphics pane. \`bask graphic list\` and \`bask graphic get <name>\` show what is already there: change an existing graphic rather than adding a second one for the same equipment.
 
 ## Rules

@@ -133,6 +133,7 @@ test("agent-brief tells an agent how to work on this station", async () => {
   assert.match(out, /signed in as the Niagara user "test" \(bask profile "fake"\)/);
   assert.match(out, /--allow-writes -y --reason/);
   assert.match(out, /bask show --trend <ord>/);
+  assert.match(out, /bask discover <network ord> --points --add/);
 });
 
 test("workspace plans its panes for Rex and tmux without starting anything", async () => {
@@ -143,6 +144,11 @@ test("workspace plans its panes for Rex and tmux without starting anything", asy
   assert.match(ops[0].shell, /-p fake tui --view explorer --pane$/);
   assert.deepEqual(buildLayout({ layout: "ops", profile: "fake", allowWrites: true }).map((p) => p.label), ["Explorer", "Watch", "Alarms", "AI Activity"]);
   assert.match(buildLayout({ layout: "duo", profile: "fake", allowWrites: true, agent })[0].shell, /--allow-writes tui --view home$/);
+  // Bringing a station up: the tree and the jobs, what gets drawn, the agent's record, and the agent.
+  const build = buildLayout({ layout: "build", profile: "fake", allowWrites: false, agent, demo: "eastgate" });
+  assert.deepEqual(build.map((p) => p.label), ["Explorer", "Claude Code", "Graphics", "Jobs", "AI Activity"]);
+  assert.match(build[3].shell, /demo --site eastgate --view jobs --pane$/);
+  assert.deepEqual(buildLayout({ layout: "build", profile: "fake", allowWrites: false }).map((p) => p.label), ["Explorer", "Graphics", "Jobs", "AI Activity"]);
 
   const rex = launch("rex", "bask-fake", ops, { rex: "rex", dryRun: true }).commands;
   assert.match(rex[0], /^rex new bask-fake --window Explorer --json -- sh .*explorer\.sh$/);
@@ -168,13 +174,21 @@ test("workspace --dry-run on the demo station prints the plan", async () => {
 test("demo --list names the simulated buildings, and each gets its own workspace", async () => {
   const list = await bask("demo", "--list");
   assert.equal(list.code, 0, list.out);
-  for (const site of ["northgate", "riverside", "harbor", "summit"]) assert.match(list.out, new RegExp(`${site}\\s+\\w+\\s+47[89]\\d\\d`));
+  for (const site of ["northgate", "riverside", "harbor", "summit", "eastgate"]) assert.match(list.out, new RegExp(`${site}\\s+\\w+\\s+47[89]\\d\\d`));
+  assert.match(list.out, /northgate\s+Finished: a graphic for every piece of equipment/);
+  assert.match(list.out, /harbor\s+No graphics yet/);
+  assert.match(list.out, /eastgate\s+New station, nothing added/);
   const plan = await bask("workspace", "--demo", "--site", "all", "--dry-run", "--mux", "rex");
   if (plan.code !== 0) return assert.match(plan.out, /Rex's command-line tool was not found/);
-  for (const session of ["bask-demo", "bask-demo-riverside", "bask-demo-harbor", "bask-demo-summit"]) assert.match(plan.out, new RegExp(`session ${session},`));
+  for (const session of ["bask-demo", "bask-demo-riverside", "bask-demo-harbor", "bask-demo-summit", "bask-demo-eastgate"]) assert.match(plan.out, new RegExp(`session ${session},`));
   assert.match(plan.out, /demo --site harbor --view explorer --pane/);
   // One agent per building is opt-in.
   assert.doesNotMatch(plan.out, /pane Claude Code/);
+  // Another agent's command can be named, and the build layout has a pane for the jobs and one for the graphics.
+  const build = await bask("workspace", "--demo", "--site", "eastgate", "--layout", "build", "--agent", "sh", "--dry-run", "--mux", "rex");
+  assert.match(build.out, /# pane sh: sh/);
+  assert.match(build.out, /demo --site eastgate --view jobs --pane/);
+  assert.match(build.out, /demo --site eastgate --view graphics --pane/);
 });
 
 test("fleet needs a terminal and says so", async () => {

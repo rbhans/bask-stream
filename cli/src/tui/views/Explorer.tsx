@@ -91,9 +91,11 @@ export function ExplorerView(props: {
     void (async () => {
       const parts = reveal.ord.replace(/^slot:\//, "").split("/").filter(Boolean);
       const ancestors = parts.slice(0, -1).map((_, i) => `slot:/${parts.slice(0, i + 1).join("/")}`);
-      for (const ord of ["slot:/", ...ancestors]) {
+      const chain = ["slot:/", ...ancestors, reveal.ord];
+      for (let i = 0; i < chain.length - 1; i += 1) {
         if (cancelled) return;
-        if (!childrenRef.current.has(ord)) await load(ord);
+        // A folder that was read before the thing was added does not have it yet: read it again.
+        if (!childrenRef.current.get(chain[i])?.includes(chain[i + 1])) await load(chain[i]);
       }
       if (cancelled) return;
       setExpanded((set) => new Set([...set, ...ancestors]));
@@ -156,6 +158,54 @@ export function ExplorerView(props: {
     }
   });
   const selected = rows[list.cursor]?.empty ? undefined : rows[list.cursor]?.node;
+
+  // Keep the open folders current: what an agent, Workbench or another window adds or removes shows
+  // up by itself. Big folders are read less often, and the selection stays on the same component.
+  const live = useRef({ nodes, expanded, selected: selected?.ord, keep: undefined as string | undefined });
+  Object.assign(live.current, { nodes, expanded, selected: selected?.ord });
+  useEffect(() => {
+    if (!active) return;
+    let busy = false;
+    let tick = 0;
+    const timer = setInterval(async () => {
+      if (busy) return;
+      busy = true;
+      tick += 1;
+      try {
+        const open = [...new Set(["slot:/", ...live.current.expanded])].filter((ord) => childrenRef.current.has(ord));
+        for (const ord of open) {
+          const before = childrenRef.current.get(ord) ?? [];
+          if (before.length > 150 && tick % 5 !== 0) continue;
+          const node = await client.browse(ord, { depth: 1 }).catch(() => undefined);
+          if (!node) continue;
+          const kids: BrowseNode[] = (node.children ?? []).map((c) => ({ ...c, ord: toSlotOrd(c.ord) }));
+          const known = live.current.nodes;
+          const same = kids.length === before.length && kids.every((kid, i) => {
+            const old = known.get(kid.ord);
+            return kid.ord === before[i] && old?.hasChildren === kid.hasChildren && old?.display === kid.display && (kid.kind === "point" || old?.status === kid.status);
+          });
+          if (same) continue;
+          live.current.keep = live.current.selected;
+          setNodes((map) => {
+            const next = new Map(map);
+            for (const kid of kids) next.set(kid.ord, kid);
+            return next;
+          });
+          setChildren((map) => new Map(map).set(ord, kids.map((kid) => kid.ord)));
+        }
+      } finally {
+        busy = false;
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [active, client]);
+  useEffect(() => {
+    const keep = live.current.keep;
+    if (!keep) return;
+    live.current.keep = undefined;
+    const index = rows.findIndex((row) => !row.empty && row.node.ord === keep);
+    if (index >= 0 && index !== list.cursor) list.setCursor(index);
+  }, [rows]);
 
   useEffect(() => {
     if (!pendingSelect) return;

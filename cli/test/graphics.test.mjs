@@ -197,8 +197,11 @@ test("every symbol can be used, and the guide lists them all with their ports", 
     const text = drawGraphic(read.plan, () => undefined, 2).toString();
     assert.ok(text.split("\n").length === read.plan.height, def.id);
   }
-  assert.match(guide, /\| chiller \| 14 x 5 \| load \| left, right, top, bottom, cwOut, cwIn, chwOut, chwIn \|/);
-  assert.match(guide, /\| cooling-coil \| 6 x 5 \| valve position \| supply, return \|/);
+  // Each port says which side it is on, so parts can be placed where their pipes run straight.
+  assert.match(guide, /\| chiller \| 14 x 5 \| load \| cwOut \(right, upper\), cwIn \(left, upper\), chwOut \(right, lower\), chwIn \(left, lower\) \|/);
+  assert.match(guide, /\| cooling-coil \| 6 x 5 \| valve position \| supply \(bottom, left\), return \(bottom, right\) \|/);
+  assert.match(guide, /\| boiler \| 9 x 5 \| firing rate \| supply \(bottom, left\), return \(bottom, right\) \|/);
+  assert.match(guide, /\| pump \| 3 x 3 \| speed \| in \(left\), out \(right\) \|/);
   assert.match(guide, /bask graphic print/);
   // The examples in the guide are real: they check and lay out without a problem.
   const blocks = [...guide.matchAll(/```json\n(\{[\s\S]*?\n\})\n```/g)].map((m) => JSON.parse(m[1]));
@@ -261,11 +264,11 @@ test("bask graphic: guide, print, save, list, get, show and rm", async () => {
   const saved = await bask("graphic", "print", "chw-plant");
   assert.equal(saved.code, 0, saved.out);
   assert.match(saved.out, /Chiller 1/);
-  assert.match(saved.out, /CHW supply\n.*44\.\d °F/);
+  assert.match(saved.out, /CHW supply\n.*4[345]\.\d °F/);
   assert.match(saved.out, /Chilled water plant · \d+ x \d+ cells · 6 points/);
 
   // A file with a mistake says where, and is not saved.
-  const file = join(configDir, "vav-105.json");
+  const file = join(configDir, "zone-105.json");
   const doc = { title: "VAV 105", base: "slot:/Drivers/BacnetNetwork/VAV_105/points", rows: [{ parts: [{ symbol: "vav", label: "VAV 105", value: "DamperPosition", aux: "ReheatValve", reading: "ZoneTemp" }, { symbol: "thermometr", label: "Zone", value: { point: "ZoneTemp", min: 60, max: 90 } }] }] };
   writeFileSync(file, JSON.stringify(doc));
   const wrong = await bask("graphic", "print", file, "--offline");
@@ -295,19 +298,19 @@ test("bask graphic: guide, print, save, list, get, show and rm", async () => {
   assert.match((await bask("graphic", "save", file)).out, /--allow-writes/);
   const save = await bask("graphic", "save", file, "--allow-writes", "-y", "--reason", "Zone 105 runs hot");
   assert.equal(save.code, 0, save.out);
-  assert.match(save.out, /✓ Saved vav-105 at \^bask\/graphics\/vav-105\.json \(4 points\)/);
-  assert.equal(station.state.files.has("^bask/graphics/vav-105.json"), true);
-  assert.deepEqual(new Link(station.url).get().show, { n: 1, kind: "graphic", ord: "vav-105", from: new Link(station.url).get().show.from });
-  assert.match((await bask("graphic", "save", file, "--allow-writes", "-y", "--name", "VAV 105")).out, /✓ Replaced vav-105/);
+  assert.match(save.out, /✓ Saved zone-105 at \^bask\/graphics\/zone-105\.json \(4 points\)/);
+  assert.equal(station.state.files.has("^bask/graphics/zone-105.json"), true);
+  assert.deepEqual(new Link(station.url).get().show, { n: 1, kind: "graphic", ord: "zone-105", from: new Link(station.url).get().show.from });
+  assert.match((await bask("graphic", "save", file, "--allow-writes", "-y", "--name", "Zone 105")).out, /✓ Replaced zone-105/);
 
   const list = await bask("graphic", "list");
   assert.match(list.out, /ahu-01\s+\^bask\/graphics\/ahu-01\.json/);
-  assert.match(list.out, /vav-105/);
-  assert.deepEqual(JSON.parse((await bask("graphic", "get", "vav-105")).out), doc);
+  assert.match(list.out, /zone-105/);
+  assert.deepEqual(JSON.parse((await bask("graphic", "get", "zone-105")).out), doc);
   assert.match((await bask("graphic", "show", "ahu-01")).out, /ahu-01/);
-  const removed = await bask("graphic", "rm", "vav-105", "--allow-writes", "-y");
+  const removed = await bask("graphic", "rm", "zone-105", "--allow-writes", "-y");
   assert.equal(removed.code, 0, removed.out);
-  assert.equal(station.state.files.has("^bask/graphics/vav-105.json"), false);
+  assert.equal(station.state.files.has("^bask/graphics/zone-105.json"), false);
 
   assert.equal(graphicName("AHU 01.json"), "ahu-01");
   assert.equal(graphicPath("Chw Plant"), `${GRAPHICS_FOLDER}/chw-plant.json`);
@@ -319,12 +322,12 @@ test("the Graphics view lists the station's graphics, draws the picked one live,
   const app = mount(client, { view: "graphics" }, { columns: 130, rows: 36 });
   try {
     const frame = await app.until(/AHU-1 and its zones/);
-    assert.match(frame, /Graphics ─+ 2/);
+    assert.match(frame, /Graphics ─+ 12/);
     assert.match(frame, /ahu-01/);
     assert.match(frame, /chw-plant/);
     await app.until(/Supply fan/);
     const drawn = await app.until(/\d\d\.\d °F\s+\d\d\.\d %\s+\d\d\.\d %/);
-    assert.match(drawn, /VAV 101\s+VAV 103\s+VAV 105\s+VAV 107/);
+    assert.match(drawn, /VAV 101\s+VAV 102\s+VAV 103\s+VAV 104/);
     assert.match(drawn, /OA\s+│≡≡/);
     // The picked part and its points, under the drawing.
     assert.match(drawn, /Filter\s+FilterDP 0\.\d+ inH₂O/);
@@ -337,7 +340,7 @@ test("the Graphics view lists the station's graphics, draws the picked one live,
     await app.press("space");
     await app.until(/paused/);
     // Down the list to the plant; enter shows the picked part's point in the Explorer.
-    await app.press("down");
+    await app.press("down", "down", "down");
     const plantFrame = await app.until(/Chilled water plant/);
     assert.match(plantFrame, /CHW supply/);
     await app.until(/Chiller 1\s+Chiller1Status Running/);
@@ -355,10 +358,10 @@ test("g opens Graphics, a narrow pane shows just the drawing, and a show request
     await app.until(/Northgate/);
     await app.press("g");
     const frame = await app.until(/AHU-1 and its zones/);
-    assert.match(frame, /1 of 2/);
+    assert.match(frame, /1 of 12/);
     for (const line of frame.split("\n")) assert.ok(len(line) <= 84, line);
-    await app.press("down");
-    await app.until(/Chilled water plant ─+ 2 of 2/);
+    await app.press("down", "down", "down");
+    await app.until(/Chilled water plant ─+ 4 of 12/);
   } finally {
     app.unmount();
   }
@@ -373,8 +376,8 @@ test("g opens Graphics, a narrow pane shows just the drawing, and a show request
   } finally {
     asked.unmount();
   }
-  const empty = await startStation({ site: "northgate" });
-  for (const path of [...empty.station.state.files.keys()]) if (path.startsWith("^bask/")) empty.station.state.files.delete(path);
+  // Harbor starts with nothing drawn.
+  const empty = await startStation({ site: "harbor" });
   const bare = mount(empty.client, { view: "graphics" }, { columns: 110, rows: 24 });
   try {
     const frame = await bare.until(/No graphics on this station yet/);

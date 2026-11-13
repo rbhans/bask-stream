@@ -347,13 +347,16 @@ test("the all-stations view shows every station, their alarms together, and open
   const fleet = await startFleet();
   const app = mountFleet(fleet.entries, {}, { columns: 170, rows: 46 });
   try {
-    const frame = await app.until(/4 stations · 4 live/);
-    for (const name of ["1 Northgate", "2 Riverside", "3 Harbor", "4 Summit"]) assert.match(frame, new RegExp(name));
+    const frame = await app.until(/5 stations · 5 live/);
+    for (const name of ["1 Northgate", "2 Riverside", "3 Harbor", "4 Summit", "5 Eastgate"]) assert.match(frame, new RegExp(name));
+    // The new station has nothing in it yet, and its card says so.
+    assert.match(frame, /no open alarms\s+AI: nothing waiting/);
+    assert.match(frame, /Nothing on this station's watch list yet/);
     await app.until(/18 unacked\s+24 open\s+4 waiting for approval/);
-    const all = await app.until(/Newest alarms, all stations ─+ 24 open across 4 stations/);
+    const all = await app.until(/Newest alarms, all stations ─+ 24 open across 5 stations/);
     assert.match(all, /Summit\s+unacked Hall_A\/HotAisleTemp/);
     assert.match(all, /Harbor\s+unacked Freezer_2\/BoxTemp/);
-    assert.match(all, /Freezer_2\/BoxTemp\s+4\.\d °F/);
+    assert.match(all, /Freezer_2\/BoxTemp\s+[345]\.\d °F/);
     await app.press("right", "enter");
     const station = await app.until(/Riverside · admin@/);
     assert.match(station, /1 Home\s+2 Explorer/);

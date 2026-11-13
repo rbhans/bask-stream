@@ -58,23 +58,35 @@ Colours follow the terminal: bask asks it whether it is light or dark as it star
 
 ## Demo buildings
 
-`bask demo` needs no station. There are four simulated buildings, each with its own equipment, alarms, schedules, files and AI agent history, and each keeps changing while it runs:
+`bask demo` needs no station. There are five simulated buildings, each with its own equipment, alarms, schedules, files and AI agent history, and each keeps changing while it runs. They start in different states, so there is one to look at and two to work on:
 
-| `--site` | Station | What it is |
-|---|---|---|
-| `northgate` (default) | Northgate | An office: two air handlers, eight VAV boxes, a chilled water plant |
-| `riverside` | Riverside | A surgery center: operating rooms, isolation rooms, a boiler plant, medical gas |
-| `harbor` | Harbor | Cold storage: freezers, coolers, a compressor rack, dock doors, a Modbus power meter |
-| `summit` | Summit | A data hall: CRAC units, hot and cold aisles, chillers, UPS and PDUs over SNMP |
+| `--site` | Station | What it is | How it starts |
+|---|---|---|---|
+| `northgate` (default) | Northgate | An office: two air handlers, eight VAV boxes, a chilled water plant | Finished: a graphic for every piece of equipment (12) |
+| `riverside` | Riverside | A surgery center: operating rooms, isolation rooms, a boiler plant, medical gas | Part done: two graphics |
+| `harbor` | Harbor | Cold storage: freezers, coolers, a compressor rack, dock doors, a Modbus power meter | Nothing drawn: have the agent draw it |
+| `summit` | Summit | A data hall: CRAC units, hot and cold aisles, chillers, UPS and PDUs over SNMP | Part done: two graphics |
+| `eastgate` | Eastgate | A new office station: four air handlers, 32 VAV boxes, a chilled water and a heating water plant | Nothing added: the BACnet network is empty, and discovery finds 46 controllers with 614 points |
 
 ```bash
 bask demo --site harbor              # one building's dashboard
-bask demo --fleet                    # all four in the all-stations view (same as bask fleet --demo)
+bask demo --fleet                    # all five in the all-stations view (same as bask fleet --demo)
 bask workspace --demo --site summit  # a workspace on one building
 bask workspace --demo --site all     # a Rex or tmux session per building
+bask demo --list                     # the buildings and how each starts
 ```
 
-Each site is saved as a profile (`demo`, `demo-riverside`, `demo-harbor`, `demo-summit`) on its own local port, so every other `bask` command works on it too. The first window to open a site hosts its station; closing that window stops it.
+Each site is saved as a profile (`demo`, `demo-riverside`, `demo-harbor`, `demo-summit`, `demo-eastgate`) on its own local port, so every other `bask` command works on it too. The first window to open a site hosts its station; closing that window stops it, and the next start is a fresh copy: nothing an agent drew or added is kept, so a demo can be run again.
+
+### Three things to show
+
+1. **A finished station.** `bask workspace --demo --layout graphics`: Northgate, with every air handler, VAV box and the plant drawn and moving.
+2. **An agent draws the graphics.** `bask workspace --demo --site harbor --layout graphics`: the Graphics pane is empty. Ask the agent, for example: *"Draw graphics for this building: the freezers and coolers, and the compressor rack."* Each one opens in the Graphics pane as it is saved, and the AI Activity pane lists the saves with the agent's reasons.
+3. **An agent brings a station up.** `bask workspace --demo --site eastgate --layout build`: the BACnet network has no devices. Ask: *"Discover the BACnet network and add everything it finds, then draw the plants and the air handlers with their zones."* The Jobs pane shows each discovery, the Explorer fills with the controllers and their points, and the graphics follow. The mechanical schedule in `^config/equipment-schedule.csv` says which VAV box is on which air handler.
+
+Eastgate's equipment and point names (`AHU_01`/`Supply_Air_Temp`, `VAV_12`/`Space_Temp`) follow the BACnet HVAC simulator used for testing against real stations, with one controller per piece of equipment here. The agent's part is two commands: `bask discover <network> --add`, then `bask discover <network> --points --add`.
+
+While a real agent session is working on a demo station, the scripted agent that otherwise keeps proposing changes stays quiet, so the AI Activity pane shows only what the real one did.
 
 ## Symbols
 
@@ -134,6 +146,7 @@ bask graphic list                   # also: get <name>, show <name>, rm <name>
 bask workspace                      # Explorer · Alarms · AI Activity · Claude Code
 bask workspace --no-agent           # Explorer · Watch · Alarms · AI Activity
 bask workspace --layout graphics    # Graphics · AI Activity · Claude Code
+bask workspace --layout build       # Explorer · Jobs · Graphics · AI Activity · Claude Code (bringing a station up)
 bask workspace --layout monitor     # Home · Alarms · Watch · AI Activity
 bask workspace --layout duo         # the full dashboard beside the agent
 bask workspace --demo               # the same on a simulated building (--site to choose)
@@ -175,13 +188,13 @@ On macOS the folder is `~/Library/Application Support/Claude/Claude Extensions/l
 | `bask files [path]` · `bask cat <path> [--out file]` | List and read the station's files (`^px/Home.px`) |
 | `bask put <file> <path> [--overwrite]` · `bask rm <path> [--recursive]` | Upload or delete station files; needs `--allow-writes`; confirms |
 | `bask jobs` · `bask job <ord> [--cancel]` | Station jobs; one job's state, log and results |
-| `bask discover <network\|device> [--no-wait]` | BACnet discovery: devices on a network, or a device's points; needs `--allow-writes` |
-| `bask add <job> <slots...\|all> [--parent ord] [--apply]` | Plan for adding discovered devices or points; `--apply` adds them (needs `--allow-writes`) |
+| `bask discover <network\|device...> [--add] [--points] [--no-wait]` | BACnet discovery: the devices on a network, or the points of devices. `--add` adds everything found that is not there yet; `--points` on a network does every device under it. Needs `--allow-writes` |
+| `bask add <job> <slots...\|all> [--parent ord] [--apply]` | Plan for adding chosen discovery results; `--apply` adds them, a hundred at a time (needs `--allow-writes`) |
 | `bask proposals [--all]` · `bask approve <id>` · `bask reject <id> [--note]` | AI agent proposals waiting for a person; approving runs the write with your permissions (needs `--allow-writes`) |
 | `bask agent-log [--since 24h]` | What AI agents did, from the station's audit history |
 | `bask metrics` | OpenMetrics text |
 | `bask tui [--view <name>] [--pane] [--no-mouse] [--theme dark\|light]` | The dashboard (also what `bask` alone runs), opened on a view |
-| `bask workspace [--layout ops\|monitor\|duo] [--mux rex\|tmux] [--agent <cmd>\|--no-agent] [--agent-profile <name>] [--demo] [--dry-run]` | A multi-pane station workspace in Rex or tmux |
+| `bask workspace [--layout ops\|graphics\|build\|monitor\|duo] [--mux rex\|tmux] [--agent <cmd>\|--no-agent] [--agent-profile <name>] [--demo] [--dry-run]` | A multi-pane station workspace in Rex or tmux |
 | `bask show <ord> [--trend] [--watch]` | Select an ORD in the open Explorer, chart it, or add it to the watch list |
 | `bask agent-brief` | The briefing an AI agent gets on working with this station |
 | `bask symbols [--list]` | The terminal symbol library: animated equipment drawn in text, with example assemblies |

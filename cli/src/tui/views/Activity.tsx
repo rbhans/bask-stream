@@ -31,8 +31,30 @@ export function outcomeLook(a: Pick<Activity, "kind" | "source" | "outcome">): {
 
 export const whoOf = (a: Activity) => (a.kind === "approved" || a.kind === "rejected" ? a.user : a.agent ? a.agent : a.user);
 export const whatOf = (a: Activity) =>
-  a.source === "audit" ? [a.action, a.oldValue !== undefined || a.value !== undefined ? `${a.oldValue !== undefined ? `${a.oldValue} → ` : ""}${a.value ?? ""}` : ""].filter(Boolean).join(": ") : a.change ?? a.action;
+  a.count ? `${a.count}: ${a.action}` : a.source === "audit" ? [a.action, a.oldValue !== undefined || a.value !== undefined ? `${a.oldValue !== undefined ? `${a.oldValue} → ` : ""}${a.value ?? ""}` : ""].filter(Boolean).join(": ") : a.change ?? a.action;
 const targetText = (target: string) => (/^slot:/.test(target) ? place(target) : target.replace(/^file:/, ""));
+
+/**
+ * One plan can leave dozens of audit records (46 devices added, a device's 18 points): a run of the
+ * same operation by one user on one target, within a few seconds, shows as one row that counts them.
+ */
+export function foldBursts(entries: Activity[]): Activity[] {
+  const out: Activity[] = [];
+  for (let i = 0; i < entries.length; ) {
+    const first = entries[i];
+    let end = i + 1;
+    if (first.source === "audit") {
+      while (end < entries.length && entries[end].source === "audit" && entries[end].user === first.user && entries[end].kind === first.kind && entries[end].target === first.target && Math.abs(entries[end].at - first.at) < 3000) end += 1;
+    }
+    if (end - i < 3) out.push(...entries.slice(i, end));
+    else {
+      const run = entries.slice(i, end).sort((a, b) => a.at - b.at);
+      out.push({ ...first, key: `${first.key}|x${run.length}`, count: run.length, action: run.map((e) => e.action).filter(Boolean).join(", "), oldValue: undefined, value: undefined });
+    }
+    i = end;
+  }
+  return out;
+}
 
 type Row = { key: string; proposal: Proposal } | { key: string; entry: Activity };
 const FILTERS = ["everything", "changes", "proposals", "refusals"] as const;
@@ -73,7 +95,7 @@ export function ActivityView(props: {
       if (filter === "refusals") return e.kind === "refused" || e.kind === "rejected" || e.kind === "failed";
       return true;
     };
-    return [...(filter === "everything" || filter === "proposals" ? pending.map((proposal) => ({ key: `pending-${proposal.id}`, proposal })) : []), ...entries.filter(keep).map((entry) => ({ key: entry.key, entry }))];
+    return [...(filter === "everything" || filter === "proposals" ? pending.map((proposal) => ({ key: `pending-${proposal.id}`, proposal })) : []), ...foldBursts(entries.filter(keep)).map((entry) => ({ key: entry.key, entry }))];
   }, [entries, pending, filter, everyone, showAudit]);
 
   // Counts and an hour-by-hour (or day-by-day) picture of what agents did in the window.

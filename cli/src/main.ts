@@ -166,6 +166,12 @@ program
         ["connections", `${limits.activeConnections ?? "?"} / ${limits.maxConnections ?? "?"}`],
         ["subscriptions", `${limits.totalSubscriptions ?? "?"} (max ${limits.maxSubscriptionsPerClient ?? "?"} per client)`]
       ];
+      const agents = caps.agents as (Json & { actor?: Json; bounds?: string[] }) | undefined;
+      if (agents?.isAgent) {
+        rows.push(["acting as", `an AI agent${agents.actor?.name ? `: ${agents.actor.name}` : ""}${agents.actor?.onBehalfOf ? ` for ${agents.actor.onBehalfOf}` : ""}`]);
+        rows.push(["agent rules", [agents.approvalRequired ? "point writes wait for a person's approval" : "point writes go straight through", agents.reasonRequired ? "every change needs --reason" : "", agents.maxChangesPerMinute ? `${agents.maxChangesPerMinute} changes a minute` : "", agents.allowEmergency ? "" : "no emergency overrides"].filter(Boolean).join(" · ")]);
+        if (agents.bounds?.length) rows.push(["value limits", agents.bounds.join(" · ")]);
+      } else if (agents) rows.push(["acting as", "a person"]);
       for (const line of metrics.split("\n")) {
         const match = /^baskstream_(\w+?)(?:_total)? (\d+)/.exec(line);
         if (match) rows.push([match[1].replace(/_/g, " "), match[2]]);
@@ -627,31 +633,137 @@ program
     })
   );
 
+/** Every result of a job, a page at a time. */
+async function jobResults(client: Connection["client"], job: string): Promise<JobDetail["results"]> {
+  const all: JobDetail["results"] = [];
+  for (let offset = 0; ; ) {
+    const page = await client.job(job, { offset, limit: 1000 });
+    all.push(...page.results);
+    if (page.nextOffset === null || page.nextOffset === undefined || page.results.length === 0) return all;
+    offset = page.nextOffset;
+  }
+}
+
+/** Waits for a job to finish. */
+async function jobDone(client: Connection["client"], job: string, timeout: string): Promise<void> {
+  const deadline = Date.now() + parseDuration(timeout);
+  for (let wait = 400; ; wait = Math.min(1000, wait + 200)) {
+    if ((await client.job(job, { limit: 1 })).complete) return;
+    if (Date.now() > deadline) throw new Error(`Still running after ${timeout}: bask job ${job}`);
+    await new Promise((resolve) => setTimeout(resolve, wait));
+  }
+}
+
+/** A name with Niagara's $xx escapes undone and everything but letters and digits dropped, for comparing. */
+const looseName = (name: unknown) => String(name ?? "").replace(/\$([0-9a-fA-F]{2})/g, (_m, hex: string) => String.fromCharCode(parseInt(hex, 16))).toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+/** Makes and applies the plan that adds some results of a discovery job, 100 at a time. Returns the ORDs added. */
+async function addResults(client: Connection["client"], g: Globals, job: string, slots: string[], parent?: string): Promise<string[]> {
+  const added: string[] = [];
+  for (let at = 0; at < slots.length; at += 100) {
+    const plan = await client.addDiscovered(job, slots.slice(at, at + 100).map((slot) => ({ slot })), parent ? { parent } : {});
+    const applied = (await client.call("apply_model_changes", { planId: plan.planId, planHash: plan.planHash, idempotencyKey: randomUUID(), ...reasonOf(g) }, { timeoutMs: 300000 })).result as Json;
+    const results = (applied.results ?? []) as Json[];
+    const failed = results.filter((r) => r.ok === false);
+    if (applied.state !== "applied" || failed.length > 0) throw new Error(`The plan ended ${applied.state}: ${failed.length} of ${results.length} changes failed. bask call model_plan_status '{"planId":"${plan.planId}"}'`);
+    added.push(...results.map((r) => String(r.ord ?? "")).filter(Boolean));
+  }
+  return added;
+}
+
+/** Runs `work` over `items`, a few at a time, keeping the order of the results. */
+async function pooled<T, R>(items: T[], size: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(size, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      out[index] = await work(items[index]);
+    }
+  }));
+  return out;
+}
+
 program
   .command("discover")
-  .description("discover BACnet devices on a network, or the points of a device, and show what was found")
-  .argument("<ord>", "a BACnet network or device")
+  .description("discover BACnet devices on a network, or the points of devices, and show what was found; --add adds it")
+  .argument("<ords...>", "a BACnet network, or one or more devices")
+  .option("--points", "for a network: discover the points of every device on it")
+  .option("--add", "add everything found that is not already there")
   .option("--no-wait", "start the job and return its ORD without waiting")
-  .option("--timeout <duration>", "how long to wait for the job", "2m")
-  .action((ord: string, opts: { wait: boolean; timeout: string }, cmd: Command) =>
+  .option("--timeout <duration>", "how long to wait for each job", "2m")
+  .action((ords: string[], opts: { points?: boolean; add?: boolean; wait: boolean; timeout: string }, cmd: Command) =>
     withClient(cmd, async ({ client }, g) => {
-      await requireWrite(g, `Start discovery on ${ord}? This puts traffic on the driver's network.`);
-      const discovery = await client.discover(normalizeOrd(ord), reasonOf(g));
-      if (!opts.wait) return console.log(g.output === "json" ? JSON.stringify(discovery, null, 2) : discovery.job);
-      const spin = g.output === "table" ? spinner("discovering") : undefined;
-      const deadline = Date.now() + parseDuration(opts.timeout);
-      try {
-        for (;;) {
-          const job = await client.job(discovery.job, { limit: 1 });
-          if (job.complete) break;
-          if (Date.now() > deadline) throw new Error(`Still running after ${opts.timeout}: bask job ${discovery.job}`);
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+      let targets = ords.map(normalizeOrd);
+      if (opts.points) {
+        // The devices under each network; a device named directly stays as it is.
+        const devices: string[] = [];
+        for (const ord of targets) {
+          const node = await client.browse(ord, { depth: 1 });
+          const under = (node.children ?? []).filter((child) => /Device$/.test(String(child.typeSpec ?? ""))).map((child) => toSlotOrd(child.ord));
+          if (under.length) devices.push(...under);
+          else if (/Device$/.test(String(node.typeSpec ?? ""))) devices.push(ord);
         }
-      } finally {
-        spin?.stop();
+        if (devices.length === 0) throw new Error(`No devices under ${ords.join(", ")} yet. Discover and add them first: bask discover ${ords[0]} --add`);
+        targets = devices;
       }
-      const job = await showJob(client, g, discovery.job);
-      if (g.output === "table" && job.resultCount > 0) console.error(chalk.dim(`\nAdd some: bask add ${discovery.job} <slot> [<slot>...]${discovery.kind === "devices" ? " --parent <network>" : ""}`));
+      const simple = targets.length === 1 && !opts.add;
+      if (!opts.wait && !simple) throw new Error("--no-wait starts one job and returns its ORD; it does not go with --add or several devices.");
+      await requireWrite(g, `Start discovery on ${targets.length === 1 ? shortOrd(targets[0], 3) : `${targets.length} devices`}${opts.add ? " and add what it finds" : ""}? This puts traffic on the driver's network.`);
+
+      if (simple) {
+        const discovery = await client.discover(targets[0], reasonOf(g));
+        if (!opts.wait) return console.log(g.output === "json" ? JSON.stringify(discovery, null, 2) : discovery.job);
+        const spin = g.output === "table" ? spinner("discovering") : undefined;
+        try {
+          await jobDone(client, discovery.job, opts.timeout);
+        } finally {
+          spin?.stop();
+        }
+        const job = await showJob(client, g, discovery.job);
+        if (g.output === "table" && job.resultCount > 0) {
+          console.error(chalk.dim(`\nAdd some: bask add ${discovery.job} <slot> [<slot>...]${discovery.kind === "devices" ? " --parent <network>" : ""} --apply`));
+          console.error(chalk.dim(`Add them all: bask discover ${ords.join(" ")}${opts.points ? " --points" : ""} --add`));
+        }
+        return;
+      }
+
+      // Several devices, or adding: one line as each finishes, then the totals.
+      const outcomes = await pooled(targets, 6, async (target) => {
+        const discovery = await client.discover(target, reasonOf(g));
+        await jobDone(client, discovery.job, opts.timeout);
+        const results = await jobResults(client, discovery.job);
+        const names = results.map((r) => String((r.values as Json | undefined)?.objectName ?? (r.values as Json | undefined)?.deviceName ?? r.slot));
+        let added: string[] = [];
+        let skipped = 0;
+        if (opts.add && results.length) {
+          // Devices go under the network that was searched; points go where the station puts them (the device's points).
+          const parent = discovery.kind === "devices" ? target : undefined;
+          const where = parent ?? (/\/points$/.test(target) ? target : `${target}/points`);
+          const there = new Set(((await client.browse(where, { depth: 1 }).catch(() => undefined))?.children ?? []).map((child) => looseName(child.name)));
+          const fresh = results.filter((_r, i) => !there.has(looseName(names[i])));
+          skipped = results.length - fresh.length;
+          added = await addResults(client, g, discovery.job, fresh.map((r) => r.slot), parent);
+        }
+        if (g.output === "table") {
+          const count = `${results.length} ${discovery.kind === "devices" ? "device" : "point"}${results.length === 1 ? "" : "s"}`;
+          console.error(`  ${chalk.green("✓")} ${chalk.bold(shortOrd(target, 2))}  ${count} found${opts.add ? `, ${added.length} added${skipped ? chalk.dim(`, ${skipped} already there`) : ""}` : ""}`);
+        }
+        return { target, job: discovery.job, kind: discovery.kind, found: results.length, names, added, skipped };
+      });
+
+      const found = outcomes.reduce((n, o) => n + o.found, 0);
+      const added = outcomes.flatMap((o) => o.added);
+      const skipped = outcomes.reduce((n, o) => n + o.skipped, 0);
+      if (added.length) new Link(client.http.url.origin).show("reveal", added[0]);
+      if (g.output !== "table") return console.log(JSON.stringify(outcomes.map((o) => ({ target: o.target, job: o.job, kind: o.kind, found: o.found, added: o.added.length, alreadyThere: o.skipped, names: o.names })), null, 2));
+      const kind = outcomes[0]?.kind === "devices" ? "device" : "point";
+      const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+      if (outcomes.length === 1 && outcomes[0].names.length) console.log(outcomes[0].names.join("  "));
+      const where = outcomes.length === 1 ? shortOrd(outcomes[0].target, 3) : plural(outcomes.length, "device");
+      if (!opts.add) return console.log(`Found ${plural(found, kind)} on ${where}. Nothing added: run again with --add, or pick some with bask add <job> <slot>... --apply.`);
+      console.log(`${chalk.green("✓")} Found ${plural(found, kind)} on ${where}: added ${added.length}${skipped ? `, ${skipped} already there` : ""}.`);
+      if (kind === "device" && added.length) console.log(chalk.dim(`  Next, their points: bask discover ${ords.join(" ")} --points --add`));
     })
   );
 
@@ -665,24 +777,23 @@ program
   .action((jobOrd: string, slots: string[], opts: { parent?: string; apply?: boolean }, cmd: Command) =>
     withClient(cmd, async ({ client }, g) => {
       const job = normalizeOrd(jobOrd);
-      const wanted = slots.length === 1 && slots[0] === "all" ? (await client.job(job, { limit: 1000 })).results.map((r) => r.slot) : slots;
-      if (wanted.length > 100) throw new Error(`${wanted.length} results; add up to 100 at a time.`);
-      const plan = await client.addDiscovered(job, wanted.map((slot) => ({ slot })), opts.parent ? { parent: normalizeOrd(opts.parent) } : {});
-      const items = (plan.items ?? []) as Json[];
-      if (g.output === "table") {
+      const parent = opts.parent ? normalizeOrd(opts.parent) : undefined;
+      const wanted = slots.length === 1 && slots[0] === "all" ? (await jobResults(client, job)).map((r) => r.slot) : slots;
+      if (wanted.length === 0) throw new Error("That job found nothing to add.");
+      if (!opts.apply) {
+        // The plan for the first hundred is enough to see what adding would do.
+        const plan = await client.addDiscovered(job, wanted.slice(0, 100).map((slot) => ({ slot })), parent ? { parent } : {});
+        const items = (plan.items ?? []) as Json[];
+        if (g.output !== "table") return console.log(JSON.stringify(plan, null, 2));
         emit(g, ["slot", "name", "type", "facets"], items.map((i) => [i.slot, i.name, i.typeSpec, i.facetsLearned === false ? "not learned" : i.facetsLearned ? "learned" : ""]), plan,
           (r) => [String(r[0]), chalk.bold(String(r[1])), chalk.dim(String(r[2])), r[3] === "not learned" ? chalk.yellow(String(r[3])) : chalk.dim(String(r[3]))]);
+        return console.error(chalk.dim(`\nNothing added yet${wanted.length > 100 ? ` (the first 100 of ${wanted.length} are shown)` : ""}. Run again with --apply to add ${wanted.length === 1 ? "it" : `these ${wanted.length}`}.`));
       }
-      if (!opts.apply) {
-        if (g.output !== "table") return console.log(JSON.stringify(plan, null, 2));
-        return console.error(chalk.dim(`\nNothing added yet. Run again with --apply to add ${items.length === 1 ? "it" : `these ${items.length}`}.`));
-      }
-      await requireWrite(g, `Add ${items.length} ${plan.discovery ?? "components"}?`);
-      const applied = (await client.call("apply_model_changes", { planId: plan.planId, planHash: plan.planHash, idempotencyKey: randomUUID(), ...reasonOf(g) }, { timeoutMs: 300000 })).result as Json;
-      if (g.output !== "table") return console.log(JSON.stringify(applied, null, 2));
-      const failed = ((applied.results ?? []) as Json[]).filter((r) => r.ok === false);
-      if (applied.state !== "applied" || failed.length > 0) throw new Error(`The plan ended ${applied.state}: ${failed.length} of ${items.length} changes failed. bask call model_plan_status '{"planId":"${plan.planId}"}'`);
-      console.log(`${chalk.green("✓")} Added ${items.length}.`);
+      await requireWrite(g, `Add ${wanted.length} discovered ${wanted.length === 1 ? "result" : "results"}?`);
+      const added = await addResults(client, g, job, wanted, parent);
+      if (added.length) new Link(client.http.url.origin).show("reveal", added[0]);
+      if (g.output !== "table") return console.log(JSON.stringify({ added }, null, 2));
+      console.log(`${chalk.green("✓")} Added ${wanted.length}.`);
     })
   );
 
@@ -771,7 +882,10 @@ tuiOptions(program.command("demo"))
   .option("--serve", "only run the demo station (other windows connect with bask demo)")
   .option("--list", "list the simulated buildings")
   .action(async (opts: TuiOptions & { site: SiteName; fleet?: boolean; port?: string; serve?: boolean; list?: boolean }, cmd: Command) => {
-    if (opts.list) return console.log(table(["site", "station", "port", "profile", "what it is"], SITE_NAMES.map((key) => [key, DEMO_SITES[key].station, String(DEMO_SITES[key].port), DEMO_SITES[key].profile, DEMO_SITES[key].title])));
+    if (opts.list) {
+      console.log(table(["site", "station", "port", "profile", "what it is"], SITE_NAMES.map((key) => [key, DEMO_SITES[key].station, String(DEMO_SITES[key].port), DEMO_SITES[key].profile, DEMO_SITES[key].title])));
+      return console.log(`\n${table(["site", "how it starts"], SITE_NAMES.map((key) => [key, DEMO_SITES[key].shows]))}`);
+    }
     if (opts.fleet) return fleet(globals(cmd), [], { demo: true, mouse: opts.mouse, theme: opts.theme });
     const demo = await ensureDemo(opts.site, opts.port ? Number(opts.port) : undefined);
     if (opts.serve) {
@@ -853,7 +967,7 @@ program
   .command("workspace")
   .alias("ws")
   .description("lay out a station workspace in Rex or tmux: station panes plus an AI agent session")
-  .addOption(new Option("--layout <name>", "ops: explorer, alarms, AI activity and the agent · graphics: the station's graphics, AI activity and the agent · monitor: home, alarms, watch, AI activity · duo: dashboard and the agent").choices(["ops", "graphics", "monitor", "duo"]).default("ops"))
+  .addOption(new Option("--layout <name>", "ops: explorer, alarms, AI activity and the agent · graphics: the station's graphics, AI activity and the agent · build: explorer, jobs, graphics, AI activity and the agent, for bringing a station up · monitor: home, alarms, watch, AI activity · duo: dashboard and the agent").choices(["ops", "graphics", "build", "monitor", "duo"]).default("ops"))
   .addOption(new Option("--mux <name>", "which multiplexer").choices(["auto", "rex", "tmux"]).default("auto"))
   .option("--agent <command>", "the AI agent to start in its pane", "claude")
   .option("--no-agent", "station panes only")
@@ -865,6 +979,9 @@ program
   .option("--no-attach", "tmux: create the session without switching to it")
   .action(async (opts: { layout: LayoutName; mux: string; agent: string | false; agentProfile?: string; session?: string; demo?: boolean; site: string; dryRun?: boolean; attach: boolean }, cmd: Command) => {
     const g = globals(cmd);
+    // "--agent <x>" is also a global option (the name bask itself acts under), and the global one
+    // takes the value wherever it is written. Here it means the agent's command.
+    if (cmd.getOptionValueSource("agent") === "default" && program.getOptionValueSource("agent") === "cli") opts.agent = String(program.opts().agent);
     const found = detectMux(opts.mux === "auto" ? undefined : opts.mux);
     if (!found.mux) throw new Error(found.why);
     if (opts.demo && opts.site !== "all" && !SITE_NAMES.includes(opts.site as SiteName)) throw new Error(`No demo site "${opts.site}". Choose one of: ${SITE_NAMES.join(", ")}, or all.`);
@@ -1009,7 +1126,7 @@ const problemLine = (p: { level: string; at: string; message: string }) => `${p.
 
 /** Draws a graphic once as text with the points' values now; reports what is wrong with it. */
 async function printGraphic(raw: unknown, from: string, g: Globals, client: Connection["client"] | undefined, frame: number): Promise<{ ok: boolean; unreadable: string[]; size?: string; points: number }> {
-  const { drawGraphic, readGraphic, roomNeeded } = await import("./tui/symbols/graphic.js");
+  const { drawGraphic, partNow, readGraphic, roomNeeded } = await import("./tui/symbols/graphic.js");
   let read = readGraphic(raw);
   if (!read.plan) {
     if (g.output === "json") console.log(JSON.stringify({ from, drawn: false, problems: read.problems }, null, 2));
@@ -1027,15 +1144,19 @@ async function printGraphic(raw: unknown, from: string, g: Globals, client: Conn
   const text = drawGraphic(plan, lookup, frame).toString();
   const unreadable = plan.points.filter((ord) => values.get(ord)?.ok === false || !values.has(ord));
   const errors = read.problems.filter((p) => p.level === "error");
+  // Text has no colour, so the parts a pane would colour are named.
+  const flagged = !client ? [] : plan.parts.map((p) => ({ part: p.doc.label ?? p.doc.id ?? p.def?.title ?? p.at, status: partNow(p, lookup).state.status })).filter((p) => p.status && !["ok", "off"].includes(p.status));
   if (g.output === "json") {
-    console.log(JSON.stringify({ from, drawn: true, width: plan.width, height: plan.height, text, problems: read.problems, points: plan.points.map((ord) => ({ point: ord, ok: values.get(ord)?.ok !== false && values.has(ord), value: values.get(ord)?.displayValue })) }, null, 2));
+    console.log(JSON.stringify({ from, drawn: true, width: plan.width, height: plan.height, text, problems: read.problems, status: flagged, points: plan.points.map((ord) => ({ point: ord, ok: values.get(ord)?.ok !== false && values.has(ord), value: values.get(ord)?.displayValue })) }, null, 2));
   } else {
     console.log(text);
     console.log("");
     console.log(chalk.dim(`${plan.doc.title ?? from} · ${plan.width} x ${plan.height} cells · ${plan.points.length} point${plan.points.length === 1 ? "" : "s"}${client ? "" : " (not read: placeholder values)"}`));
     for (const p of read.problems) console.log(problemLine(p));
     for (const ord of unreadable) console.log(`${chalk.yellow("warning")}  ${chalk.bold(ord)} could not be read: it shows as "?". Check the name with bask search.`);
-    if (plan.width > 110) console.log(`${chalk.yellow("warning")}  It is ${plan.width} cells wide: a pane narrower than that scrolls it. Split it into two graphics or two rows.`);
+    if (plan.width > 100) console.log(`${chalk.yellow("warning")}  It is ${plan.width} cells wide: a pane narrower than that scrolls it. Split it into two graphics or two rows.`);
+    if (flagged.length) console.log(`${chalk.cyan("status")}   ${flagged.map((p) => `${p.part} ${p.status}`).join(" · ")} ${chalk.dim("(coloured in the pane)")}`);
+    if (read.problems.length === 0 && unreadable.length === 0 && plan.width <= 100) console.log(chalk.dim("Nothing wrong with it."));
   }
   return { ok: errors.length === 0, unreadable, size: `${plan.width} x ${plan.height}`, points: plan.points.length };
 }

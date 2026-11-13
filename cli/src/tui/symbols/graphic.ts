@@ -953,10 +953,16 @@ export function readGraphic(input: unknown, reserve: Room = {}): { plan?: Plan; 
 export function graphicGuide(): string {
   const row = (def: SymbolDef) => {
     const [w, h] = sizeOf(def.draw(def.sample, 0));
-    const ports = isSection(def) ? Object.keys(def.ports ?? {}) : ["left", "right", "top", "bottom", ...Object.keys(def.ports ?? {})];
+    // Where each of the symbol's own ports is: the side it leaves from, and how far along that side.
+    const ports = Object.entries(def.ports ?? {}).map(([name, [x, y]]) => {
+      const side = y < 0 ? "top" : y >= h ? "bottom" : x <= 0 ? "left" : "right";
+      const along = side === "top" || side === "bottom" ? (x + 0.5) / w : (y + 0.5) / h;
+      const where = along < 0.4 ? (side === "top" || side === "bottom" ? "left" : "upper") : along > 0.6 ? (side === "top" || side === "bottom" ? "right" : "lower") : "";
+      return `${name} (${side}${where ? `, ${where}` : ""})`;
+    });
     return `| ${def.id} | ${w} x ${h} | ${def.value ?? ""}${def.aux ? `; aux: ${def.aux}` : ""} | ${ports.join(", ")} | ${def.note} |`;
   };
-  const table = (defs: SymbolDef[]) => ["| symbol | size | value means | ports | what it draws |", "| --- | --- | --- | --- | --- |", ...defs.map(row)].join("\n");
+  const table = (defs: SymbolDef[]) => ["| symbol | size | value means | its own ports | what it draws |", "| --- | --- | --- | --- | --- |", ...defs.map(row)].join("\n");
   return `# Drawing a graphic for bask
 
 A graphic is a small JSON file: equipment from the symbol library, tied to the station's points. It is
@@ -1027,6 +1033,11 @@ its piping to you. \`"kind": "duct"\` draws a duct. The marks move unless a part
 give \`flow\` a point. Two pipes from the same port share their first stretch, as a branch. If print says
 there is no way through, put the parts in neighbouring columns or rows, or change the order of the pipes.
 
+A pipe leaves and arrives straight out of its port, so place each part on the side its port faces (the
+tables say where each port is). A chiller's \`chwIn\` is on its left: the return tag belongs to the left of
+the chillers, and the pump and the supply tag to the right. A boiler's two ports are both underneath: set
+boilers side by side, not one above the other.
+
 ## Symbols for an air row
 ${table(SYMBOLS.filter(isSection))}
 
@@ -1061,5 +1072,9 @@ ${table(SYMBOLS.filter((def) => !isSection(def)))}
 - Use only points that exist: print marks a missing one with "?" and lists it.
 - Keep a graphic to one piece of equipment or one system; it should fit a pane about 100 columns wide. Print says how big it came out.
 - Names are short: they are clipped to the part's width.
+- In a parts row everything stands on one floor line, with the names underneath. A column with more parts in it is taller, so its neighbours start lower: give the columns of a row the same number of parts, or put the extra ones in a row of their own.
+- One graphic can draw several devices: make \`base\` the network and write each point as \`Freezer_1/points/BoxTemp\`.
+- It is saved under the file's name (\`cold-rooms.json\` becomes \`cold-rooms\`), or the one given with \`--name\`.
+- Print is plain text. It names the parts that are in alarm, fault, down, stale or overridden under the drawing; in the pane those are coloured.
 `;
 }

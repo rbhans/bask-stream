@@ -56,7 +56,7 @@ export async function startStation(options = {}) {
 }
 
 /** One demo station per site, and the entries the all-stations view takes for them. */
-export async function startFleet(sites = ["northgate", "riverside", "harbor", "summit"], options = {}) {
+export async function startFleet(sites = ["northgate", "riverside", "harbor", "summit", "eastgate"], options = {}) {
   const stations = await Promise.all(sites.map((site) => startDemoStation({ live: false, site, ...options })));
   const clients = [];
   const entries = stations.map((station) => {

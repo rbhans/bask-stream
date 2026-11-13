@@ -1,6 +1,6 @@
 // A simulated station for `bask demo` and the dashboard tests: Niagara's SCRAM login, /stream/health
-// and the /stream WebSocket, backed by a small building (two air handlers, eight VAV boxes, a chilled
-// water plant) whose values drift, alarms come and go, and an AI agent proposes and makes changes.
+// and the /stream WebSocket, backed by one of the buildings in sites.ts, whose values drift, alarms
+// come and go, and an AI agent proposes and makes changes (until a real agent session shows up).
 // It speaks the same protocol as the baskStream module, so the dashboard runs on it unchanged.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import crypto from "node:crypto";
@@ -8,7 +8,7 @@ import http from "node:http";
 import { decode, encode } from "@msgpack/msgpack";
 import { WebSocketServer, type WebSocket } from "ws";
 
-import { DEMO_SITES, type SiteContext, type SiteName } from "./sites.js";
+import { DEMO_SITES, type FieldDevice, type FieldObject, type SiteContext, type SiteName } from "./sites.js";
 
 export { DEMO_SITES, SITE_NAMES, type SiteName } from "./sites.js";
 export const DEMO_USER = "admin";
@@ -43,6 +43,8 @@ interface Node {
   tags?: string[];
   week?: Record<string, { start: string; finish: string; value: unknown; text: string }[]>;
   defaultOutput?: { value: unknown; text: string };
+  /** For a device added from discovery: the controller it is, so its points can be discovered. */
+  field?: FieldDevice;
 }
 
 export interface DemoStation {
@@ -111,7 +113,6 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     nodes.get(parent)!.children.push(ord);
     return ord;
   };
-  let seed = 1;
   const num = (parent: string, name: string, units: string, sim: (t: number) => number, extra: Partial<Node> = {}) =>
     add(parent, name, "control:NumericPoint", "point", { vt: "numeric", units, precision: 1, sim, hasHistory: true, ...extra });
   const numW = (parent: string, name: string, units: string, value: number, extra: Partial<Node> = {}) =>
@@ -153,6 +154,18 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
   // What the site builds with. The rest is filled in below as each piece is defined.
   const c = { add, num, numW, bool, enumW, device, network: addNetwork, point, net: network, nodes, schedules, weekdays, wave, outdoor, agentUser: AGENT_USER, past: (minutesAgo: number) => Date.now() - minutesAgo * MIN } as unknown as SiteContext;
   site.tree(c);
+
+  // ---- What is on the wire: controllers the station has not added, and the objects on each ---------
+  const words = (name: string) => name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/_/g, " ").replace(/^(.)(.*)$/, (_m, first: string, rest: string) => first.toUpperCase() + rest.toLowerCase());
+  /** A device's points as BACnet objects: what discovery lists for it. `shift` gives a copy values of its own. */
+  const objectsOf = (deviceOrd: string, shift = 0): FieldObject[] =>
+    (nodes.get(`${deviceOrd}/points`)?.children ?? []).map((ord) => nodes.get(ord)!).filter((p) => p.kind === "point").map((p) => {
+      const type = p.vt === "numeric" ? (!p.writable ? "analogInput" : /Setpoint$/.test(p.name) ? "analogValue" : "analogOutput") : p.vt === "boolean" ? (p.writable ? "binaryOutput" : "binaryInput") : "multiStateValue";
+      const moves = p.vt === "numeric" && p.sim ? (t: number) => Number(p.sim!(t + shift * 47 * MIN)) : undefined;
+      return { name: p.name, type, description: words(p.name), units: p.units, precision: p.precision, value: (moves ? moves(Date.now()) : p.fallback) as FieldObject["value"], sim: moves, texts: p.texts, options: p.options };
+    });
+  Object.assign(c, { like: (device: string, shift = 1) => objectsOf(`${network}/${device}`, shift) });
+  const field = site.field(c);
 
   // ---- Values -------------------------------------------------------------------------------------
   const deviceOf = (ord: string): Node | undefined => {
@@ -229,23 +242,24 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     auditAdd(at, user, "Agent", target.replace(/^slot:/, ""), action, "", text);
     return record;
   };
-  const who = { agentUser: AGENT_USER, agent: AGENT.name, model: AGENT.model, for: AGENT.onBehalfOf };
+  const whoIs = (actor: { name?: string; model?: string; onBehalfOf?: string }) => ({ agentUser: AGENT_USER, agent: actor.name, model: actor.model, for: actor.onBehalfOf });
+  const who = whoIs(AGENT);
   let proposalSeq = 0;
-  const propose = (ord: string, action: string, value: unknown, reason: string, at = Date.now(), minutes?: number) => {
+  const propose = (ord: string, action: string, value: unknown, reason: string, at = Date.now(), minutes?: number, actor: typeof AGENT = AGENT) => {
     const p = nodes.get(ord)!;
     const id = `P${++proposalSeq}`;
     const description = action === "auto" ? "auto (release override)" : `${action} ${display(p, value)}${minutes ? ` for ${minutes} min` : ""}`;
     const proposal = {
-      id, status: "pending", point: ord, display: p.display, action, value, description, reason, agentUser: AGENT_USER, actor: AGENT,
+      id, status: "pending", point: ord, display: p.display, action, value, description, reason, agentUser: AGENT_USER, actor,
       createdAt: at, expiresAt: at + 15 * MIN, decidedBy: null, decidedAt: null, note: null, result: null, durationSec: minutes ? minutes * 60 : undefined
     };
     proposals.set(id, proposal);
-    agentRecord(at, AGENT_USER, ord, action, { outcome: `proposed ${id}`, ...who, change: description, reason });
+    agentRecord(at, AGENT_USER, ord, action, { outcome: `proposed ${id}`, ...whoIs(actor), change: description, reason });
     return proposal;
   };
   const decide = (proposal: any, status: string, by: string, at = Date.now(), note: string | null = null) => {
     Object.assign(proposal, { status, decidedBy: by, decidedAt: at, note });
-    agentRecord(at, by, proposal.point, proposal.action, { outcome: `${status} ${proposal.id}${status === "expired" ? "" : ` by ${by}`}`, ...who, change: proposal.description, reason: proposal.reason });
+    agentRecord(at, by, proposal.point, proposal.action, { outcome: `${status} ${proposal.id}${status === "expired" ? "" : ` by ${by}`}`, ...whoIs(proposal.actor ?? AGENT), change: proposal.description, reason: proposal.reason });
   };
   const pendingCount = () => [...proposals.values()].filter((p) => p.status === "pending").length;
 
@@ -261,17 +275,38 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
 
   const jobs = new Map<string, any>();
   let jobSeq = 0;
-  const startJob = (kind: "devices" | "points", target: string) => {
+  /** Objects for a device nobody described: one added by hand. */
+  const SOME_OBJECTS: FieldObject[] = [
+    { name: "ZoneTemp", type: "analogInput", description: "Zone temperature", units: "°F", value: 72.4 },
+    { name: "ZoneSetpoint", type: "analogValue", description: "Zone temperature setpoint", units: "°F", value: 72 },
+    { name: "Airflow", type: "analogInput", description: "Supply airflow", units: "cfm", precision: 0, value: 455 },
+    { name: "DamperPosition", type: "analogOutput", description: "Damper command", units: "%", precision: 0, value: 48 },
+    { name: "OccupancyMode", type: "multiStateValue", description: "Occupancy mode", value: "occupied", options: ["occupied", "unoccupied", "standby"] },
+    { name: "FanStatus", type: "binaryInput", description: "Fan status", value: true, texts: ["On", "Off"] }
+  ];
+  const startJob = (kind: "devices" | "points", target: string, deviceOrd = "") => {
     const name = `${kind === "devices" ? "BacnetDiscoverDevicesJob" : "BacnetDiscoverPointsJob"}${jobSeq ? jobSeq : ""}`;
     jobSeq += 1;
     const job = `slot:/Services/JobService/${name}`;
-    const results = kind === "devices"
-      ? [["VAV_109", 2009, "MSTP 2:19", "Zone controller"], ["VAV_110", 2010, "MSTP 2:20", "Zone controller"], ["RTU_03", 1003, "192.168.10.13", "Rooftop unit"], ["Lighting_Panel_A", 4001, "192.168.10.40", "Lighting controller"]].map(
-          ([deviceName, id, address, modelName], i) => ({ slot: `DiscoveryDevice${i || ""}`, typeSpec: "bacnet:DiscoveryDevice", values: { deviceName, objectId: `device:${id}`, address, modelName } }))
-      : [["ZoneTemp", "analogInput:1", "Zone temperature", 72.4], ["ZoneSetpoint", "analogValue:1", "Zone temperature setpoint", 72], ["Airflow", "analogInput:2", "Supply airflow", 455], ["DamperPosition", "analogOutput:1", "Damper command", 48], ["ReheatValve", "analogOutput:2", "Reheat valve command", 0],
-          ["OccupancyMode", "multiStateValue:1", "Occupancy mode", "occupied"], ["FanStatus", "binaryInput:1", "Fan status", "active"], ["ZoneCO2", "analogInput:3", "Zone CO₂", 612], ["ZoneHumidity", "analogInput:4", "Zone relative humidity", 41.5], ["DischargeAirTemp", "analogInput:5", "Discharge air temperature", 58.2]].map(
-          ([objectName, objectId, description, value], i) => ({ slot: `dc${i}`, typeSpec: "bacnet:DiscoveryPoint", values: { objectName, objectId, description, value } }));
-    jobs.set(job, { job, name, display: kind === "devices" ? "Bacnet Discover Devices" : "Bacnet Discover Points", typeSpec: `bacnet:${name.replace(/\d+$/, "")}`, kind, target, startedAt: Date.now(), duration: live ? 6000 : 0, results, canceled: false });
+    const found = new Map<string, FieldDevice | FieldObject>();
+    let results: any[];
+    if (kind === "devices") {
+      results = field.map((d, i) => {
+        found.set(`DiscoveryDevice${i || ""}`, d);
+        return { slot: `DiscoveryDevice${i || ""}`, typeSpec: "bacnet:DiscoveryDevice", values: { deviceName: d.name, objectId: `device:${d.instance}`, address: d.address, modelName: d.model } };
+      });
+    } else {
+      const known = nodes.get(deviceOrd)?.field?.objects ?? objectsOf(deviceOrd);
+      const instances = new Map<string, number>();
+      results = (known.length ? known : SOME_OBJECTS).map((o, i) => {
+        const instance = (instances.get(o.type) ?? 0) + 1;
+        instances.set(o.type, instance);
+        found.set(`dc${i}`, o);
+        const now = o.sim ? o.sim(Date.now()) : o.value;
+        return { slot: `dc${i}`, typeSpec: "bacnet:DiscoveryPoint", values: { objectName: o.name, objectId: `${o.type}:${instance}`, description: o.description, value: typeof now === "number" ? Math.round(now * 100) / 100 : typeof now === "boolean" ? (now ? "active" : "inactive") : now } };
+      });
+    }
+    jobs.set(job, { job, name, display: kind === "devices" ? "Bacnet Discover Devices" : "Bacnet Discover Points", typeSpec: `bacnet:${name.replace(/\d+$/, "")}`, kind, target, startedAt: Date.now(), duration: !live ? 0 : kind === "devices" ? 6000 : 2500, results, found, canceled: false });
     return job;
   };
   const jobWire = (j: any, detail = false, offset = 0, limit = 1000) => {
@@ -291,7 +326,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
   };
 
   // ---- Model plans --------------------------------------------------------------------------------
-  const plans = new Map<string, { hash: string; changes: any[]; apply: () => any[] }>();
+  const plans = new Map<string, { hash: string; changes: any[]; apply: () => any[]; target: string; summary: string }>();
   const refuse = (code: string, message: string) => Object.assign(new Error(message), { code });
   const need = (ord: string) => {
     const n = nodes.get(ord);
@@ -308,7 +343,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     }
   };
   const parentOf = (ord: string) => (ord.lastIndexOf("/") <= 5 ? "slot:/" : ord.slice(0, ord.lastIndexOf("/")));
-  const planFor = (user: string, changes: any[]) => {
+  const planFor = (user: string, changes: any[], label?: string) => {
     if (!Array.isArray(changes) || changes.length === 0) throw refuse("bad_request", "changes must be a nonempty array.");
     const steps = changes.map((c, index) => {
       switch (c.action) {
@@ -359,12 +394,28 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
           const ord = `${c.parent}/${c.name}`.replace("slot://", "slot:/");
           if (nodes.has(ord)) throw refuse("name_collision", `${c.name} already exists.`);
           return { wire: { action: "create", parent: c.parent, name: c.name, ord, typeSpec: c.typeSpec }, run: () => {
-            const isPoint = /^control:/.test(c.typeSpec);
-            const vt = /Boolean/.test(c.typeSpec) ? "boolean" : /Enum/.test(c.typeSpec) ? "enum" : "numeric";
-            add(c.parent, c.name, c.typeSpec, isPoint ? "point" : /Device$/.test(c.typeSpec) ? "container" : "component", isPoint
-              ? { vt, writable: /Writable/.test(c.typeSpec), units: c.units, precision: 1, texts: ["Active", "Inactive"], options: ["occupied", "unoccupied", "standby"], fallback: c.value ?? (vt === "numeric" ? 0 : vt === "boolean" ? false : "occupied"), sim: c.sim }
-              : { actions: /Device$/.test(c.typeSpec) ? ["ping"] : [], props: /Device$/.test(c.typeSpec) ? { enabled: { typeSpec: "baja:Boolean", encoded: "true", writable: true }, address: { typeSpec: "baja:String", encoded: c.address ?? "", writable: true } } : {} });
-            if (/Device$/.test(c.typeSpec)) add(ord, "points", "bacnet:BacnetPointDeviceExt", "container", { display: "Points" });
+            // A point or device built from a discovery result carries the object or controller it came from.
+            const object = c.object as FieldObject | undefined;
+            const controller = c.device as FieldDevice | undefined;
+            if (/^control:/.test(c.typeSpec)) {
+              const vt = /Boolean/.test(c.typeSpec) ? "boolean" : /Enum/.test(c.typeSpec) ? "enum" : "numeric";
+              add(c.parent, c.name, c.typeSpec, "point", {
+                vt, writable: /Writable/.test(c.typeSpec), units: object?.units, precision: object?.precision ?? 1, texts: object?.texts ?? ["Active", "Inactive"], options: object?.options ?? ["occupied", "unoccupied", "standby"],
+                fallback: object ? object.value : vt === "numeric" ? 0 : vt === "boolean" ? false : "occupied", sim: object?.sim
+              });
+            } else if (/Device$/.test(c.typeSpec)) {
+              add(c.parent, c.name, c.typeSpec, "container", {
+                actions: ["ping", "upload"], tags: controller?.tags, field: controller,
+                props: {
+                  enabled: { typeSpec: "baja:Boolean", encoded: "true", writable: true },
+                  address: { typeSpec: "baja:String", encoded: controller?.address ?? "", writable: true },
+                  ...(controller ? { objectId: { typeSpec: "bacnet:BacnetObjectIdentifier", encoded: `device:${controller.instance}`, writable: true } } : {}),
+                  pollFrequency: { typeSpec: "driver:PollFrequency", encoded: "normal", writable: true },
+                  health: { typeSpec: "baja:String", encoded: `Ok [${stamp(Date.now())}]` }
+                }
+              });
+              add(ord, "points", "bacnet:BacnetPointDeviceExt", "container", { display: "Points" });
+            } else add(c.parent, c.name, c.typeSpec, /Folder$/.test(c.typeSpec) ? "container" : "component", { actions: [], props: {} });
             auditAdd(Date.now(), user, "Added", c.parent.replace(/^slot:/, ""), c.name, "", c.typeSpec);
             return { index, action: "create", ord, ok: true };
           } };
@@ -383,7 +434,14 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     });
     const planId = crypto.randomUUID();
     const hash = crypto.createHash("sha256").update(JSON.stringify(steps.map((s) => s.wire))).digest("hex");
-    plans.set(planId, { hash, changes: steps.map((s) => s.wire), apply: () => steps.map((s) => s.run()) });
+    const first: any = steps[0].wire;
+    const verb = (action: string) => (action === "create" ? "add" : action);
+    const same = steps.every((s: any) => s.wire.action === first.action);
+    plans.set(planId, {
+      hash, changes: steps.map((s) => s.wire), apply: () => steps.map((s) => s.run()),
+      target: first.parent ?? first.ord,
+      summary: label ?? (steps.length === 1 ? `${verb(first.action)} ${first.name ?? first.slot ?? Object.keys(first.properties ?? {}).join(", ")}`.trim() : same ? `${verb(first.action)} ${steps.length} components` : `${steps.length} changes`)
+    });
     return { planId, planHash: hash, state: "preview", expiresAt: Date.now() + 300000, changes: steps.map((s) => s.wire), results: [], atomic: false, unattempted: steps.length };
   };
 
@@ -518,20 +576,26 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       return { language: "bql", ord: base, columns: ["name", "fullName", "enabled", "roles"].map((name) => ({ name, display: name, typeSpec: "baja:String" })), rows: [["admin", "Administrator", true, "admin"], ["ben", "Ben Hansen", true, "admin"], [AGENT_USER, "AI agent (Claude)", true, "aiOperator"], ["operator", "Front desk", true, "operator"], ["guest", "", false, "viewer"]], count: 5, hidden: 0, truncated: false };
     }
     const columns = m[1] === "*" ? ["name", "type", "slotPath"] : m[1].split(",").map((c) => c.trim().replace(/\s+as\s+.+$/i, ""));
-    const where = (m[3] ?? "").trim();
-    const flag = /status\.(?:is)?(\w+?)(?:\(\))?(?:\s*=\s*'?true'?)?$/i.exec(where)?.[1]?.toLowerCase();
-    const compare = /^([\w.]+)\s*(>=|<=|>|<|=|like)\s*'?([^']+)'?$/i.exec(where);
-    const keep = (n: Node) => {
-      if (!where) return true;
-      if (flag) return String(column(n, "status") ?? "").includes(flag === "overridden" ? "overridden" : flag);
-      if (!compare) return true;
-      const left = column(n, compare[1]);
-      const right = compare[3];
-      if (compare[2].toLowerCase() === "like") return new RegExp(`^${right.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*")}$`, "i").test(String(left));
-      if (compare[2] === "=") return String(left) === right;
-      const a = Number(left), b = Number(right);
-      return compare[2] === ">" ? a > b : compare[2] === "<" ? a < b : compare[2] === ">=" ? a >= b : a <= b;
+    // The condition: status flags and simple comparisons, joined by "and" and "or" ("and" binds tighter).
+    const term = (text: string): ((n: Node) => boolean) => {
+      const flag = /^status\.(?:is)?(\w+?)(?:\(\))?(?:\s*=\s*'?true'?)?$/i.exec(text)?.[1]?.toLowerCase();
+      if (flag) return (n) => String(column(n, "status") ?? "").includes(flag);
+      const compare = /^([\w.]+)\s*(>=|<=|!=|>|<|=|like)\s*'?([^']*)'?$/i.exec(text);
+      if (!compare) throw refuse("bad_query", `BqlException: the demo station does not understand "${text}". It takes status flags and comparisons (=, !=, <, >, like) joined by and / or.`);
+      const [, name, op, right] = compare;
+      const like = new RegExp(`^${right.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*")}$`, "i");
+      return (n) => {
+        const left = column(n, name);
+        if (op.toLowerCase() === "like") return like.test(String(left));
+        if (op === "=") return String(left) === right;
+        if (op === "!=") return String(left) !== right;
+        const a = Number(left), b = Number(right);
+        return op === ">" ? a > b : op === "<" ? a < b : op === ">=" ? a >= b : a <= b;
+      };
     };
+    const where = (m[3] ?? "").trim();
+    const any = where ? where.split(/\s+or\s+/i).map((part) => part.split(/\s+and\s+/i).map((text) => term(text.trim()))) : [];
+    const keep = (n: Node) => any.length === 0 || any.some((all) => all.every((test) => test(n)));
     const matched = [...nodes.values()].filter((n) => n.ord !== "slot:/" && (base === "slot:/" || n.ord.startsWith(`${base}/`)) && match(n) && keep(n));
     return { language: "bql", ord: base, columns: columns.map((name) => ({ name, display: name, typeSpec: "baja:String" })), rows: matched.slice(0, limit).map((n) => columns.map((c) => column(n, c))), count: Math.min(matched.length, limit), hidden: 0, truncated: matched.length > limit, ...(matched.length > limit ? { stoppedBy: "limit" } : {}) };
   };
@@ -544,6 +608,17 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     for (const ws of sockets) send(ws, frame);
   };
   const isAgent = (ws: any) => Boolean(ws.actor && ws.actor.kind !== "person");
+  /** The Niagara user a session's changes are filed under: agents have their own. */
+  const userOf = (ws: any) => (isAgent(ws) ? AGENT_USER : DEMO_USER);
+  const needReason = (ws: any, r: any) => {
+    if (isAgent(ws) && !r.reason) throw refuse("reason_required", "Agents must say why: add a 'reason' to the request.");
+  };
+  /** What an agent did directly goes in the agent log, beside Niagara's own audit record of it. */
+  const agentDid = (ws: any, r: any, target: string, action: string, change: string) => {
+    if (isAgent(ws)) agentRecord(Date.now(), AGENT_USER, target, action, { outcome: "completed", ...whoIs(ws.actor), change, reason: r.reason });
+  };
+  /** Set once a real agent session declares itself: the scripted agent then leaves the station to it. */
+  let realAgent = false;
   const rules = (ws: any) => ({ isAgent: isAgent(ws), actor: ws.actor ?? null, agentUsersConfigured: true, approvalRequired: true, reasonRequired: true, maxChangesPerMinute: 10, allowEmergency: false, bounds: site.bounds, pointLimitsFromFacets: true, proposalMinutes: 15, pendingProposals: pendingCount() });
   const pushProposal = (proposal: any) => broadcast({ op: "proposal_cov", timestamp: Date.now(), proposal, pendingProposals: pendingCount() });
   const pushAlarm = (alarm: any) => {
@@ -582,6 +657,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     capabilities: (ws) => ({ op: "capabilities_result", capabilities: CAPS(ws) }),
     declare_actor: (ws, r) => {
       ws.actor = { kind: r.kind ?? "agent", name: r.name, model: r.model, onBehalfOf: r.onBehalfOf };
+      if (isAgent(ws)) realAgent = true;
       return { op: "actor_declared", agents: rules(ws) };
     },
     browse: (_ws, r) => {
@@ -617,8 +693,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       if (isAgent(ws)) {
         if (!r.reason) throw refuse("reason_required", "Agents must say why: add a 'reason' to the request.");
         need(ord);
-        const proposal = propose(ord, r.action ?? "set", r.value, r.reason, Date.now(), r.durationSec ? Math.round(r.durationSec / 60) : undefined);
-        proposal.actor = ws.actor;
+        const proposal = propose(ord, r.action ?? "set", r.value, r.reason, Date.now(), r.durationSec ? Math.round(r.durationSec / 60) : undefined, ws.actor);
         pushProposal(proposal);
         return { op: "write_result", points: [{ point: ord, ok: true, outcome: "proposed", proposal }] };
       }
@@ -736,24 +811,28 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       if (!f) throw refuse("file_not_found", `No such file: ${r.path}`);
       return { op: "file_result", file: { path: r.path, name: r.path.split("/").pop(), directory: false, size: Buffer.byteLength(f.text), modified: f.modified, readonly: false, encoding: "text", text: f.text } };
     },
-    write_file: (_ws, r) => {
+    write_file: (ws, r) => {
+      needReason(ws, r);
       const exists = files.has(r.path);
       if (!/^\^[^^]/.test(r.path) || r.path.includes("..")) throw refuse("forbidden_file", "Only the station file space is reachable: paths start with ^.");
       if (exists && !r.overwrite) throw refuse("file_exists", `${r.path} already exists; send overwrite: true to replace it.`);
       const text = r.text ?? Buffer.from(r.base64 ?? "", "base64").toString("utf8");
       if (!r.dryRun) {
         files.set(r.path, { text, modified: Date.now() });
-        auditAdd(Date.now(), DEMO_USER, "file_write", `file:${r.path}`, "", "", `${Buffer.byteLength(text)} bytes`);
+        agentDid(ws, r, `file:${r.path}`, "write_file", `write ${(Buffer.byteLength(text) / 1024).toFixed(1)} KB`);
+        auditAdd(Date.now(), userOf(ws), "file_write", `file:${r.path}`, "", "", `${Buffer.byteLength(text)} bytes`);
       }
       return { op: "file_written", file: { path: r.path, size: Buffer.byteLength(text), created: !exists, ...(r.dryRun ? { dryRun: true } : {}) } };
     },
-    delete_file: (_ws, r) => {
+    delete_file: (ws, r) => {
+      if (!r.dryRun) needReason(ws, r);
       const doomed = [...files.keys()].filter((p) => p === r.path || p.startsWith(`${r.path}/`));
       if (doomed.length === 0) throw refuse("file_not_found", `No such file or folder: ${r.path}`);
       if (!files.has(r.path) && !r.recursive) throw refuse("bad_request", `${r.path} is a folder; send recursive: true to delete it and its contents.`);
       if (!r.dryRun) {
         for (const p of doomed) files.delete(p);
-        auditAdd(Date.now(), DEMO_USER, "file_delete", `file:${r.path}`, "", "", `${doomed.length} entries`);
+        agentDid(ws, r, `file:${r.path}`, "delete_file", `delete ${doomed.length === 1 ? "1 file" : `${doomed.length} files`}`);
+        auditAdd(Date.now(), userOf(ws), "file_delete", `file:${r.path}`, "", "", `${doomed.length} entries`);
       }
       return { op: "file_deleted", file: { path: r.path, deleted: doomed, ...(r.dryRun ? { dryRun: true } : {}) } };
     },
@@ -769,48 +848,64 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       if (Date.now() - j.startedAt < j.duration) j.canceled = true;
       return { op: "job_result", job: jobWire(j, true) };
     },
-    discover: (_ws, r) => {
+    discover: (ws, r) => {
+      needReason(ws, r);
       const n = need(r.ord);
       const kind = !/^bacnet:/.test(n.typeSpec) ? undefined : /Network$/.test(n.typeSpec) ? "devices" : /Device$|PointDeviceExt$/.test(n.typeSpec) ? "points" : undefined;
       if (!kind) throw refuse("discovery_unsupported", `No built-in discovery for ${n.typeSpec}. Try a BACnet network or device.`);
-      auditAdd(Date.now(), DEMO_USER, "Invoked", r.ord.replace(/^slot:/, ""), kind === "devices" ? "submitDeviceManagerJob" : "submitPointDiscoveryJob");
-      return { op: "discovery_started", discovery: { job: startJob(kind, /Device$/.test(n.typeSpec) ? `${r.ord}/points` : r.ord), kind, driver: "bacnet", target: r.ord } };
+      const deviceOrd = /PointDeviceExt$/.test(n.typeSpec) ? parentOf(r.ord) : r.ord;
+      auditAdd(Date.now(), userOf(ws), "Invoked", r.ord.replace(/^slot:/, ""), kind === "devices" ? "submitDeviceManagerJob" : "submitPointDiscoveryJob");
+      agentDid(ws, r, r.ord, "discover", kind === "devices" ? "discover BACnet devices" : "discover BACnet points");
+      return { op: "discovery_started", discovery: { job: startJob(kind, kind === "devices" ? r.ord : `${deviceOrd}/points`, deviceOrd), kind, driver: "bacnet", target: r.ord } };
     },
-    add_discovered: (_ws, r) => {
+    add_discovered: (ws, r) => {
       const j = jobs.get(r.job);
       if (!j) throw refuse("invalid_job", `Not a job: ${r.job}`);
-      const parent = r.parent ?? j.target;
-      const picked = (r.items ?? []).map((item: any) => ({ item, found: j.results.find((x: any) => x.slot === item.slot) }));
-      const missing = picked.find((p: any) => !p.found);
+      const items = (r.items ?? []) as any[];
+      if (items.length < 1 || items.length > 100) throw refuse("bad_request", "items must hold 1 to 100 discovery results.");
+      const picked = items.map((item) => ({ item, found: j.results.find((x: any) => x.slot === item.slot), parent: item.parent ?? r.parent ?? j.target }));
+      const missing = picked.find((p) => !p.found);
       if (missing) throw refuse("bad_request", `No discovery result ${missing.item.slot}.`);
-      const changes = picked.map(({ item, found }: any) => {
-        const v = found.values;
-        if (j.kind === "devices") return { action: "create", parent, name: item.name ?? v.deviceName, typeSpec: "bacnet:BacnetDevice", address: v.address };
-        const type = String(v.objectId).split(":")[0];
+      const changes = picked.map(({ item, found, parent }) => {
+        if (j.kind === "devices") return { action: "create", parent, name: item.name ?? found.values.deviceName, typeSpec: "bacnet:BacnetDevice", device: j.found.get(item.slot) };
+        const type = String(found.values.objectId).split(":")[0];
         const vt = /^analog/.test(type) ? "Numeric" : /^binary/.test(type) ? "Boolean" : "Enum";
-        const writable = /Output|Value/.test(type);
-        const base = Number(v.value);
-        return { action: "create", parent, name: item.name ?? v.objectName, typeSpec: `control:${vt}${writable ? "Writable" : "Point"}`, value: vt === "Numeric" ? base : vt === "Boolean" ? v.value === "active" : v.value, units: /Temp|Setpoint/.test(v.objectName) ? "°F" : /Airflow/.test(v.objectName) ? "cfm" : /CO2/.test(v.objectName) ? "ppm" : "%", sim: vt === "Numeric" && !writable ? wave(base, Math.max(0.4, base * 0.02), 25, seed++) : undefined };
+        return { action: "create", parent, name: item.name ?? found.values.objectName, typeSpec: item.typeSpec ?? `control:${vt}${item.writable ?? /Output|Value/.test(type) ? "Writable" : "Point"}`, object: j.found.get(item.slot) };
       });
-      const plan = planFor(DEMO_USER, changes);
-      return { op: "model_result", operation: "add_discovered", result: { ...plan, compact: true, discovery: j.kind, items: picked.map(({ item, found }: any, i: number) => ({ slot: item.slot, objectId: found.values.objectId, name: changes[i].name, typeSpec: changes[i].typeSpec, parent, facetsLearned: j.kind === "points" ? !/^binary/.test(String(found.values.objectId)) : undefined })) } };
+      const plan = planFor(userOf(ws), changes, `add ${changes.length === 1 ? changes[0].name : `${changes.length} discovered ${j.kind}`}`);
+      return { op: "model_result", operation: "add_discovered", result: { ...plan, compact: true, discovery: j.kind, items: picked.map(({ item, found, parent }, i) => ({ slot: item.slot, objectId: found.values.objectId, name: changes[i].name, typeSpec: changes[i].typeSpec, parent, facetsLearned: j.kind === "points" ? true : undefined })) } };
     },
+    read_tags: (_ws, r) => ({
+      op: "tags_result",
+      targets: ((r.ords ?? [r.ord]) as string[]).map((ord) => {
+        const n = nodes.get(ord);
+        if (!n) return { ord, ok: false, code: "invalid_component", message: `No component at ${ord}.` };
+        const tags = (describe(n).metadata.tags as { id: string; value: unknown }[]).filter((tag) => !r.dictionary || tag.id.startsWith(`${r.dictionary}:`)).map((tag) => {
+          const [dictionary, name] = tag.id.split(":");
+          const marker = tag.value === "Marker";
+          return { id: tag.id, dictionary, name, value: marker ? null : tag.value, valueType: marker ? "baja:Marker" : "baja:String", marker, source: dictionary === "n" ? "implied" : "direct" };
+        });
+        return { ord, ok: true, slotPath: ord, display: n.display, typeSpec: n.typeSpec, tags, relations: [] };
+      })
+    }),
     describe_component: (_ws, r) => {
       const n = need(r.ord);
       return { op: "model_result", operation: "describe_component", result: { ord: n.ord, typeSpec: n.typeSpec, name: n.name, slots: slotsOf(n), writesEnabled: true, modelEditsEnabled: true } };
     },
-    preview_model_changes: (_ws, r) => ({ op: "model_result", operation: "preview_model_changes", result: planFor(DEMO_USER, r.changes) }),
-    apply_model_changes: (_ws, r) => {
+    preview_model_changes: (ws, r) => ({ op: "model_result", operation: "preview_model_changes", result: planFor(userOf(ws), r.changes) }),
+    apply_model_changes: (ws, r) => {
       const plan = plans.get(r.planId);
       if (!plan || plan.hash !== r.planHash) throw refuse("plan_not_found", "No such plan, or it has changed; preview again.");
       if (!r.idempotencyKey) throw refuse("bad_request", "Missing idempotencyKey");
+      needReason(ws, r);
       plans.delete(r.planId);
       const results = plan.apply();
+      agentDid(ws, r, plan.target, "apply_model_changes", plan.summary);
       return { op: "model_result", operation: "apply_model_changes", result: { planId: r.planId, planHash: r.planHash, state: "applied", changes: plan.changes, results, atomic: false, unattempted: 0 } };
     }
   };
   for (const [op, action] of [["update_component_properties", "update"], ["rename_component", "rename"], ["delete_components", "delete"], ["create_components", "create"]])
-    handlers[op] = (_ws, r) => ({ op: "model_result", operation: op, result: planFor(DEMO_USER, (r.changes ?? [r]).map((c: any) => ({ ...c, action }))) });
+    handlers[op] = (ws, r) => ({ op: "model_result", operation: op, result: planFor(userOf(ws), (r.changes ?? [r]).map((c: any) => ({ ...c, action }))) });
 
   function decideRequest(ws: any, r: any, approve: boolean) {
     if (isAgent(ws)) throw refuse("agent_cannot_approve", "Agents cannot approve or reject proposals; a person decides.");
@@ -937,7 +1032,9 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     Object.assign(c, { snapshot, pushProposal, pushAlarm });
     const agentMoves = site.agentMoves(c);
     let move = 0;
-    timers.push(setInterval(() => agentMoves[move++ % agentMoves.length](), 23000));
+    timers.push(setInterval(() => {
+      if (!realAgent && agentMoves.length) agentMoves[move++ % agentMoves.length]();
+    }, 23000));
     timers.push(setInterval(() => {
       for (const p of proposals.values()) {
         if (p.status === "pending" && p.expiresAt < Date.now()) {
@@ -950,7 +1047,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     const alarmMoves = site.alarmMoves(c);
     let alarmMove = 0;
     timers.push(setInterval(() => {
-      if ([...alarms.values()].filter((a) => a.isOpen).length < 14) alarmMoves[alarmMove++ % alarmMoves.length]();
+      if (alarmMoves.length && [...alarms.values()].filter((a) => a.isOpen).length < 14) alarmMoves[alarmMove++ % alarmMoves.length]();
     }, 41000));
   }
 

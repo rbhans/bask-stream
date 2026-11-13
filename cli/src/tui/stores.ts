@@ -242,6 +242,8 @@ export interface Activity {
   value?: string;
   /** Done by, or on behalf of, an AI agent. */
   ai: boolean;
+  /** For a row that stands for a burst of audit records: how many. */
+  count?: number;
 }
 
 const fromAgentRecord = (r: AgentLogRecord): Activity => {

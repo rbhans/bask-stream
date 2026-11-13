@@ -1,39 +1,103 @@
-// The graphics each demo building starts with: ordinary graphic documents, bound to that
-// building's simulated points, saved in its station files like ones a person or an agent would add.
+// The graphics the demo buildings start with: ordinary graphic documents, bound to that building's
+// simulated points, saved in its station files like ones a person or an agent would add. Northgate
+// has one for every piece of equipment; Riverside and Summit have two each; Harbor and Eastgate have
+// none, so there is something left to draw.
 import type { GraphicDoc, PartDoc } from "../tui/symbols/graphic.js";
-import type { SiteName } from "./sites.js";
 
 const BACNET = "slot:/Drivers/BacnetNetwork";
 const SNMP = "slot:/Drivers/SnmpNetwork";
 
 const vav = (n: number): PartDoc => ({ id: `vav${n}`, symbol: "vav", label: `VAV ${n}`, value: `VAV_${n}/points/DamperPosition`, aux: `VAV_${n}/points/ReheatValve`, reading: `VAV_${n}/points/ZoneTemp` });
-const coldRoom = (kind: "Freezer" | "Cooler", n: number): PartDoc => ({ symbol: "cold-room", label: `${kind} ${n}`, reading: `${kind}_${n}/points/BoxTemp`, open: `${kind}_${n}/points/DoorStatus`, ...(kind === "Freezer" ? { on: `Freezer_${n}/points/EvapFanStatus` } : {}) });
 const crac = (n: number): PartDoc => ({ symbol: "crac", label: `CRAC ${n}`, value: `CRAC_${n}/points/FanSpeed`, on: `CRAC_${n}/points/UnitStatus`, reading: `CRAC_${n}/points/SupplyAirTemp` });
 
-export const DEMO_GRAPHICS: Record<SiteName, Record<string, GraphicDoc>> = {
+/** An air handler with the four VAV boxes it feeds. */
+const airHandler = (n: number, zones: number[]): GraphicDoc => {
+  const ahu = `AHU_0${n}/points`;
+  return {
+    title: `AHU-${n} and its zones`,
+    base: BACNET,
+    rows: [
+      {
+        id: "ahu",
+        air: [
+          { symbol: "louver" },
+          { symbol: "filter", label: "Filter", value: { point: `${ahu}/FilterDP`, min: 0.3, max: 1.5 }, reading: `${ahu}/FilterDP` },
+          { symbol: "sensor", label: "Mixed air", text: "T", reading: `${ahu}/MixedAirTemp` },
+          { symbol: "cooling-coil", label: "Cooling", value: `${ahu}/CoolingValve` },
+          { symbol: "fan", label: "Supply fan", value: `${ahu}/SupplyFanSpeed`, on: `${ahu}/SupplyFanStatus` },
+          { symbol: "sensor", label: "Supply air", text: "T", reading: `${ahu}/SupplyAirTemp` },
+          { symbol: "sensor", label: "Static", text: "P", reading: `${ahu}/DuctStaticPressure` }
+        ],
+        from: { label: "OA", reading: `${ahu}/OutdoorAirTemp` },
+        to: "SA"
+      },
+      { parts: zones.map(vav) }
+    ],
+    pipes: zones.map((zone) => ({ from: "ahu.out", to: `vav${zone}.in`, kind: "duct" as const }))
+  };
+};
+
+/** One VAV box: its damper, airflow and reheat, and the room it serves. */
+const zoneBox = (n: number, ahu: number): GraphicDoc => ({
+  title: `VAV ${n} · room ${n}`,
+  base: `${BACNET}/VAV_${n}/points`,
+  rows: [
+    {
+      air: [
+        { symbol: "damper", label: "Damper", value: "DamperPosition" },
+        { symbol: "sensor", label: "Airflow", text: "F", reading: "Airflow" },
+        { symbol: "heating-coil", label: "Reheat", value: "ReheatValve" }
+      ],
+      from: { label: `AHU-${ahu}`, reading: `${BACNET}/AHU_0${ahu}/points/SupplyAirTemp` },
+      to: { label: `Room ${n}`, reading: "ZoneTemp" }
+    },
+    {
+      parts: [
+        { symbol: "plate", label: "Zone temp", reading: "ZoneTemp" },
+        { symbol: "plate", label: "Setpoint", reading: "ZoneSetpoint" },
+        { symbol: "plate", label: "Occupancy", reading: "OccupancyMode" }
+      ]
+    }
+  ]
+});
+
+export const DEMO_GRAPHICS: Record<"northgate" | "riverside" | "summit", Record<string, GraphicDoc>> = {
   northgate: {
-    "ahu-01": {
-      title: "AHU-1 and its zones",
+    building: {
+      title: "Northgate Office",
       base: BACNET,
       rows: [
         {
-          id: "ahu",
-          air: [
-            { symbol: "louver" },
-            { symbol: "filter", label: "Filter", value: { point: "AHU_01/points/FilterDP", min: 0.3, max: 1.5 }, reading: "AHU_01/points/FilterDP" },
-            { symbol: "sensor", label: "Mixed air", text: "T", reading: "AHU_01/points/MixedAirTemp" },
-            { symbol: "cooling-coil", label: "Cooling", value: "AHU_01/points/CoolingValve" },
-            { symbol: "fan", label: "Supply fan", value: "AHU_01/points/SupplyFanSpeed", on: "AHU_01/points/SupplyFanStatus" },
-            { symbol: "sensor", label: "Supply air", text: "T", reading: "AHU_01/points/SupplyAirTemp" },
-            { symbol: "sensor", label: "Static", text: "P", reading: "AHU_01/points/DuctStaticPressure" }
-          ],
-          from: { label: "OA", reading: "AHU_01/points/OutdoorAirTemp" },
-          to: "SA"
+          parts: [
+            [
+              { symbol: "plate", label: "AHU-1 supply", reading: "AHU_01/points/SupplyAirTemp" },
+              { symbol: "gauge", label: "AHU-1 fan", value: "AHU_01/points/SupplyFanSpeed" }
+            ],
+            [
+              { symbol: "plate", label: "AHU-2 supply", reading: "AHU_02/points/SupplyAirTemp" },
+              { symbol: "gauge", label: "AHU-2 fan", value: "AHU_02/points/SupplyFanSpeed" }
+            ],
+            [
+              { symbol: "plate", label: "CHW supply", reading: "CHW_Plant/points/ChwSupplyTemp" },
+              { symbol: "gauge", label: "CHW pump 1", value: "CHW_Plant/points/ChwPump1Speed" }
+            ],
+            [
+              { symbol: "plate", label: "Outdoor air", reading: "AHU_01/points/OutdoorAirTemp" },
+              { symbol: "gauge", label: "CHW flow", value: { point: "CHW_Plant/points/ChwFlow", min: 0, max: 600 }, reading: "CHW_Plant/points/ChwFlow" }
+            ]
+          ]
         },
-        { parts: [vav(101), vav(103), vav(105), vav(107)] }
-      ],
-      pipes: [101, 103, 105, 107].map((n) => ({ from: "ahu.out", to: `vav${n}.in`, kind: "duct" as const }))
+        {
+          parts: [1, 2, 3, 4].map((i): PartDoc[] => [
+            { symbol: "plate", label: `Room 10${i}`, reading: `VAV_10${i}/points/ZoneTemp` },
+            { symbol: "plate", label: `Room 10${i + 4}`, reading: `VAV_10${i + 4}/points/ZoneTemp` }
+          ])
+        }
+      ]
     },
+    "ahu-01": airHandler(1, [101, 102, 103, 104]),
+    "ahu-02": airHandler(2, [105, 106, 107, 108]),
+    ...Object.fromEntries([101, 102, 103, 104, 105, 106, 107, 108].map((n) => [`vav-${n}`, zoneBox(n, n <= 104 ? 1 : 2)])),
     "chw-plant": {
       title: "Chilled water plant",
       base: `${BACNET}/CHW_Plant/points`,
@@ -112,45 +176,6 @@ export const DEMO_GRAPHICS: Record<SiteName, Record<string, GraphicDoc>> = {
         { from: "p1.out", to: "supply", medium: "hw" },
         { from: "return", to: "b1.return", medium: "hw" },
         { from: "return", to: "b2.return", medium: "hw" }
-      ]
-    }
-  },
-
-  harbor: {
-    "cold-rooms": {
-      title: "Cold rooms",
-      base: BACNET,
-      rows: [
-        { parts: [1, 2, 3, 4].map((n) => coldRoom("Freezer", n)) },
-        {
-          parts: [
-            coldRoom("Cooler", 1),
-            coldRoom("Cooler", 2),
-            { symbol: "plate", label: "Dock", reading: "Dock/points/DockTemp" },
-            { symbol: "plate", label: "Ammonia", reading: "Dock/points/AmmoniaLevel" }
-          ]
-        }
-      ]
-    },
-    "rack-a": {
-      title: "Compressor rack A",
-      base: `${BACNET}/Rack_A/points`,
-      rows: [
-        {
-          parts: [
-            { id: "suction", label: "Suction", reading: "SuctionPressure", medium: "refrigerant" },
-            [1, 2, 3].map((n): PartDoc => ({ id: `c${n}`, symbol: "compressor", label: `Compressor ${n}`, on: `Compressor${n}Status` })),
-            { id: "discharge", label: "Discharge", reading: "DischargePressure", medium: "refrigerant" },
-            [
-              { symbol: "plate", label: "Oil", reading: "OilPressure" },
-              { symbol: "gauge", label: "Condenser fans", value: "CondenserFanSpeed" }
-            ]
-          ]
-        }
-      ],
-      pipes: [
-        ...[1, 2, 3].map((n) => ({ from: "suction", to: `c${n}.suction`, medium: "refrigerant" as const })),
-        ...[1, 2, 3].map((n) => ({ from: `c${n}.discharge`, to: "discharge", medium: "refrigerant" as const }))
       ]
     }
   },
