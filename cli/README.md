@@ -165,7 +165,19 @@ claude mcp add --scope user baskStream -e 'BASKSTREAM_PROFILE=${BASKSTREAM_PROFI
 
 On macOS the folder is `~/Library/Application Support/Claude/Claude Extensions/local.mcpb.basidekick.baskstream`. The profile is the agent's login: `bask login <station> -u <the AI's Niagara user> --name ai`.
 
-**The agent** starts with a briefing on the station and how to use `bask` (`bask agent-brief` prints it). It connects with `--agent-profile <name>`, or a saved profile for the same station whose name or user says agent or ai, or else your own profile. Give it its own Niagara user and list that user in the service's agent users: then its writes become proposals in the AI Activity pane, every change carries its reason, and the audit history shows which changes were its own. Another agent: `--agent "<command>"`; it finds the briefing at `$BASK_STATION_BRIEF`.
+**Your login and the agent's.** On a real station you stay on your own login in the station panes, and the agent gets the Niagara user made for it:
+
+```bash
+bask workspace --agent-user ai-claude
+```
+
+The first time, bask asks for that user's password once (it says so: "Password for the AI agent's login ai-claude@..."), saves the login as a profile and remembers it for this station. After that plain `bask workspace` uses it, and says which login the agent gets before it asks for anything. `--agent-profile <name>` picks a saved profile instead, and `bask profiles` shows each station's agent login.
+
+As it starts, the workspace says who is who: "Claude Code is signed in as ai-claude; you are admin", and whether the station itself counts that user as an agent. It does when the user is listed in `agentUsers` on BASkStreamService; then the agent rules (approval, reasons, limits) follow that user however it connects, and its changes are under its own name in the audit history. In the agent's pane, `bask status` shows the user and the rules it works under. With no agent login the agent shares yours, and the workspace says so.
+
+A saved login lapses when nothing uses it for a while, and an agent cannot type a password, so the agent's pane keeps its login in use for as long as it runs. If the agent does report an expired session, log it in again with the `bask login` command it prints.
+
+**The agent** starts with a briefing on the station and how to use `bask` (`bask agent-brief` prints it): how to read, how to change things with a reason, how to bring BACnet equipment in, and how to draw graphics.
 
 ## Commands
 
@@ -194,7 +206,7 @@ On macOS the folder is `~/Library/Application Support/Claude/Claude Extensions/l
 | `bask agent-log [--since 24h]` | What AI agents did, from the station's audit history |
 | `bask metrics` | OpenMetrics text |
 | `bask tui [--view <name>] [--pane] [--no-mouse] [--theme dark\|light]` | The dashboard (also what `bask` alone runs), opened on a view |
-| `bask workspace [--layout ops\|graphics\|build\|monitor\|duo] [--mux rex\|tmux] [--agent <cmd>\|--no-agent] [--agent-profile <name>] [--demo] [--dry-run]` | A multi-pane station workspace in Rex or tmux |
+| `bask workspace [--layout ops\|graphics\|build\|monitor\|duo] [--mux rex\|tmux] [--agent <cmd>\|--no-agent] [--agent-user <user>\|--agent-profile <name>] [--demo] [--dry-run]` | A multi-pane station workspace in Rex or tmux |
 | `bask show <ord> [--trend] [--watch]` | Select an ORD in the open Explorer, chart it, or add it to the watch list |
 | `bask agent-brief` | The briefing an AI agent gets on working with this station |
 | `bask symbols [--list]` | The terminal symbol library: animated equipment drawn in text, with example assemblies |

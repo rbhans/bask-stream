@@ -39,6 +39,14 @@ Short notes on problems that were solved, so they are not solved twice.
 
 - **`bask` killed on start after copying a new build over the old one (2026-11-12).** Symptom: `cp bin/bask ~/.local/bin/bask` succeeded, but every `bask` command then exited at once with status 137 and no output; the copy's checksum matched the build. Cause (as far as I can tell): macOS keeps the code signature it saw for that file, and `cp` rewrites the same file in place, so the new contents no longer match and the system kills it. Fix: put the new binary beside the old one and move it into place, which makes a new file: `cp bin/bask ~/.local/bin/bask.new && chmod +x ~/.local/bin/bask.new && mv -f ~/.local/bin/bask.new ~/.local/bin/bask`. Verified: the same binary ran from the new file and after the move.
 
+## The agent's login in a workspace
+
+- `src/agent-login.ts` decides which saved profile the agent's `bask` uses: `--agent-profile` or `--agent-user`, else the one remembered on the person's profile (`Profile.agent`), else a saved profile for the same station whose name says AI or agent. `--agent-user` logs a new user in and saves it. The person's `BASKSTREAM_PASSWORD` is never tried for the agent; scripts use `BASKSTREAM_AGENT_PASSWORD`.
+- The choice is printed before any password is asked for. On 2026-11-12 the user got "Password for test@..." with no explanation: an old profile named `agent` had been picked by its name, and the suggested `bask login` command had no `-k`.
+- After the agent's login opens without declaring an actor, `capabilities.agents.isAgent` says whether the station lists that user in `agentUsers` (the module's `isAgent` is "declared, or an agent user"). The workspace reports it.
+- The agent's pane runs `bask keep-alive --while $$` before its command, so the saved session is touched every four minutes while the agent runs and stops with it. Niagara web sessions lapse on inactivity; whether four minutes is enough on a real station is not checked yet.
+- The demo station takes any user name with its password and counts `ai-claude` as an agent user, which is how this is tested (`test/agent-login.test.mjs`).
+
 ## Demo station
 
 - `src/demo/station.ts` speaks the real protocol and is what the dashboard tests run on (`live: false` freezes its values). When the module's replies change shape, change the demo to match; do not special-case the demo in the views.

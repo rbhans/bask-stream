@@ -607,15 +607,17 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
   const broadcast = (frame: Record<string, unknown>) => {
     for (const ws of sockets) send(ws, frame);
   };
-  const isAgent = (ws: any) => Boolean(ws.actor && ws.actor.kind !== "person");
+  // An agent is a session that says so, or one signed in as the agent's own Niagara user (the
+  // station's agentUsers setting, which here holds ai-claude).
+  const isAgent = (ws: any) => Boolean(ws.actor && ws.actor.kind !== "person") || ws.user === AGENT_USER;
   /** The Niagara user a session's changes are filed under: agents have their own. */
-  const userOf = (ws: any) => (isAgent(ws) ? AGENT_USER : DEMO_USER);
+  const userOf = (ws: any) => (isAgent(ws) ? AGENT_USER : ws.user ?? DEMO_USER);
   const needReason = (ws: any, r: any) => {
     if (isAgent(ws) && !r.reason) throw refuse("reason_required", "Agents must say why: add a 'reason' to the request.");
   };
   /** What an agent did directly goes in the agent log, beside Niagara's own audit record of it. */
   const agentDid = (ws: any, r: any, target: string, action: string, change: string) => {
-    if (isAgent(ws)) agentRecord(Date.now(), AGENT_USER, target, action, { outcome: "completed", ...whoIs(ws.actor), change, reason: r.reason });
+    if (isAgent(ws)) agentRecord(Date.now(), AGENT_USER, target, action, { outcome: "completed", ...whoIs(ws.actor ?? {}), change, reason: r.reason });
   };
   /** Set once a real agent session declares itself: the scripted agent then leaves the station to it. */
   let realAgent = false;
@@ -644,7 +646,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
   };
 
   const CAPS = (ws: any) => ({
-    apiVersion: "1.10", module: "baskStream", transport: "websocket-msgpack", serverTime: Date.now(), authenticatedUser: DEMO_USER, station: stationName, demo: true,
+    apiVersion: "1.10", module: "baskStream", transport: "websocket-msgpack", serverTime: Date.now(), authenticatedUser: ws.user ?? DEMO_USER, station: stationName, demo: true,
     writesEnabled: true, agents: rules(ws),
     modelEditing: { enabled: true, actions: ["create", "update", "rename", "delete", "invoke"], maxChanges: 100, previewRequired: true, atomic: false },
     limits: { maxConnections: 10, maxConnectionsPerUser: 0, maxMessageBytes: 1048576, activeConnections: sockets.size, maxSubscriptionsPerClient: 500, maxPointSnapshotPoints: 1000, totalSubscriptions: [...sockets].reduce((n, s) => n + [...s.groups.values()].flat().length, 0), heartbeatIntervalSec: 30, subscriptionLeaseSec: 300, covBatchWindowMillis: 100, defaultBrowseDepth: 1, maxBrowseDepth: 4, defaultSearchDepth: 32, maxSearchDepth: 64 },
@@ -693,7 +695,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       if (isAgent(ws)) {
         if (!r.reason) throw refuse("reason_required", "Agents must say why: add a 'reason' to the request.");
         need(ord);
-        const proposal = propose(ord, r.action ?? "set", r.value, r.reason, Date.now(), r.durationSec ? Math.round(r.durationSec / 60) : undefined, ws.actor);
+        const proposal = propose(ord, r.action ?? "set", r.value, r.reason, Date.now(), r.durationSec ? Math.round(r.durationSec / 60) : undefined, ws.actor ?? { kind: "agent", name: AGENT_USER });
         pushProposal(proposal);
         return { op: "write_result", points: [{ point: ord, ok: true, outcome: "proposed", proposal }] };
       }
@@ -944,7 +946,8 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
   const ITERATIONS = 4096;
   const salted = crypto.pbkdf2Sync(DEMO_PASSWORD, SALT, ITERATIONS, 32, "sha256");
   const hmac = (key: crypto.BinaryLike, text: string) => crypto.createHmac("sha256", key).update(text).digest();
-  const sessions = new Set<string>();
+  /** Logged-in HTTP sessions and who each one is. Any user name is let in with the demo password. */
+  const sessions = new Map<string, string>();
   const scram = new Map<string, any>();
   const cookieOf = (req: http.IncomingMessage) => /JSESSIONID=([^;]+)/.exec(req.headers.cookie ?? "")?.[1];
 
@@ -968,7 +971,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     if (req.url === "/prelogin") return void res.writeHead(200).end("<html>login</html>");
     if (req.url === "/login") return void res.writeHead(200).end('<form action="j_security_check">');
     if (req.url === "/j_security_check/" && req.method === "GET") {
-      if (scram.get(sid)?.done) sessions.add(sid);
+      if (scram.get(sid)?.done) sessions.set(sid, scram.get(sid).user);
       return void res.writeHead(200).end("ok");
     }
     if (req.url === "/j_security_check/") {
@@ -977,7 +980,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
         const bare = params.get("clientFirstMessage")!.slice(3);
         const clientNonce = /r=([^,]+)/.exec(bare)![1];
         const serverFirst = `r=${clientNonce}${crypto.randomBytes(12).toString("base64")},s=${SALT.toString("base64")},i=${ITERATIONS}`;
-        scram.set(sid, { bare, serverFirst });
+        scram.set(sid, { bare, serverFirst, user: /n=([^,]*)/.exec(bare)?.[1] ?? DEMO_USER });
         return void res.writeHead(200).end(serverFirst);
       }
       const pending = scram.get(sid);
@@ -1005,6 +1008,8 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       const client = ws as any;
       client.groups = new Map<string, string[]>();
       client.last = new Map<string, unknown>();
+      client.user = sessions.get(sid);
+      if (client.user === AGENT_USER) realAgent = true;
       sockets.add(client);
       ws.on("close", () => sockets.delete(client));
       ws.on("message", (data: Uint8Array) => handle(client, decode(data)));

@@ -17,6 +17,8 @@ export interface Pane {
   shell: string;
   env?: Record<string, string>;
   cwd?: string;
+  /** Shell lines run before the command, in the pane's own shell ($$ there becomes the command's process). */
+  before?: string[];
   /** Where the pane goes; the first pane has none. */
   split?: { of: string; direction: "right" | "below"; percent: number };
 }
@@ -86,7 +88,7 @@ export interface LayoutOptions {
   /** Extra environment for every pane (the demo station's password, for example). */
   env?: Record<string, string>;
   /** The agent's command, or undefined for no agent pane. */
-  agent?: { shell: string; env: Record<string, string>; cwd?: string; label: string };
+  agent?: { shell: string; env: Record<string, string>; cwd?: string; label: string; before?: string[] };
   /** Run this demo site's station inside the panes instead of a saved profile. */
   demo?: string;
 }
@@ -99,7 +101,7 @@ export function buildLayout(options: LayoutOptions): Pane[] {
     id, label, env: options.env,
     shell: options.demo ? `${self} demo --site ${options.demo} --view ${name}${full ? "" : " --pane"}` : `${self} -p ${shq(options.profile)}${flags} tui --view ${name}${full ? "" : " --pane"}`
   });
-  const agent = options.agent ? { id: "agent", label: options.agent.label, shell: options.agent.shell, env: { ...options.env, ...options.agent.env }, cwd: options.agent.cwd } : undefined;
+  const agent = options.agent ? { id: "agent", label: options.agent.label, shell: options.agent.shell, env: { ...options.env, ...options.agent.env }, cwd: options.agent.cwd, before: options.agent.before } : undefined;
   if (options.layout === "duo") {
     return [view("station", "Station", "home", true), ...(agent ? [{ ...agent, split: { of: "station", direction: "right" as const, percent: 45 } }] : [])];
   }
@@ -192,7 +194,7 @@ export function writePaneScripts(session: string, panes: Pane[]): Map<string, st
     const lines = ["#!/bin/sh", `# Written by bask workspace: the "${pane.label}" pane.`];
     if (pane.cwd) lines.push(`cd ${shq(pane.cwd)} || exit 1`);
     for (const [key, value] of Object.entries(pane.env ?? {})) lines.push(`export ${key}=${shq(value)}`);
-    lines.push(`exec ${pane.shell}`, "");
+    lines.push(...(pane.before ?? []), `exec ${pane.shell}`, "");
     fs.writeFileSync(file, lines.join("\n"), { mode: 0o700 });
     scripts.set(pane.id, file);
   }

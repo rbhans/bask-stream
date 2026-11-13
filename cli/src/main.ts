@@ -16,7 +16,8 @@ import { VERSION } from "./version.js";
 import { splash, spinner } from "./splash.js";
 import { DEMO_SITES, SITE_NAMES, type SiteName } from "./demo/sites.js";
 import { Link } from "./link.js";
-import { agentBrief, buildLayout, detectMux, launch, sessionExists, shq, writeShim, type LayoutName } from "./workspace.js";
+import { agentBrief, buildLayout, detectMux, launch, selfArgv, sessionExists, shq, writeShim, type LayoutName } from "./workspace.js";
+import { chooseAgentLogin, describeChoice, openAgentLogin, type AgentChoice, type AgentLogin } from "./agent-login.js";
 
 const VIEW_NAMES = ["home", "explorer", "watch", "alarms", "trends", "schedules", "query", "files", "jobs", "activity", "graphics"] as const;
 type ViewName = (typeof VIEW_NAMES)[number];
@@ -115,8 +116,8 @@ program
   .description("list saved stations")
   .action(() => {
     const store = loadStore();
-    const rows = Object.entries(store.profiles).map(([name, p]) => [name === store.current ? chalk.green(`* ${name}`) : `  ${name}`, p.station, p.username ?? "", p.cookies ? "saved" : "—"]);
-    console.log(rows.length ? table(["  profile", "station", "user", "session"], rows) : "No profiles. Run: bask login <station> -u <user>");
+    const rows = Object.entries(store.profiles).map(([name, p]) => [name === store.current ? chalk.green(`* ${name}`) : `  ${name}`, p.station, p.username ?? "", p.cookies ? "saved" : "—", p.agent && store.profiles[p.agent] ? `${p.agent} (${store.profiles[p.agent].username ?? "?"})` : ""]);
+    console.log(rows.length ? table(["  profile", "station", "user", "session", "its AI agent's login"], rows) : "No profiles. Run: bask login <station> -u <user>");
   });
 
 program
@@ -971,13 +972,14 @@ program
   .addOption(new Option("--mux <name>", "which multiplexer").choices(["auto", "rex", "tmux"]).default("auto"))
   .option("--agent <command>", "the AI agent to start in its pane", "claude")
   .option("--no-agent", "station panes only")
-  .option("--agent-profile <name>", "profile the agent connects with (default: an agent profile for this station, else the same profile)")
+  .option("--agent-user <user>", "the Niagara user made for the agent: bask logs it in (asking for its password once), saves it and uses it from then on")
+  .option("--agent-profile <name>", "a saved profile for the agent's login, instead of --agent-user (default: the one used last time)")
   .option("--session <name>", "name for the multiplexer session")
   .option("--demo", "use a built-in simulated building instead of a station")
   .option("--site <name>", `with --demo: which building (${SITE_NAMES.join(", ")}), or all for a session each`, "northgate")
   .option("--dry-run", "print what would be started, and start nothing")
   .option("--no-attach", "tmux: create the session without switching to it")
-  .action(async (opts: { layout: LayoutName; mux: string; agent: string | false; agentProfile?: string; session?: string; demo?: boolean; site: string; dryRun?: boolean; attach: boolean }, cmd: Command) => {
+  .action(async (opts: { layout: LayoutName; mux: string; agent: string | false; agentUser?: string; agentProfile?: string; session?: string; demo?: boolean; site: string; dryRun?: boolean; attach: boolean }, cmd: Command) => {
     const g = globals(cmd);
     // "--agent <x>" is also a global option (the name bask itself acts under), and the global one
     // takes the value wherever it is written. Here it means the agent's command.
@@ -1008,55 +1010,62 @@ program
       if (!opts.dryRun) {
         const conn = await connect(profile);
         if (typeof conn.client.capabilities.station === "string") info.station = conn.client.capabilities.station;
+        if (typeof conn.client.capabilities.authenticatedUser === "string") info.user = conn.client.capabilities.authenticatedUser;
         conn.client.close();
       }
-    }
-
-    // The agent: its command, the profile it connects with, and a briefing on how to use bask here.
-    let agentProfile = site ? profile : opts.agentProfile ?? profile;
-    if (!site && !opts.agentProfile) {
-      const store = loadStore();
-      const mine = store.profiles[profile];
-      // A profile for the same station under another user that looks like an AI's: "ai" first, then agent.
-      const rank = (name: string, user: string) => (/^ai$/i.test(name) ? 4 : /^ai[-_ ]|[-_ ]ai$/i.test(name) || /^ai[-_]/i.test(user) ? 3 : /claude|codex|gpt|gemini/i.test(`${name} ${user}`) ? 2 : /agent/i.test(`${name} ${user}`) ? 1 : 0);
-      const candidate = Object.entries(store.profiles)
-        .filter(([name, p]) => name !== profile && p.station === mine.station && p.username !== mine.username)
-        .map(([name, p]) => ({ name, rank: rank(name, p.username ?? "") }))
-        .sort((x, y) => y.rank - x.rank)[0];
-      if (candidate && candidate.rank > 0) agentProfile = candidate.name;
     }
     let session = opts.session ?? `bask-${profile.replace(/[^\w-]/g, "-")}`;
     if (!opts.dryRun) for (let n = 2; sessionExists(mux, session, found.rex); n += 1) session = `${(opts.session ?? `bask-${profile.replace(/[^\w-]/g, "-")}`)}-${n}`;
 
+    // The agent: its command, the login it uses, and a briefing on how to use bask here.
     let agent: Parameters<typeof buildLayout>[0]["agent"];
     const notes: string[] = [];
+    const lines: string[] = [];
     if (opts.agent) {
       const program_ = opts.agent.trim().split(/\s+/)[0];
       const installed = spawnSync("sh", ["-c", `command -v ${shq(program_)}`], { stdio: "ignore" }).status === 0;
       if (!installed) notes.push(`${program_} was not found, so the workspace has no agent pane. Install it, or name another with --agent <command>.`);
       else {
-        if (agentProfile !== profile && !opts.dryRun) {
-          const conn = await connect(agentProfile).catch((error: Error) => {
-            throw new Error(`The agent's profile "${agentProfile}" could not connect (${error.message}). Run: bask login ${getProfile(agentProfile).profile.station} -u ${getProfile(agentProfile).profile.username} --name ${agentProfile}`);
-          });
-          conn.client.close();
+        const isClaude = /(^|\/)claude$/.test(program_);
+        const label = isClaude ? "Claude Code" : path.basename(program_);
+        // You stay on your own login in the station panes; the agent has its own, on the same station.
+        let choice: AgentChoice | undefined;
+        let login: AgentLogin | undefined;
+        if (site) {
+          if (opts.agentUser || opts.agentProfile) notes.push("A simulated building has one login, so --agent-user and --agent-profile are left out here. They are for a real station.");
+        } else {
+          choice = chooseAgentLogin(profile, { profile: opts.agentProfile, user: opts.agentUser });
+          if (choice && !opts.dryRun) {
+            // Said before anything is asked, so a password prompt that follows is understood.
+            console.log(`${label} signs in as ${chalk.bold(choice.user)} (${describeChoice(choice)}). Your own panes stay on ${chalk.bold(info.user)}.`);
+            login = await openAgentLogin(profile, choice);
+          }
         }
-        const agentUser = site ? "admin" : getProfile(agentProfile).profile.username ?? info.user;
+        const agentProfile = choice?.profile ?? profile;
+        const agentUser = login?.user ?? choice?.user ?? info.user;
         const dir = path.join(configDir(), "workspaces", session.replace(/[^\w.-]/g, "_"));
         const brief = path.join(dir, "STATION.md");
         if (!opts.dryRun) {
           mkdirSync(dir, { recursive: true, mode: 0o700 });
           writeFileSync(brief, agentBrief({ ...info, user: agentUser, profile: agentProfile, demo: !!site }));
         }
-        const isClaude = /(^|\/)claude$/.test(program_);
         agent = {
-          label: isClaude ? "Claude Code" : path.basename(program_),
+          label,
           shell: isClaude ? `${opts.agent} --append-system-prompt "$(cat ${shq(brief)})"` : opts.agent,
           cwd: process.cwd(),
-          env: { BASKSTREAM_PROFILE: agentProfile, BASK_AGENT: isClaude ? "Claude Code" : path.basename(program_), BASK_ON_BEHALF_OF: os.userInfo().username, BASK_STATION_BRIEF: brief, PATH: `${opts.dryRun ? path.join(configDir(), "bin") : writeShim()}${path.delimiter}${process.env.PATH ?? ""}` }
+          env: { BASKSTREAM_PROFILE: agentProfile, BASK_AGENT: label, BASK_ON_BEHALF_OF: os.userInfo().username, BASK_STATION_BRIEF: brief, PATH: `${opts.dryRun ? path.join(configDir(), "bin") : writeShim()}${path.delimiter}${process.env.PATH ?? ""}` },
+          // A saved login lapses when nothing uses it for a while, and the agent cannot type a password:
+          // keep it in use for as long as the agent's pane runs.
+          before: site ? undefined : [`${selfArgv().map(shq).join(" ")} keep-alive --while $$ >/dev/null 2>&1 &`]
         };
-        if (!isClaude) notes.push(`${agent.label} is not told about the station automatically: point it at the briefing in $BASK_STATION_BRIEF (${brief}).`);
-        if (agentProfile === profile && !site) notes.push(`The agent shares your login (${info.user}). For its own Niagara user, save a profile for it and pass --agent-profile <name>.`);
+        if (!isClaude) notes.push(`${label} is not told about the station automatically: point it at the briefing in $BASK_STATION_BRIEF (${brief}).`);
+        if (opts.dryRun && !site) lines.push(`# agent login: ${choice ? `${choice.user} (${describeChoice(choice)})${choice.create ? ", logged in and saved when this runs" : ""}` : `${info.user}, shared with you`}`);
+        if (login) {
+          lines.push(`${label} is signed in as ${chalk.bold(login.user)}; you are ${chalk.bold(info.user)}.${login.listed ? ` The station counts ${login.user} as an agent${login.approval ? ": its point writes wait for your approval" : ""}.` : ""}`);
+          if (login.listed === false) notes.push(`${login.user} is not in agentUsers on the station's BASkStreamService. bask tells the station that this session is an agent, so the agent rules apply to what ${label} does through bask; add ${login.user} to agentUsers in Workbench and the station applies them to that user however it connects.`);
+        } else if (!site && !choice) {
+          notes.push(`${label} shares your login (${info.user}), so the station cannot tell its changes from yours by user. Give it the Niagara user made for it: bask workspace --agent-user <user>`);
+        }
       }
     }
 
@@ -1064,6 +1073,7 @@ program
     const result = launch(mux, session, panes, { rex: found.rex, dryRun: opts.dryRun });
     if (opts.dryRun) {
       console.log(chalk.dim(`# ${mux} (${found.why}), session ${session}, layout ${opts.layout}`));
+      for (const line of lines) console.log(chalk.dim(line));
       for (const pane of panes) console.log(chalk.dim(`# pane ${pane.label}: ${pane.shell.replace(/"\$\(cat [^)]*\)"/, '"<station briefing>"')}`));
       for (const line of result.commands) console.log(line);
       for (const note of notes) console.error(chalk.yellow(note));
@@ -1071,11 +1081,39 @@ program
     }
     console.log(`${chalk.green("✓")} Workspace ${chalk.bold(session)} is up in ${mux === "rex" ? "Rex" : "tmux"}: ${panes.map((p) => p.label).join(" · ")}.`);
     if (mux === "rex" && !process.env.REX_SESSION) console.log(chalk.dim(`  Switch to the "${session}" session in Rex to see it.`));
+    for (const line of lines) console.log(`  ${line}`);
     for (const note of notes) console.log(chalk.yellow(`  ${note}`));
     console.log(chalk.dim(`  In any station pane: 1-0 switch view, / find, : commands, W allow changes, ? help.${agent ? " The agent's changes show up in the AI Activity pane; approve with a, reject with x." : ""}`));
     if (result.attach && opts.attach && process.stdout.isTTY && sites.length === 1) spawnSync(result.attach[0], result.attach.slice(1), { stdio: "inherit" });
     else if (result.attach) console.log(chalk.dim(`  Open it with: ${result.attach.join(" ")}`));
    }
+  });
+
+program
+  .command("keep-alive", { hidden: true })
+  .description("keep a saved login in use so it does not lapse (bask workspace runs this beside the agent)")
+  .option("--while <pid>", "stop when this process is gone")
+  .option("--every <duration>", "how often to touch the session", "4m")
+  .action(async (opts: { while?: string; every: string }, cmd: Command) => {
+    const { name } = getProfile(globals(cmd).profile);
+    const pid = opts.while ? Number(opts.while) : undefined;
+    const running = () => {
+      if (!pid) return true;
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === "EPERM";
+      }
+    };
+    const every = parseDuration(opts.every);
+    while (running()) {
+      // Read the profile each time: a later bask login leaves a new session there.
+      const { profile } = getProfile(name);
+      const http = new StationHttp({ station: profile.station, verifyTls: !profile.insecure, cookies: profile.cookies });
+      await http.health().catch(() => null);
+      for (let waited = 0; waited < every && running(); waited += 2000) await new Promise((resolve) => setTimeout(resolve, Math.min(2000, every - waited)));
+    }
   });
 
 program

@@ -17,6 +17,10 @@ It sits on top of Niagara rather than replacing it:
 
 Recommended setup: give each agent its own Niagara user (for example `ai-claude`) with a role covering only what it should touch, and list it in `agentUsers`.
 
+## In a bask workspace
+
+`bask workspace --agent-user ai-claude` starts the station panes on your own login and the AI agent's pane on that Niagara user. bask asks for the agent user's password once, saves that login and uses it from then on; plain `bask workspace` is enough afterwards. As it starts it reports which user the agent is signed in as and whether the station lists that user in `agentUsers`. See [the CLI's workspace section](../cli/README.md#workspace).
+
 ## Settings
 
 All are properties on **BASkStreamService**, grouped under `agent…` in the property sheet.
