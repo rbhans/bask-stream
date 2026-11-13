@@ -7,10 +7,10 @@ import { theme, toneColor, type Tone } from "./theme.js";
 export { theme, toneColor, statusTone, type Tone } from "./theme.js";
 export type { Rect } from "./input.js";
 
-export const VIEWS = ["home", "explorer", "watch", "alarms", "trends", "schedules", "query", "files", "jobs", "activity", "graphics"] as const;
+export const VIEWS = ["home", "explorer", "watch", "alarms", "trends", "schedules", "query", "files", "jobs", "activity", "graphics", "logic"] as const;
 export type ViewName = (typeof VIEWS)[number];
 export const VIEW_LABEL: Record<ViewName, string> = {
-  home: "Home", explorer: "Explorer", watch: "Watch", alarms: "Alarms", trends: "Trends", schedules: "Schedules", query: "Query", files: "Files", jobs: "Jobs", activity: "AI Activity", graphics: "Graphics"
+  home: "Home", explorer: "Explorer", watch: "Watch", alarms: "Alarms", trends: "Trends", schedules: "Schedules", query: "Query", files: "Files", jobs: "Jobs", activity: "AI Activity", graphics: "Graphics", logic: "Logic"
 };
 
 export interface Choice<T = string> {

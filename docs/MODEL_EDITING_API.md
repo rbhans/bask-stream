@@ -34,7 +34,7 @@ All new request/response operations return `{op:"model_result", id, operation, r
 | Operation | Request fields | Behavior |
 | --- | --- | --- |
 | `describe_component_types` | `typeSpec`, or `module`, `baseType`, `offset`, `limit` | Specific type schema, or paged installed types. Default base `baja:Component`, limit 100, maximum 500. |
-| `describe_component` | `ord` | Slot names, types, encoded values, flags, facets, permissions, actions and known link/relation references. |
+| `describe_component` | `ord` | Slot names, types, encoded values, flags, facets, permissions, actions and known link/relation references. From API 1.11 also `links`: every link at the component as `{direction: "in"\|"out", source, sourceSlot, target, targetSlot}`, which is what a wire sheet is drawn from. |
 | `preview_model_changes` | `changes` | Validates 1–100 ordered changes and returns a stored plan, exact normalized diff, hash and expiry. No mounted station edits. |
 | `apply_model_changes` | `planId`, `planHash`, `idempotencyKey` | Applies the stored plan once after fresh identity, permission, value and collision checks. |
 | `model_plan_status` | `planId` | Retrieves the current principal's retained preview/outcome after reconnect or an uncertain response. |

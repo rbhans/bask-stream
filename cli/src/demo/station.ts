@@ -45,7 +45,92 @@ interface Node {
   defaultOutput?: { value: unknown; text: string };
   /** For a device added from discovery: the controller it is, so its points can be discovered. */
   field?: FieldDevice;
+  /** For a logic block: its type (a key of LOGIC). Its output follows its inputs. */
+  logic?: string;
+  /** A logic block's inputs and settings that are not fed by a link. */
+  slots?: Record<string, SlotValue>;
 }
+
+type SlotValue = number | boolean | string | null;
+/** A link from one component's slot to another's, as Niagara keeps it on the target. */
+interface LinkRecord {
+  name: string;
+  source: string;
+  sourceSlot: string;
+  target: string;
+  targetSlot: string;
+}
+
+/**
+ * The logic blocks the demo station can run, with kitControl's own type and slot names (read from
+ * the 4.15 kitControl-rt.jar). `ins` are inputs a link can feed, `config` are settings, `shown` are
+ * the inputs Niagara puts on the wire sheet glyph, and `out` works the output out.
+ */
+interface LogicType {
+  vt: "numeric" | "boolean";
+  ins: Record<string, "numeric" | "boolean">;
+  /** What an input holds until something is set on it or linked to it (null where not given). */
+  defaults?: Record<string, SlotValue>;
+  config?: Record<string, SlotValue>;
+  shown: string[];
+  out(v: (slot: string) => SlotValue): SlotValue;
+}
+const QUAD = ["inA", "inB", "inC", "inD"];
+const quad = (kind: "numeric" | "boolean") => Object.fromEntries(QUAD.map((slot) => [slot, kind])) as Record<string, "numeric" | "boolean">;
+const numbersOf = (v: (slot: string) => SlotValue, slots: string[]) => slots.map(v).filter((x): x is number => typeof x === "number");
+const flagsOf = (v: (slot: string) => SlotValue, slots: string[]) => slots.map(v).filter((x): x is boolean => typeof x === "boolean");
+const mathOf = (fold: (values: number[]) => number): LogicType => ({ vt: "numeric", ins: quad("numeric"), shown: ["inA", "inB"], out: (v) => { const values = numbersOf(v, QUAD); return values.length ? fold(values) : null; } });
+const pairOf = (fold: (a: number, b: number) => SlotValue, vt: "numeric" | "boolean"): LogicType => ({ vt, ins: { inA: "numeric", inB: "numeric" }, shown: ["inA", "inB"], out: (v) => { const a = v("inA"), b = v("inB"); return typeof a === "number" && typeof b === "number" ? fold(a, b) : null; } });
+const LOGIC: Record<string, LogicType> = {
+  "kitControl:Add": mathOf((values) => values.reduce((a, b) => a + b, 0)),
+  "kitControl:Multiply": mathOf((values) => values.reduce((a, b) => a * b, 1)),
+  "kitControl:Average": mathOf((values) => values.reduce((a, b) => a + b, 0) / values.length),
+  "kitControl:Minimum": mathOf((values) => Math.min(...values)),
+  "kitControl:Maximum": mathOf((values) => Math.max(...values)),
+  "kitControl:Subtract": pairOf((a, b) => a - b, "numeric"),
+  "kitControl:Divide": pairOf((a, b) => (b === 0 ? null : a / b), "numeric"),
+  "kitControl:GreaterThan": pairOf((a, b) => a > b, "boolean"),
+  "kitControl:GreaterThanEqual": pairOf((a, b) => a >= b, "boolean"),
+  "kitControl:LessThan": pairOf((a, b) => a < b, "boolean"),
+  "kitControl:LessThanEqual": pairOf((a, b) => a <= b, "boolean"),
+  "kitControl:Equal": pairOf((a, b) => a === b, "boolean"),
+  "kitControl:NotEqual": pairOf((a, b) => a !== b, "boolean"),
+  "kitControl:And": { vt: "boolean", ins: quad("boolean"), shown: ["inA", "inB"], out: (v) => { const values = flagsOf(v, QUAD); return values.length ? values.every(Boolean) : null; } },
+  "kitControl:Or": { vt: "boolean", ins: quad("boolean"), shown: ["inA", "inB"], out: (v) => { const values = flagsOf(v, QUAD); return values.length ? values.some(Boolean) : null; } },
+  "kitControl:Not": { vt: "boolean", ins: { in: "boolean" }, shown: ["in"], out: (v) => (typeof v("in") === "boolean" ? !v("in") : null) },
+  "kitControl:NumericSwitch": { vt: "numeric", ins: { inSwitch: "boolean", inTrue: "numeric", inFalse: "numeric" }, shown: ["inSwitch", "inTrue", "inFalse"], out: (v) => (v("inSwitch") === true ? v("inTrue") : v("inFalse")) },
+  // A straight line between two points, held at the ends: an outdoor reset, for one.
+  "kitControl:Reset": {
+    vt: "numeric", ins: { inA: "numeric", inputLowLimit: "numeric", inputHighLimit: "numeric", outputLowLimit: "numeric", outputHighLimit: "numeric" },
+    defaults: { inputLowLimit: 0, inputHighLimit: 100, outputLowLimit: 0, outputHighLimit: 100 }, shown: ["inA"],
+    out: (v) => {
+      const [x, x0, x1, y0, y1] = ["inA", "inputLowLimit", "inputHighLimit", "outputLowLimit", "outputHighLimit"].map(v);
+      if (typeof x !== "number" || typeof x0 !== "number" || typeof x1 !== "number" || typeof y0 !== "number" || typeof y1 !== "number" || x0 === x1) return null;
+      const along = Math.min(1, Math.max(0, (x - x0) / (x1 - x0)));
+      return y0 + (y1 - y0) * along;
+    }
+  },
+  // Proportional only, which is enough to watch an output follow its error.
+  "kitControl:LoopPoint": {
+    vt: "numeric", ins: { loopEnable: "boolean", controlledVariable: "numeric", setpoint: "numeric" }, defaults: { loopEnable: true },
+    config: { loopAction: "direct", proportionalConstant: 1, integralConstant: 0, derivativeConstant: 0, bias: 50, maximumOutput: 100, minimumOutput: 0 }, shown: ["controlledVariable", "setpoint"],
+    out: (v) => {
+      const cv = v("controlledVariable"), sp = v("setpoint");
+      if (typeof cv !== "number" || typeof sp !== "number") return null;
+      const low = Number(v("minimumOutput") ?? 0), high = Number(v("maximumOutput") ?? 100);
+      if (v("loopEnable") === false) return low;
+      const error = v("loopAction") === "reverse" ? sp - cv : cv - sp;
+      return Math.min(high, Math.max(low, Number(v("bias") ?? 0) + Number(v("proportionalConstant") ?? 1) * error));
+    }
+  },
+  "kitControl:Tstat": { vt: "boolean", ins: { cv: "numeric", sp: "numeric", diff: "numeric" }, defaults: { diff: 1 }, config: { action: "direct" }, shown: ["cv", "sp"], out: (v) => { const cv = v("cv"), sp = v("sp"); return typeof cv === "number" && typeof sp === "number" ? cv > sp + Number(v("diff") ?? 0) / 2 : null; } },
+  "kitControl:NumericConst": { vt: "numeric", ins: {}, config: { out: 0 }, shown: [], out: (v) => v("out") },
+  "kitControl:BooleanConst": { vt: "boolean", ins: {}, config: { out: false }, shown: [], out: (v) => v("out") }
+};
+/** Slot flags, as javax.baja.sys.Flags has them. */
+const READONLY = 1;
+const TRANSIENT = 2;
+const SUMMARY = 8;
 
 export interface DemoStation {
   url: string;
@@ -148,11 +233,25 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
   };
 
   const point = (path: string, net = network) => `${net}/${path.replace("/", "/points/")}`;
+  const links: LinkRecord[] = [];
+  let linkSeq = 0;
+  /** A logic block under a folder. `set` gives the inputs no link feeds, and its settings. */
+  const block = (parent: string, name: string, typeSpec: string, set: Record<string, SlotValue> = {}, extra: Partial<Node> = {}): string => {
+    const type = LOGIC[typeSpec];
+    const slots: Record<string, SlotValue> = { ...Object.fromEntries(Object.keys(type.ins).map((slot) => [slot, null])), ...type.defaults, ...type.config, ...set };
+    return add(parent, name, typeSpec, "point", { vt: type.vt, logic: typeSpec, slots, precision: 1, texts: ["true", "false"], ...extra });
+  };
+  const addLink = (source: string, sourceSlot: string, target: string, targetSlot: string): LinkRecord => {
+    const made = { name: `Link${linkSeq ? linkSeq : ""}`, source, sourceSlot, target, targetSlot };
+    links.push(made);
+    linkSeq += 1;
+    return made;
+  };
   const schedules = add("slot:/", "Schedules", "baja:Folder", "container");
   const weekdays = (entries: any[], weekend: any[] = []) =>
     Object.fromEntries(DAYS.map((day) => [day, day === "saturday" || day === "sunday" ? weekend : entries]));
   // What the site builds with. The rest is filled in below as each piece is defined.
-  const c = { add, num, numW, bool, enumW, device, network: addNetwork, point, net: network, nodes, schedules, weekdays, wave, outdoor, agentUser: AGENT_USER, past: (minutesAgo: number) => Date.now() - minutesAgo * MIN } as unknown as SiteContext;
+  const c = { add, num, numW, bool, enumW, device, network: addNetwork, point, block, link: addLink, net: network, nodes, schedules, weekdays, wave, outdoor, agentUser: AGENT_USER, past: (minutesAgo: number) => Date.now() - minutesAgo * MIN } as unknown as SiteContext;
   site.tree(c);
 
   // ---- What is on the wire: controllers the station has not added, and the objects on each ---------
@@ -175,13 +274,42 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     }
     return undefined;
   };
-  const effective = (p: Node, t: number): { value: unknown; level?: number } => {
+  /**
+   * What a slot holds now: the value a link brings it, else what was set on it. "out" is a point's
+   * or a schedule's present value. A loop of links ends in null rather than going round for ever.
+   */
+  const slotValue = (ord: string, slot: string, t: number, seen = new Set<string>()): SlotValue => {
+    const key = `${ord}|${slot}`;
+    if (seen.has(key)) return null;
+    seen.add(key);
+    const n = nodes.get(ord);
+    if (!n) return null;
+    if (slot === "out" && n.kind === "schedule") return outputAt(n, t).value as SlotValue;
+    if (slot === "out" && n.kind === "point") return effective(n, t, seen).value as SlotValue;
+    const link = links.find((l) => l.target === ord && l.targetSlot === slot);
+    if (link) return slotValue(link.source, link.sourceSlot, t, seen);
+    // A point the driver feeds holds that at the lowest level, which is what "@ 16" on its status means.
+    if (slot === "in16" && n.writable && n.sim) return n.sim(t) as SlotValue;
+    return n.slots?.[slot] ?? null;
+  };
+  const effective = (p: Node, t: number, seen = new Set<string>()): { value: unknown; level?: number } => {
+    if (p.logic) return { value: LOGIC[p.logic].out((slot) => (slot === "out" ? p.slots?.out ?? null : slotValue(p.ord, slot, t, seen))) };
     if (p.emergency !== undefined) return { value: p.emergency, level: 1 };
+    if (p.writable) {
+      // The priority array: a link into in1..in16 holds that level, and an operator's override is level 8.
+      for (let level = 1; level <= 16; level += 1) {
+        if (level === 8 && p.override && (!p.override.until || p.override.until > t)) return { value: p.override.value, level: 8 };
+        if (!links.some((l) => l.target === p.ord && l.targetSlot === `in${level}`)) continue;
+        const value = slotValue(p.ord, `in${level}`, t, seen);
+        if (value !== null) return { value, level };
+      }
+    }
     if (p.override && (!p.override.until || p.override.until > t)) return { value: p.override.value, level: 8 };
     if (p.sim) return { value: p.sim(t), level: p.writable ? 16 : undefined };
     return { value: p.fallback, level: p.writable ? 17 : undefined };
   };
   const display = (p: Node, value: unknown) => {
+    if (value === null || value === undefined) return "null";
     if (p.vt === "numeric") return `${Number(value).toFixed(p.precision ?? 1)} ${p.units ?? ""}`.trim();
     if (p.vt === "boolean") return value ? p.texts?.[0] ?? "true" : p.texts?.[1] ?? "false";
     return String(value);
@@ -190,9 +318,10 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     p.vt === "numeric" ? { units: p.units, precision: String(p.precision ?? 1) } : p.vt === "boolean" ? { trueText: p.texts?.[0], falseText: p.texts?.[1] } : { range: p.options };
   const snapshot = (ord: string, t = clock()): any => {
     const p = nodes.get(ord);
-    if (!p || p.kind !== "point") return { point: ord, ok: false, code: "invalid_point", message: ord.replace(/^slot:/, "") };
+    if (!p || p.kind !== "point") return slotSnapshot(ord, t) ?? { point: ord, ok: false, code: "invalid_point", message: ord.replace(/^slot:/, "") };
     const eff = effective(p, t);
     const flags: string[] = [];
+    if (eff.value === null || eff.value === undefined) flags.push("null");
     if (deviceOf(ord)?.down) flags.push("down", "stale");
     if (p.fault) flags.push("fault");
     if (p.alarm) flags.push("alarm");
@@ -205,6 +334,32 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       timestamp: Date.now(), facets: facetsOf(p), ...(p.writable ? { activeLevel: eff.level === 17 ? "def" : String(eff.level) } : {}),
       ...(p.vt === "enum" ? { enumTag: String(value), enumOptions: (p.options ?? []).map((tag, ordinal) => ({ ordinal, tag, display: tag })) } : {})
     };
+  };
+
+  /**
+   * Any slot of a component reads like a point, as on a real station: slot:/Logic/SatReset/inA.
+   * An input shows in the units of whatever feeds it.
+   */
+  const slotSnapshot = (ord: string, t: number): any => {
+    const cut = ord.lastIndexOf("/");
+    const owner = nodes.get(ord.slice(0, cut));
+    const slot = ord.slice(cut + 1);
+    if (!owner || cut <= 5) return undefined;
+    if (slot === "out" && owner.kind === "point") return { ...snapshot(owner.ord, t), point: ord };
+    const fed = links.find((l) => l.target === owner.ord && l.targetSlot === slot);
+    const known = (slot === "out" && owner.kind === "schedule") || fed || (owner.slots && slot in owner.slots) || (owner.writable && /^in([1-9]|1[0-6])$/.test(slot));
+    if (!known) return undefined;
+    const like = fed ? nodes.get(fed.source) : undefined;
+    const held = slotValue(owner.ord, slot, t);
+    // A number is rounded the way a point's own value is, so the two ends of a link read the same.
+    const digits = (like?.precision ?? owner.precision ?? 1) + 1;
+    const value = typeof held === "number" ? Math.round(held * 10 ** digits) / 10 ** digits : held;
+    const text = value === null ? "null"
+      : slot === "out" && owner.kind === "schedule" ? outputAt(owner, t).text
+        : typeof value === "boolean" ? (value ? like?.texts?.[0] ?? "true" : like?.texts?.[1] ?? "false")
+          : typeof value === "number" ? `${value.toFixed(like?.precision ?? owner.precision ?? 1)} ${like?.units ?? (owner.logic && slot in LOGIC[owner.logic].ins ? "" : owner.units ?? "")}`.trim()
+            : String(value);
+    return { point: ord, ok: true, statusOk: value !== null, state: value === null ? "null" : "ok", display: `${owner.display} ${slot}`, valueType: typeof value === "boolean" ? "boolean" : typeof value === "number" ? "numeric" : "string", value, displayValue: text, status: value === null ? "{null}" : "{ok}", timestamp: Date.now(), facets: {} };
   };
 
   // ---- Alarms -------------------------------------------------------------------------------------
@@ -344,14 +499,62 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       n.children = n.children.map((c) => to + c.slice(from.length));
       nodes.set(n.ord, n);
     }
+    const moved = (ord: string) => (ord === from || ord.startsWith(`${from}/`) ? to + ord.slice(from.length) : ord);
+    for (const l of links) Object.assign(l, { source: moved(l.source), target: moved(l.target) });
   };
   const parentOf = (ord: string) => (ord.lastIndexOf("/") <= 5 ? "slot:/" : ord.slice(0, ord.lastIndexOf("/")));
+  /** A typed value from a plan ({typeSpec, encoded}, or a status value's {properties: {value}}) as a plain one. */
+  const plainOf = (value: any): SlotValue => {
+    const encoded = value?.properties?.value?.encoded ?? value?.encoded ?? value;
+    if (encoded === null || encoded === undefined || typeof encoded === "object") return null;
+    if (typeof encoded === "number" || typeof encoded === "boolean") return encoded;
+    const text = String(encoded);
+    if (text === "true" || text === "false") return text === "true";
+    return text.trim() !== "" && !Number.isNaN(Number(text)) ? Number(text) : text;
+  };
+  /** Checks one property of a logic block ("inB/value", "bias", "facets") and returns what sets it. */
+  const logicSet = (typeSpec: string, name: string, path: string, value: any): ((n: Node) => void) => {
+    const type = LOGIC[typeSpec];
+    const slot = path.split("/")[0];
+    if (slot === "displayName") return (n) => void (n.display = String(plainOf(value)));
+    if (slot === "facets") {
+      const units = /units=u:([^|;]+)(?:;([^|;]+))?/.exec(String(value?.encoded ?? ""));
+      const precision = /precision=i:(\d+)/.exec(String(value?.encoded ?? ""))?.[1];
+      return (n) => {
+        if (units && (units[2] ?? units[1]) !== "null") n.units = units[2] ?? units[1];
+        if (precision) n.precision = Number(precision);
+      };
+    }
+    if (!(slot in type.ins) && !(slot in (type.config ?? {}))) throw refuse("invalid_slot", `${name} (${typeSpec}) has no property "${slot}". It has: ${[...Object.keys(type.ins), ...Object.keys(type.config ?? {})].join(", ")}.`);
+    const plain = plainOf(value);
+    return (n) => void (n.slots = { ...n.slots, [slot]: plain });
+  };
   const planFor = (user: string, changes: any[], label?: string, agent = false) => {
     if (!Array.isArray(changes) || changes.length === 0) throw refuse("bad_request", "changes must be a nonempty array.");
+    // What earlier changes in this plan will have made, so a later one can link to it: by its ORD, or by "@ref".
+    const coming = new Map<string, Pick<Node, "name" | "typeSpec" | "kind"> & Partial<Node>>();
+    const refs = new Map<string, string>();
+    const at = (ord: string) => (typeof ord === "string" && ord.startsWith("@") ? refs.get(ord.slice(1)) ?? ord : ord);
+    const peek = (ord: string) => {
+      const found = nodes.get(at(ord)) ?? coming.get(at(ord));
+      if (!found) throw refuse("invalid_component", `No component at ${ord}.`);
+      return found;
+    };
     const steps = changes.map((c, index) => {
       switch (c.action) {
         case "update": {
           const n = need(c.ord);
+          if (n.logic) {
+            const setters = Object.entries(c.properties ?? {}).map(([path, value]) => ({ path, value, set: logicSet(n.logic!, n.name, path, value) }));
+            return { wire: { action: "update", ord: c.ord, properties: Object.fromEntries(setters.map(({ path, value }) => [path, { before: n.slots?.[path.split("/")[0]] ?? null, after: plainOf(value) }])) },
+              run: () => {
+                for (const { path, value, set } of setters) {
+                  set(n);
+                  auditAdd(Date.now(), user, "Changed", c.ord.replace(/^slot:/, ""), path, "", String(plainOf(value)));
+                }
+                return { index, action: "update", ord: c.ord, ok: true };
+              } };
+          }
           for (const name of Object.keys(c.properties ?? {})) if (!n.props?.[name] && !(name === "fallback" && n.writable) && name !== "displayName") throw refuse("invalid_slot", `${n.name} has no property "${name}".`);
           if (agent && n.writable && "fallback" in (c.properties ?? {})) throw useWrite("set fallback");
           return { wire: { action: "update", ord: c.ord, properties: Object.fromEntries(Object.entries(c.properties ?? {}).map(([k, v]: [string, any]) => [k, { before: n.props?.[k]?.encoded ?? null, after: v.encoded }])) },
@@ -389,26 +592,43 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
             const parent = nodes.get(parentOf(c.ord))!;
             parent.children = parent.children.filter((o) => o !== c.ord);
             for (const ord of [...nodes.keys()]) if (ord === c.ord || ord.startsWith(`${c.ord}/`)) nodes.delete(ord);
+            // Its links go with it.
+            const gone = (ord: string) => ord === c.ord || ord.startsWith(`${c.ord}/`);
+            for (let i = links.length - 1; i >= 0; i -= 1) if (gone(links[i].source) || gone(links[i].target)) links.splice(i, 1);
             auditAdd(Date.now(), user, "Removed", parentOf(c.ord).replace(/^slot:/, ""), n.name);
             return { index, action: "delete", deletedOrd: c.ord, ok: true };
           } };
         }
         case "create": {
-          need(c.parent);
-          const ord = `${c.parent}/${c.name}`.replace("slot://", "slot:/");
-          if (nodes.has(ord)) throw refuse("name_collision", `${c.name} already exists.`);
-          return { wire: { action: "create", parent: c.parent, name: c.name, ord, typeSpec: c.typeSpec }, run: () => {
+          const parent = at(c.parent);
+          peek(parent);
+          const ord = `${parent}/${c.name}`.replace("slot://", "slot:/");
+          if (nodes.has(ord) || coming.has(ord)) throw refuse("name_collision", `${c.name} already exists.`);
+          if (/^kitControl:/.test(String(c.typeSpec)) && !LOGIC[c.typeSpec]) throw refuse("unknown_type", `The demo station has no ${c.typeSpec}. It has: ${Object.keys(LOGIC).map((t) => t.slice(11)).join(", ")}.`);
+          const isLogic = Boolean(LOGIC[c.typeSpec]);
+          const setters = isLogic ? Object.entries(c.properties ?? {}).map(([path, value]) => logicSet(c.typeSpec, c.name, path, value)) : [];
+          coming.set(ord, { name: c.name, typeSpec: c.typeSpec, kind: isLogic || /^control:/.test(c.typeSpec) ? "point" : "container", logic: isLogic ? c.typeSpec : undefined, writable: /Writable/.test(c.typeSpec) });
+          if (c.ref) refs.set(String(c.ref), ord);
+          if (isLogic) {
+            return { wire: { action: "create", parent, name: c.name, ord, typeSpec: c.typeSpec }, run: () => {
+              const made = nodes.get(block(parent, c.name, c.typeSpec))!;
+              for (const set of setters) set(made);
+              auditAdd(Date.now(), user, "Added", parent.replace(/^slot:/, ""), c.name, "", c.typeSpec);
+              return { index, action: "create", ord, ok: true };
+            } };
+          }
+          return { wire: { action: "create", parent: parent, name: c.name, ord, typeSpec: c.typeSpec }, run: () => {
             // A point or device built from a discovery result carries the object or controller it came from.
             const object = c.object as FieldObject | undefined;
             const controller = c.device as FieldDevice | undefined;
             if (/^control:/.test(c.typeSpec)) {
               const vt = /Boolean/.test(c.typeSpec) ? "boolean" : /Enum/.test(c.typeSpec) ? "enum" : "numeric";
-              add(c.parent, c.name, c.typeSpec, "point", {
+              add(parent, c.name, c.typeSpec, "point", {
                 vt, writable: /Writable/.test(c.typeSpec), units: object?.units, precision: object?.precision ?? 1, texts: object?.texts ?? ["Active", "Inactive"], options: object?.options ?? ["occupied", "unoccupied", "standby"],
                 fallback: object ? object.value : vt === "numeric" ? 0 : vt === "boolean" ? false : "occupied", sim: object?.sim
               });
             } else if (/Device$/.test(c.typeSpec)) {
-              add(c.parent, c.name, c.typeSpec, "container", {
+              add(parent, c.name, c.typeSpec, "container", {
                 actions: ["ping", "upload"], tags: controller?.tags, field: controller,
                 props: {
                   enabled: { typeSpec: "baja:Boolean", encoded: "true", writable: true },
@@ -419,9 +639,36 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
                 }
               });
               add(ord, "points", "bacnet:BacnetPointDeviceExt", "container", { display: "Points" });
-            } else add(c.parent, c.name, c.typeSpec, /Folder$/.test(c.typeSpec) ? "container" : "component", { actions: [], props: {} });
-            auditAdd(Date.now(), user, "Added", c.parent.replace(/^slot:/, ""), c.name, "", c.typeSpec);
+            } else add(parent, c.name, c.typeSpec, /Folder$/.test(c.typeSpec) ? "container" : "component", { actions: [], props: {} });
+            auditAdd(Date.now(), user, "Added", parent.replace(/^slot:/, ""), c.name, "", c.typeSpec);
             return { index, action: "create", ord, ok: true };
+          } };
+        }
+        case "create_link": {
+          const from = at(c.source);
+          const to = at(c.target);
+          const source = peek(from);
+          const target = peek(to);
+          const slot = String(c.targetSlot);
+          if (c.sourceSlot !== "out" || (source.kind !== "point" && source.kind !== "schedule")) throw refuse("invalid_slot", `Link from a point's, a block's or a schedule's "out"; ${source.name} has no "${c.sourceSlot}" to link from.`);
+          if (target.logic ? !(slot in LOGIC[target.logic].ins) : !(target.writable && /^in([1-9]|1[0-6])$/.test(slot)))
+            throw refuse("invalid_slot", target.logic ? `${target.name} (${target.typeSpec}) has no input "${slot}". It has: ${Object.keys(LOGIC[target.logic].ins).join(", ")}.`
+              : target.writable ? `${target.name} takes a link on in1 to in16 (in10 is the usual one), not "${slot}".` : `${target.name} is not something a link can feed: use a logic block's input, or a writable point's in10.`);
+          if (links.some((l) => l.target === to && l.targetSlot === slot)) throw refuse("bad_request", `${target.name}.${slot} already has a link. Remove it first with delete_link.`);
+          return { wire: { action: "create_link", source: from, sourceSlot: c.sourceSlot, target: to, targetSlot: slot }, run: () => {
+            const made = addLink(from, "out", to, slot);
+            auditAdd(Date.now(), user, "Added", to.replace(/^slot:/, ""), made.name, "", `baja:Link from ${from.replace(/^slot:/, "")}`);
+            return { index, action: "create_link", ord: to, slot: made.name, ok: true };
+          } };
+        }
+        case "delete_link": {
+          const n = need(c.ord);
+          const found = links.find((l) => l.target === c.ord && (l.name === c.slot || l.targetSlot === c.slot));
+          if (!found) throw refuse("invalid_slot", `${n.name} has no link "${c.slot}". Its links: ${links.filter((l) => l.target === c.ord).map((l) => `${l.name} (into ${l.targetSlot})`).join(", ") || "none"}.`);
+          return { wire: { action: "delete_link", ord: c.ord, slot: found.name }, run: () => {
+            links.splice(links.indexOf(found), 1);
+            auditAdd(Date.now(), user, "Removed", c.ord.replace(/^slot:/, ""), found.name);
+            return { index, action: "delete_link", ord: c.ord, slot: found.name, ok: true };
           } };
         }
         case "invoke": {
@@ -490,16 +737,35 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
   const typed = (typeSpec: string, encoded: string) => ({ typeSpec, encoded });
   const slotsOf = (n: Node) => {
     const slots: any[] = [];
-    const prop = (name: string, typeSpec: string, value: any, writable = false) => slots.push({ name, kind: "property", dynamic: false, flags: writable ? 0 : 1, facets: "", typeSpec, writable, value });
+    const prop = (name: string, typeSpec: string, value: any, writable = false, flags = writable ? 0 : READONLY) => slots.push({ name, kind: "property", dynamic: false, flags, facets: "", typeSpec, writable, value });
+    const status = (vt: string, value: SlotValue) => {
+      const type = `baja:Status${vt === "numeric" ? "Numeric" : vt === "boolean" ? "Boolean" : "Enum"}`;
+      return { typeSpec: type, properties: { status: typed("baja:Status", value === null ? "{null}" : "{ok}"), value: typed(vt === "numeric" ? "baja:Double" : vt === "boolean" ? "baja:Boolean" : "baja:DynamicEnum", String(value ?? (vt === "numeric" ? 0 : false))) } };
+    };
     const action = (name: string, parameterType: string | null = null) => slots.push({ name, kind: "action", dynamic: false, flags: 0, facets: "", parameterType, returnType: null, parameterDefault: parameterType ? typed(parameterType, parameterType === "baja:Boolean" ? "false" : "0.0") : null, invokable: true });
-    if (n.kind === "point") {
+    if (n.logic) {
+      // A logic block, as kitControl has it: status inputs a link can feed, settings, and its output.
+      const type = LOGIC[n.logic];
+      prop("facets", "baja:Facets", typed("baja:Facets", n.vt === "numeric" ? `units=u:${n.units ?? "null"}|precision=i:${n.precision ?? 1}` : "trueText=s:true|falseText=s:false"), true);
+      for (const [name, vt] of Object.entries(type.ins)) prop(name, status(vt, null).typeSpec, status(vt, slotValue(n.ord, name, clock())), true, type.shown.includes(name) ? SUMMARY : 0);
+      for (const name of Object.keys(type.config ?? {})) {
+        const value = n.slots?.[name] ?? null;
+        if (name === "out") continue;
+        prop(name, typeof value === "number" ? "baja:Double" : typeof value === "boolean" ? "baja:Boolean" : "baja:String", typed(typeof value === "number" ? "baja:Double" : typeof value === "boolean" ? "baja:Boolean" : "baja:String", String(value)), true);
+      }
+      const isConst = "out" in (type.config ?? {});
+      prop("out", status(type.vt, null).typeSpec, status(type.vt, effective(n, clock()).value as SlotValue), isConst, isConst ? SUMMARY : READONLY | TRANSIENT | SUMMARY);
+    } else if (n.kind === "point") {
       const snap = snapshot(n.ord);
       const vtType = n.vt === "numeric" ? "baja:Double" : n.vt === "boolean" ? "baja:Boolean" : "baja:DynamicEnum";
       const statusType = `baja:Status${n.vt === "numeric" ? "Numeric" : n.vt === "boolean" ? "Boolean" : "Enum"}`;
       prop("facets", "baja:Facets", typed("baja:Facets", n.vt === "numeric" ? `units=u:${n.units}|precision=i:${n.precision ?? 1}` : n.vt === "boolean" ? `trueText=s:${n.texts?.[0]}|falseText=s:${n.texts?.[1]}` : `range=E:{${(n.options ?? []).join(",")}}`), true);
       prop("proxyExt", "control:AbstractProxyExt", { typeSpec: `bacnet:Bacnet${n.vt === "numeric" ? "Numeric" : n.vt === "boolean" ? "Boolean" : "Enum"}ProxyExt`, expand: true });
-      prop("out", statusType, { typeSpec: statusType, properties: { status: typed("baja:Status", snap.status), value: typed(vtType, String(snap.value)) } });
+      prop("out", statusType, { typeSpec: statusType, properties: { status: typed("baja:Status", snap.status), value: typed(vtType, String(snap.value)) } }, false, READONLY | TRANSIENT | SUMMARY);
       if (n.writable) {
+        // The priority inputs a wire sheet shows by itself, and any other one a link feeds.
+        const fed = links.filter((l) => l.target === n.ord && /^in\d+$/.test(l.targetSlot)).map((l) => l.targetSlot);
+        for (const name of [...new Set([...fed, "in10", "in16"])].sort((a, b) => Number(a.slice(2)) - Number(b.slice(2)))) prop(name, statusType, status(n.vt ?? "numeric", slotValue(n.ord, name, clock())), true, name === "in10" || name === "in16" ? SUMMARY : 0);
         prop("fallback", statusType, { typeSpec: statusType, properties: { status: typed("baja:Status", "{ok}"), value: typed(vtType, String(n.fallback)) } }, true);
         for (const name of ["emergencyOverride", "override", "set"]) action(name, vtType);
         for (const name of ["emergencyAuto", "auto"]) action(name);
@@ -512,8 +778,15 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       const c = nodes.get(child)!;
       if (c.kind !== "point") prop(c.name, c.typeSpec, { typeSpec: c.typeSpec, expand: true });
     }
+    // Niagara keeps each link as a property of the component it arrives at.
+    for (const l of links) if (l.target === n.ord) slots.push({ name: l.name, kind: "property", dynamic: true, flags: 0, facets: "", typeSpec: "baja:Link", writable: true, value: { typeSpec: "baja:Link", expand: true } });
     return slots;
   };
+  /** The links at a component, both ways, as describe_component reports them from API 1.11. */
+  const linksAt = (ord: string) => [
+    ...links.filter((l) => l.target === ord).map((l) => ({ direction: "in", source: l.source, sourceSlot: l.sourceSlot, target: l.target, targetSlot: l.targetSlot, enabled: true })),
+    ...links.filter((l) => l.source === ord).map((l) => ({ direction: "out", source: l.source, sourceSlot: l.sourceSlot, target: l.target, targetSlot: l.targetSlot }))
+  ];
 
   // Schedules: the output at a time, and when it changes over a window.
   const outputAt = (s: Node, t: number) => {
@@ -607,6 +880,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
 
   // ---- Protocol -----------------------------------------------------------------------------------
   const sockets = new Set<any>();
+  let modelSequence = 0;
   const counters = { requests: 0, errors: 0, writes: 0 };
   const send = (ws: any, frame: Record<string, unknown>) => ws.send(encode(frame));
   const broadcast = (frame: Record<string, unknown>) => {
@@ -688,7 +962,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
   const CAPS = (ws: any) => ({
     apiVersion: "1.11", module: "baskStream", transport: "websocket-msgpack", serverTime: Date.now(), authenticatedUser: ws.user ?? DEMO_USER, station: stationName, demo: true,
     writesEnabled: true, agents: rules(ws),
-    modelEditing: { enabled: true, actions: ["create", "update", "rename", "delete", "invoke"], maxChanges: 100, previewRequired: true, atomic: false },
+    modelEditing: { enabled: true, actions: ["create", "update", "rename", "delete", "create_link", "delete_link", "invoke"], maxChanges: 100, previewRequired: true, atomic: false },
     limits: { maxConnections: 10, maxConnectionsPerUser: 0, maxMessageBytes: 1048576, activeConnections: sockets.size, maxSubscriptionsPerClient: 500, maxPointSnapshotPoints: 1000, totalSubscriptions: [...sockets].reduce((n, s) => n + [...s.groups.values()].flat().length, 0), heartbeatIntervalSec: 30, subscriptionLeaseSec: 300, covBatchWindowMillis: 100, defaultBrowseDepth: 1, maxBrowseDepth: 4, defaultSearchDepth: 32, maxSearchDepth: 64 },
     workbench: { query: { bql: true, neql: true, maxRows: 5000 }, files: { root: "^", maxReadBytes: 4194304, write: true }, jobs: true, discovery: { drivers: ["bacnet"], addNeedsModelEdits: true }, securityEdits: false },
     policy: { allowedPathPatterns: "slot:/*", slotBrowseOnly: true, hierarchyBrowse: true, historyOrdReads: true }
@@ -934,9 +1208,30 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
         return { ord, ok: true, slotPath: ord, display: n.display, typeSpec: n.typeSpec, tags, relations: [] };
       })
     }),
+    subscribe_model: (ws, r) => {
+      const bases = (r.bases ?? [r.base ?? "slot:/"]) as string[];
+      ws.modelBases = new Set([...(ws.modelBases ?? []), ...bases]);
+      return { op: "model_subscribed", bases, depth: r.depth ?? 1 };
+    },
+    unsubscribe_model: (ws, r) => {
+      ws.modelBases = new Set();
+      return r.id === undefined ? undefined : { op: "model_unsubscribed" };
+    },
+    describe_component_types: (_ws, r) => {
+      const info = (typeSpec: string) => ({ typeSpec, module: "kitControl", abstract: false, interface: false, component: true, superType: LOGIC[typeSpec].vt === "numeric" ? "control:NumericPoint" : "control:BooleanPoint", runtimeProfile: "rt" });
+      if (r.typeSpec) {
+        const type = LOGIC[r.typeSpec];
+        if (!type) throw refuse("unknown_type", `The demo station describes its logic blocks only: ${Object.keys(LOGIC).join(", ")}.`);
+        const sample: Node = { ord: "slot:/@type", name: r.typeSpec, display: r.typeSpec, typeSpec: r.typeSpec, kind: "point", children: [], vt: type.vt, logic: r.typeSpec, slots: { ...Object.fromEntries(Object.keys(type.ins).map((slot) => [slot, null])), ...type.defaults, ...type.config }, precision: 1 };
+        return { op: "model_result", operation: "describe_component_types", result: { ...info(r.typeSpec), slots: slotsOf(sample).filter((slot) => slot.kind === "property") } };
+      }
+      const types = Object.keys(LOGIC).map(info);
+      return { op: "model_result", operation: "describe_component_types", result: { types, total: types.length, nextOffset: null } };
+    },
     describe_component: (_ws, r) => {
       const n = need(r.ord);
-      return { op: "model_result", operation: "describe_component", result: { ord: n.ord, typeSpec: n.typeSpec, name: n.name, slots: slotsOf(n), writesEnabled: true, modelEditsEnabled: true } };
+      const leaving = links.filter((l) => l.source === n.ord).map((l) => ({ kind: "incoming_link", source: l.source, sourceSlot: l.sourceSlot, target: l.target, targetSlot: l.targetSlot }));
+      return { op: "model_result", operation: "describe_component", result: { ord: n.ord, typeSpec: n.typeSpec, name: n.name, slots: slotsOf(n), dependencies: { knownReferences: leaving, unreadableOrUnresolved: 0, complete: false }, links: linksAt(n.ord), writesEnabled: true, modelEditsEnabled: true } };
     },
     preview_model_changes: (ws, r) => ({ op: "model_result", operation: "preview_model_changes", result: planFor(userOf(ws), r.changes, undefined, isAgent(ws)) }),
     apply_model_changes: (ws, r) => {
@@ -948,6 +1243,9 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       plans.delete(r.planId);
       const results = plan.apply();
       agentDid(ws, r, plan.target, "apply_model_changes", plan.summary);
+      // Windows that follow the model hear about it at once, as on a real station.
+      modelSequence += 1;
+      for (const listener of sockets) if (listener.modelBases?.size) send(listener, { op: "model_cov", sequence: modelSequence, timestamp: Date.now(), event: "model_plan_applied", bases: [plan.target], refreshRecommended: true });
       return { op: "model_result", operation: "apply_model_changes", result: { planId: r.planId, planHash: r.planHash, state: "applied", changes: plan.changes, results, atomic: false, unattempted: 0 } };
     }
   };

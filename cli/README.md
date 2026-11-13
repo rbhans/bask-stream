@@ -30,7 +30,7 @@ bask demo                                              # try it on a built-in si
 
 ## Dashboard
 
-Eleven views, switched with `1`–`0`, `g` or `tab`:
+Twelve views, switched with `1`–`0`, `g`, `L` or `tab`:
 
 | | View | What you do there |
 |---|---|---|
@@ -45,6 +45,7 @@ Eleven views, switched with `1`–`0`, `g` or `tab`:
 | `9` | Jobs | Station jobs. Run BACnet discovery and add the devices or points it finds |
 | `0` | AI Activity | What AI agents did and why, from the station's audit history, and their proposals for you to approve or reject |
 | `g` | Graphics | Drawings of the station's equipment, moving, with live values. Pick a part to trend, watch or command its point |
+| `L` | Logic | One folder as a wire sheet: its components as blocks with live slot values, the links between them, and a trace of any value to what feeds it and what it drives |
 
 Everywhere: `/` finds a point or component by name, `:` (or `ctrl+k`) opens every command, `?` shows the keys for the current view, `q` quits. The mouse works too: click a tab or a row, scroll with the wheel (`--no-mouse` leaves the mouse to the terminal).
 
@@ -78,11 +79,12 @@ bask demo --list                     # the buildings and how each starts
 
 Each site is saved as a profile (`demo`, `demo-riverside`, `demo-harbor`, `demo-summit`, `demo-eastgate`) on its own local port, so every other `bask` command works on it too. The first window to open a site hosts its station; closing that window stops it, and the next start is a fresh copy: nothing an agent drew or added is kept, so a demo can be run again.
 
-### Three things to show
+### Four things to show
 
 1. **A finished station.** `bask workspace --demo --layout graphics`: Northgate, with every air handler, VAV box and the plant drawn and moving.
 2. **An agent draws the graphics.** `bask workspace --demo --site harbor --layout graphics`: the Graphics pane is empty. Ask the agent, for example: *"Draw graphics for this building: the freezers and coolers, and the compressor rack."* Each one opens in the Graphics pane as it is saved, and the AI Activity pane lists the saves with the agent's reasons.
 3. **An agent brings a station up.** `bask workspace --demo --site eastgate --layout build`: the BACnet network has no devices. Ask: *"Discover the BACnet network and add everything it finds, then draw the plants and the air handlers with their zones."* The Jobs pane shows each discovery, the Explorer fills with the controllers and their points, and the graphics follow. The mechanical schedule in `^config/equipment-schedule.csv` says which VAV box is on which air handler.
+4. **An agent builds logic.** `bask workspace --demo --layout logic`: Northgate's AHU-1 has a supply air reset and a cooling loop wired up; AHU-2 has none. Ask: *"Give AHU-2 the same supply air reset and cooling loop as AHU-1."* The new sheet opens in the Logic pane as it is applied, and AHU-2's cooling valve starts following the loop.
 
 Eastgate's equipment and point names (`AHU_01`/`Supply_Air_Temp`, `VAV_12`/`Space_Temp`) follow the BACnet HVAC simulator used for testing against real stations, with one controller per piece of equipment here. The agent's part is two commands: `bask discover <network> --add`, then `bask discover <network> --points --add`.
 
@@ -138,6 +140,30 @@ bask graphic list                   # also: get <name>, show <name>, rm <name>
 
 **For an AI agent** this is the whole job: read `bask graphic guide`, write the file, `print` it to see the result as text and fix what it reports (a misspelt symbol comes back with the one that was meant; a point that does not exist is named), then `save`, which opens it in your Graphics pane. The workspace briefing tells the agent this. The demo buildings each start with two graphics drawn this way.
 
+## Logic
+
+The Logic view shows one folder of the station as a wire sheet in text: each component is a block with its inputs and output and what they read now, and the links between slots are drawn as lines. The layout is worked out by bask, left to right in the direction values flow. It is for reading and watching logic; building it is an agent's job (or Workbench's), and the sheet follows as they do.
+
+- It opens on a top-level `Logic` folder when the station has one, else at the station's root. `⏎` on a folder block opens it, `u` goes up. From the Explorer, `L` opens the sheet of whatever is selected.
+- `←↑↓→` pick a block and a slot. The two lines under the sheet say what the slot reads, what feeds it and what it drives.
+- `⏎` on a slot traces it: everything upstream and downstream is lit and carries moving marks, the rest is dimmed, and the way through is written out with the value at each step.
+- Links that leave the folder end at a dashed block naming the component at the far end; `⏎` there goes to its sheet.
+- `e` shows the block in the Explorer, `t` trends it, `w` watches the slot, `c` commands a writable point, `y` copies the slot's ORD.
+- A device's `points` folder is a sheet too: it shows which points logic reads and which it drives.
+
+It needs nothing set up: it reads the folder with `browse`, each block with `describe_component`, and the slot values the way points are read. Up to 80 components show on one sheet.
+
+```bash
+bask logic print slot:/Logic/AHU_01                  # the same sheet once, as text, with every link listed
+bask logic print slot:/Logic/AHU_01 --trace SatLoop.setpoint
+bask logic guide                                     # how to build logic: the plan file, common blocks, an example
+bask plan changes.json                               # check a file of changes against the station
+bask plan changes.json --apply --allow-writes        # make them; the Logic view opens on what was built
+bask show --logic slot:/Logic/AHU_01                 # open a sheet in the Logic view from any shell
+```
+
+**For an AI agent.** `bask logic guide` gives the file format (create blocks, link slots, set properties), the kitControl blocks used most with their real slot names, and a complete example. The agent writes a file, `bask plan` checks it and says what it would do, `--apply` makes the changes, and `bask logic print` reads back what every slot holds, so the agent can see whether the logic does what it meant. Applying a plan as an agent needs `agentDirectModelEdits` on the station; commanding a point stays a proposal.
+
 ## Workspace
 
 `bask workspace` lays out a station workspace in Rex (Superlogical's terminal multiplexer) or tmux: an Explorer, Alarms and AI Activity pane, and an AI agent session (Claude Code by default) that works on the station through `bask`.
@@ -146,6 +172,7 @@ bask graphic list                   # also: get <name>, show <name>, rm <name>
 bask workspace                      # Explorer · Alarms · AI Activity · Claude Code
 bask workspace --no-agent           # Explorer · Watch · Alarms · AI Activity
 bask workspace --layout graphics    # Graphics · AI Activity · Claude Code
+bask workspace --layout logic       # Logic · AI Activity · Claude Code
 bask workspace --layout build       # Explorer · Jobs · Graphics · AI Activity · Claude Code (bringing a station up)
 bask workspace --layout monitor     # Home · Alarms · Watch · AI Activity
 bask workspace --layout duo         # the full dashboard beside the agent
@@ -217,8 +244,11 @@ A saved login lapses when nothing uses it for a while, and an agent cannot type 
 | `bask agent-log [--since 24h]` | What AI agents did, from the station's audit history |
 | `bask metrics` | OpenMetrics text |
 | `bask tui [--view <name>] [--pane] [--no-mouse] [--theme dark\|light]` | The dashboard (also what `bask` alone runs), opened on a view |
-| `bask workspace [--layout ops\|graphics\|build\|monitor\|duo] [--mux rex\|tmux] [--agent <cmd>\|--no-agent] [--agent-user <user>\|--agent-profile <name>] [--demo] [--dry-run]` | A multi-pane station workspace in Rex or tmux |
-| `bask show <ord> [--trend] [--watch]` | Select an ORD in the open Explorer, chart it, or add it to the watch list |
+| `bask workspace [--layout ops\|graphics\|logic\|build\|monitor\|duo] [--mux rex\|tmux] [--agent <cmd>\|--no-agent] [--agent-user <user>\|--agent-profile <name>] [--demo] [--dry-run]` | A multi-pane station workspace in Rex or tmux |
+| `bask show <ord> [--trend] [--watch] [--logic]` | Select an ORD in the open Explorer, chart it, add it to the watch list, or open its wire sheet |
+| `bask logic print <folder> [--trace block.slot]` | A folder's logic as a wire sheet in text, with live values and every link listed |
+| `bask logic guide` | How to build logic through bask: the plan file, the common blocks and their slots, an example |
+| `bask plan <file> [--apply] [--show ord]` | Check a JSON file of station changes (components, properties, links, actions) and list them; `--apply` makes them (needs `--allow-writes`) |
 | `bask agent-brief` | The briefing an AI agent gets on working with this station |
 | `bask symbols [--list]` | The terminal symbol library: animated equipment drawn in text, with example assemblies |
 | `bask graphic guide` | How to write a graphic: the format, every symbol with its ports, an example |

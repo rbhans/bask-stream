@@ -15,6 +15,7 @@ import { AlarmsView } from "./views/Alarms.js";
 import { ExplorerView } from "./views/Explorer.js";
 import { FilesView } from "./views/Files.js";
 import { GraphicsView } from "./views/Graphics.js";
+import { LogicView } from "./views/Logic.js";
 import { HomeView } from "./views/Home.js";
 import { JobsView } from "./views/Jobs.js";
 import { QueryView, REPORTS } from "./views/Query.js";
@@ -35,11 +36,12 @@ const HINTS: Record<ViewName, [string, string][]> = {
   files: [["↑↓", "move"], ["→←", "open/up"], ["e", "edit"], ["n", "new"], ["u", "upload"], ["s", "save copy"], ["D", "delete"]],
   jobs: [["↑↓", "move"], ["d", "discover"], ["→", "results"], ["space", "select"], ["a", "add"], ["x", "cancel"]],
   activity: [["↑↓", "move"], ["a", "approve"], ["x", "reject"], ["⏎", "details"], ["f", "filter"], ["u", "all users"], ["[ ]", "window"], ["e", "explorer"]],
-  graphics: [["↑↓", "graphic"], ["← →", "part"], ["⏎", "explorer"], ["t", "trend"], ["c", "command"], ["w", "watch"], ["space", "pause"], ["r", "reload"], ["D", "delete"]]
+  graphics: [["↑↓", "graphic"], ["← →", "part"], ["⏎", "explorer"], ["t", "trend"], ["c", "command"], ["w", "watch"], ["space", "pause"], ["r", "reload"], ["D", "delete"]],
+  logic: [["←↑↓→", "block and slot"], ["⏎", "trace / open"], ["u", "up"], ["e", "explorer"], ["t", "trend"], ["w", "watch"], ["c", "command"], ["y", "copy ORD"], ["r", "reload"]]
 };
 
-/** The key that opens each view: 1 to 9, then 0, then g for Graphics. */
-const KEY_OF = (index: number) => (index < 10 ? String((index + 1) % 10) : "g");
+/** The key that opens each view: 1 to 9, then 0, then g for Graphics and L for Logic. */
+const KEY_OF = (index: number) => (index < 10 ? String((index + 1) % 10) : VIEWS[index] === "logic" ? "L" : "g");
 
 export interface AppProps {
   client: BaskStreamClient;
@@ -81,6 +83,7 @@ export function App(props: AppProps) {
   const [queryRun, setQueryRun] = useState<{ n: number; bql?: string; neql?: string }>();
   const [focusJob, setFocusJob] = useState<{ job: string; n: number }>();
   const [graphic, setGraphic] = useState<{ name: string; n: number }>();
+  const [logic, setLogic] = useState<{ ord: string; n: number }>();
   const [rangeIndex, setRangeIndex] = useState(1);
   // The station's name, for the header and to find its audit history.
   const station = useStationName(client);
@@ -158,11 +161,12 @@ export function App(props: AppProps) {
       if (!show || show.n <= seen) return;
       seen = show.n;
       if (show.from === process.pid) return;
-      const target: ViewName = show.kind === "trend" ? "trends" : show.kind === "graphic" ? "graphics" : "explorer";
+      const target: ViewName = show.kind === "trend" ? "trends" : show.kind === "graphic" ? "graphics" : show.kind === "logic" ? "logic" : "explorer";
       // A pane answers only for the view it is showing; a full dashboard steps in when no window is on it.
       if (viewRef.current !== target && (pane || link.otherShowing(target))) return;
       if (show.kind === "trend") setTrendOrd(toSlotOrd(show.ord));
       else if (show.kind === "graphic") setGraphic((g) => ({ name: show.ord, n: (g?.n ?? 0) + 1 }));
+      else if (show.kind === "logic") setLogic((l) => ({ ord: toSlotOrd(show.ord), n: (l?.n ?? 0) + 1 }));
       else setReveal((r) => ({ ord: toSlotOrd(show.ord), n: (r?.n ?? 0) + 1 }));
       setView(target);
     };
@@ -347,6 +351,11 @@ export function App(props: AppProps) {
     if (input === "W") return toggleWrites();
     if (/^[0-9]$/.test(input)) return setView(VIEWS[(Number(input) + 9) % 10]);
     if (input === "g") return setView("graphics");
+    if (input === "L") {
+      // From the Explorer, the wire sheet of what is selected there: the folder itself, or the one a point sits in.
+      if (view === "explorer" && lastOrd.current) setLogic((l) => ({ ord: lastOrd.current!, n: (l?.n ?? 0) + 1 }));
+      return setView("logic");
+    }
     if (key.tab) setView((v) => VIEWS[(VIEWS.indexOf(v) + (key.shift ? VIEWS.length - 1 : 1)) % VIEWS.length]);
   });
 
@@ -513,6 +522,11 @@ export function App(props: AppProps) {
             {visited.has("graphics") && (
               <Box display={view === "graphics" ? "flex" : "none"}>
                 <GraphicsView client={client} active={viewActive && view === "graphics"} rect={rect} show={graphic} />
+              </Box>
+            )}
+            {visited.has("logic") && (
+              <Box display={view === "logic" ? "flex" : "none"}>
+                <LogicView client={client} active={viewActive && view === "logic"} rect={rect} show={logic} />
               </Box>
             )}
             {view === "activity" && (

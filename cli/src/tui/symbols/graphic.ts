@@ -330,14 +330,15 @@ export interface Plan {
   problems: Problem[];
 }
 
-const E = 0;
+// The four ways a line can head, as indexes into DX and DY.
+export const E = 0;
 const S = 1;
-const W = 2;
+export const W = 2;
 const N = 3;
 const DX = [1, 0, -1, 0];
 const DY = [0, 1, 0, -1];
 
-interface Port {
+export interface Port {
   x: number;
   y: number;
   /** The way a pipe leaves it. */
@@ -705,7 +706,7 @@ export function planGraphic(doc: GraphicDoc, reserve: Room = {}): Plan {
  * more, so it takes few bends. It leaves and arrives straight, keeps out of blocked cells, may
  * cross another pipe but not run along it, unless both start or end at the same port (a branch).
  */
-function findWay(width: number, height: number, open: (cell: number) => boolean, beside: Uint8Array, alongH: Int16Array, alongV: Int16Array, self: number, shares: (other: number) => boolean, from: Port, to: Port): [number, number][] | undefined {
+export function findWay(width: number, height: number, open: (cell: number) => boolean, beside: Uint8Array, alongH: Int16Array, alongV: Int16Array, self: number, shares: (other: number) => boolean, from: Port, to: Port): [number, number][] | undefined {
   const inside = (x: number, y: number) => x >= 0 && y >= 0 && x < width && y < height;
   if (!inside(from.x, from.y) || !inside(to.x, to.y) || !open(from.y * width + from.x) || !open(to.y * width + to.x)) return undefined;
   // Whole doubles: a rounded-off cost would look out of date next to the one queued for it.

@@ -45,6 +45,10 @@ export interface SiteContext {
   device(name: string, instance: number, address: string, extra?: Extra, network?: string): string;
   /** Another driver network under Drivers. */
   network(name: string, typeSpec: string): string;
+  /** A logic block (a kitControl type) under a folder; `set` gives its settings and the inputs no link feeds. */
+  block(parent: string, name: string, typeSpec: string, set?: Record<string, number | boolean | string | null>, extra?: Extra): string;
+  /** A link from one component's slot to another's. */
+  link(source: string, sourceSlot: string, target: string, targetSlot: string): unknown;
   /** The objects of a controller like one already in the station ("VAV_101"), with values of their own. */
   like(device: string, shift?: number): FieldObject[];
   /** "AHU_01/SupplyAirTemp" as a point ORD on a network (the BACnet one unless given). */
@@ -140,7 +144,7 @@ const northgate: Site = {
   bounds: ["*/ZoneSetpoint 65..78", "*/SupplyAirSetpoint 50..62"],
   watch: ["AHU_01/SupplyAirTemp", "AHU_01/SupplyFanSpeed", "AHU_01/OutdoorAirTemp", "VAV_101/ZoneTemp", "VAV_105/ZoneTemp", "VAV_105/ZoneSetpoint", "CHW_Plant/ChwSupplyTemp", "CHW_Plant/ChwFlow"],
   tree(c) {
-    const { add, num, numW, bool, enumW, device, wave, outdoor, point, nodes, schedules, weekdays } = c;
+    const { add, num, numW, bool, enumW, device, wave, outdoor, point, nodes, schedules, weekdays, block, link } = c;
     let seed = 1;
     for (const [i, ahu] of ["AHU_01", "AHU_02"].entries()) {
       const p = device(ahu, 1001 + i, `192.168.10.${11 + i}`, { tags: ["hs:ahu", "hs:equip"] });
@@ -187,6 +191,25 @@ const northgate: Site = {
       defaultOutput: { value: 78, text: "78.0 °F" },
       week: weekdays([{ start: "06:00", finish: "08:00", value: 74, text: "74.0 °F" }, { start: "08:00", finish: "18:00", value: 72, text: "72.0 °F" }, { start: "18:00", finish: "21:00", value: 75, text: "75.0 °F" }])
     });
+    // AHU-1's control sequence, as logic: the supply air setpoint resets with outdoor air and a loop
+    // holds it with the cooling valve; the unit is occupied on the schedule unless mixed air is near freezing.
+    const logic = add(add("slot:/", "Logic", "baja:Folder", "container"), "AHU_01", "baja:Folder", "container");
+    const ahu = (name: string) => point(`AHU_01/${name}`);
+    const reset = block(logic, "SatReset", "kitControl:Reset", { inputLowLimit: 55, inputHighLimit: 80, outputLowLimit: 57, outputHighLimit: 54 }, { units: "°F" });
+    link(ahu("OutdoorAirTemp"), "out", reset, "inA");
+    const loop = block(logic, "SatLoop", "kitControl:LoopPoint", { proportionalConstant: 8, bias: 55, loopAction: "direct" }, { units: "%" });
+    link(ahu("SupplyAirTemp"), "out", loop, "controlledVariable");
+    link(reset, "out", loop, "setpoint");
+    link(loop, "out", ahu("CoolingValve"), "in10");
+    const low = block(logic, "LowLimit", "kitControl:LessThan", { inB: 38 });
+    link(ahu("MixedAirTemp"), "out", low, "inA");
+    const safe = block(logic, "NotFreezing", "kitControl:Not");
+    link(low, "out", safe, "in");
+    const run = block(logic, "Occupied", "kitControl:And", {}, { texts: ["Occupied", "Unoccupied"] });
+    link(`${schedules}/OfficeHours`, "out", run, "inA");
+    link(safe, "out", run, "inB");
+    link(run, "out", ahu("OccupiedCmd"), "in10");
+
     add(schedules, "LobbyLighting", "schedule:EnumSchedule", "schedule", {
       defaultOutput: { value: "off", text: "Off" },
       week: weekdays([{ start: "05:30", finish: "07:00", value: "dim", text: "Dim" }, { start: "07:00", finish: "19:00", value: "on", text: "On" }, { start: "19:00", finish: "23:00", value: "dim", text: "Dim" }], [{ start: "08:00", finish: "20:00", value: "dim", text: "Dim" }])

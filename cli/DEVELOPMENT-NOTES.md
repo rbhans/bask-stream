@@ -47,6 +47,17 @@ Short notes on problems that were solved, so they are not solved twice.
 - The agent's pane runs `bask keep-alive --while $$` before its command, so the saved session is touched every four minutes while the agent runs and stops with it. Niagara web sessions lapse on inactivity; whether four minutes is enough on a real station is not checked yet.
 - The demo station takes any user name with its password and counts `ai-claude` as an agent user, which is how this is tested (`test/agent-login.test.mjs`).
 
+## Logic (wire sheets)
+
+- `src/logic.ts` is the whole of it apart from the view: `loadSheet` (browse the folder, `describe_component` each child, six at a time), `planSheet` (columns by longest path from the sources, a couple of barycentre passes for the order, then the same `findWay` router the graphics use), `drawSheet`, `traceOf`. The view (`src/tui/views/Logic.tsx`) and `bask logic print` both draw from it.
+- What it rests on, read from the module's source on 2026-11-12:
+  - `BaskStreamPointResolver` resolves any `slot:/` ORD, a component's property included, so `slot:/Logic/SatReset/inA` reads and subscribes like a point. Slot values come through the ordinary watch, with no polling.
+  - `describe_component` gives each slot's `flags` (4 hidden, 8 summary: Niagara's own choice of what a wire sheet glyph shows) and, from API 1.11, `links` both ways. Before 1.11 only `dependencies.knownReferences` is there, which is the links leaving the component, so a sheet on an older station misses links that arrive from outside its folder.
+  - `model_cov` (from `subscribe_model`) says when a plan applied, so the sheet reloads at once; it also reloads every four seconds.
+- A block shows its linked slots, then `out`, then summary-flagged ones, up to eight rows. Links to components outside the folder end at dashed blocks so a wire always has somewhere to go.
+- Not yet seen on a real station: the view itself, slot reads on kitControl blocks, and `bask plan` with the guide's example (the `"inB/value"` property path and `@ref` parents are how the module's plan compiler reads them, but an input set that way may keep a null status; the guide says to read the sheet back and to prefer a constant block).
+- The demo station runs logic so there is something to look at and build: `LOGIC` in `src/demo/station.ts` has kitControl's type and slot names (read with `javap` from the 4.15 `kitControl-rt.jar`), links are kept the way Niagara keeps them (on the target), a writable point follows a link into `in1`..`in16` with an operator override at 8, and Northgate is seeded with AHU-1's sequence under `slot:/Logic/AHU_01`. The loop is proportional only.
+
 ## What an agent may do by itself
 
 - `src/agent-rules.ts` reads `capabilities.agents.direct` (baskStream API 1.11). A station older than that does not say, and with approval on it refuses everything from an agent but point-write proposals: `directWork` reports `known: false` rather than guessing, and the workspace says so.

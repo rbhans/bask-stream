@@ -20,7 +20,7 @@ import { agentBrief, buildLayout, detectMux, launch, selfArgv, sessionExists, sh
 import { chooseAgentLogin, describeChoice, openAgentLogin, type AgentChoice, type AgentLogin } from "./agent-login.js";
 import { directWork, mayWriteFile, type AgentRules } from "./agent-rules.js";
 
-const VIEW_NAMES = ["home", "explorer", "watch", "alarms", "trends", "schedules", "query", "files", "jobs", "activity", "graphics"] as const;
+const VIEW_NAMES = ["home", "explorer", "watch", "alarms", "trends", "schedules", "query", "files", "jobs", "activity", "graphics", "logic"] as const;
 type ViewName = (typeof VIEW_NAMES)[number];
 
 type Output = "table" | "json" | "csv";
@@ -1013,7 +1013,7 @@ program
   .command("workspace")
   .alias("ws")
   .description("lay out a station workspace in Rex or tmux: station panes plus an AI agent session")
-  .addOption(new Option("--layout <name>", "ops: explorer, alarms, AI activity and the agent · graphics: the station's graphics, AI activity and the agent · build: explorer, jobs, graphics, AI activity and the agent, for bringing a station up · monitor: home, alarms, watch, AI activity · duo: dashboard and the agent").choices(["ops", "graphics", "build", "monitor", "duo"]).default("ops"))
+  .addOption(new Option("--layout <name>", "ops: explorer, alarms, AI activity and the agent · graphics: the station's graphics, AI activity and the agent · logic: a wire sheet, AI activity and the agent · build: explorer, jobs, graphics, AI activity and the agent, for bringing a station up · monitor: home, alarms, watch, AI activity · duo: dashboard and the agent").choices(["ops", "graphics", "logic", "build", "monitor", "duo"]).default("ops"))
   .addOption(new Option("--mux <name>", "which multiplexer").choices(["auto", "rex", "tmux"]).default("auto"))
   .option("--agent <command>", "the AI agent to start in its pane", "claude")
   .option("--no-agent", "station panes only")
@@ -1352,19 +1352,149 @@ graphic
     })
   );
 
+// ---- Logic: wire sheets in text, and plans from a file ----------------------------------------------
+
+const logic = program
+  .command("logic")
+  .description("logic as a wire sheet in text: a folder's blocks and links with live values, and how to build some");
+
+logic
+  .command("guide")
+  .description("how to build logic through bask: the plan file, the common blocks and their slots, and how to check the result")
+  .action(async () => {
+    const { logicGuide } = await import("./logic-guide.js");
+    process.stdout.write(logicGuide());
+  });
+
+logic
+  .command("print")
+  .description("draw one folder's logic once as text: its blocks, the links between them and what every slot reads now")
+  .argument("<ord>", "a folder, e.g. slot:/Logic/AHU_01")
+  .option("--trace <block.slot>", "also follow one value: everything that feeds it and everything it drives")
+  .option("--width <n>", "where blocks with no links wrap", "140")
+  .action((ord: string, opts: { trace?: string; width: string }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { drawSheet, loadSheet, planSheet, slotOrd, traceOf, traceText, valueRoom } = await import("./logic.js");
+      const folder = normalizeOrd(ord);
+      const sheet = await loadSheet(client, folder);
+      let plan = planSheet(sheet, { maxWidth: Number(opts.width) || 140 });
+      const values = new Map<string, { ok?: boolean; value?: unknown; displayValue?: string; state?: string }>();
+      for (let at = 0; at < plan.points.length; at += 500) for (const point of await client.read(plan.points.slice(at, at + 500), { fresh: true })) values.set(point.point, point);
+      const lookup = (point: string) => values.get(point);
+      plan = planSheet(sheet, { valueWidth: valueRoom(plan, lookup), maxWidth: Number(opts.width) || 140 });
+      const names = new Map(sheet.blocks.map((block) => [block.ord, block.name]));
+      const end = (block: string, slot: string) => `${names.get(block) ?? shortOrd(block)}.${slot}`;
+      let traced: string | undefined;
+      if (opts.trace) {
+        const [name, slot] = [opts.trace.slice(0, opts.trace.lastIndexOf(".")), opts.trace.slice(opts.trace.lastIndexOf(".") + 1)];
+        const block = sheet.blocks.find((b) => b.name === name || b.ord === normalizeOrd(name));
+        if (!block || !block.slots.includes(slot)) throw new Error(`No ${opts.trace} on this sheet. Blocks: ${sheet.blocks.map((b) => `${b.name} (${b.slots.join(", ") || "no slots"})`).join("; ")}.`);
+        traced = traceText(sheet, traceOf(sheet, block.ord, slot), lookup);
+      }
+      const inFolder = sheet.blocks.filter((block) => !block.outside);
+      const undrawn = sheet.links.filter((_link, i) => !plan.routes[i]);
+      if (g.output === "json") {
+        return console.log(JSON.stringify({
+          folder, width: plan.width, height: plan.height, text: drawSheet(plan, lookup, 0).toString(),
+          blocks: sheet.blocks.map((block) => ({ ord: block.ord, name: block.name, typeSpec: block.typeSpec, container: block.container, outside: block.outside, slots: block.slots.map((slot) => ({ name: slot, value: lookup(slotOrd(block.ord, slot))?.displayValue ?? null })), settings: block.settings })),
+          links: sheet.links, ...(traced ? { trace: traced } : {}), hidden: sheet.hidden
+        }, null, 2));
+      }
+      if (sheet.blocks.length === 0) return console.log(`Nothing in ${shortOrd(folder, 3)}.`);
+      console.log(drawSheet(plan, lookup, 0).toString());
+      console.log("");
+      console.log(chalk.dim(`${shortOrd(folder, 3)} · ${inFolder.length} block${inFolder.length === 1 ? "" : "s"} · ${sheet.links.length} link${sheet.links.length === 1 ? "" : "s"} · ${plan.width} x ${plan.height} cells`));
+      for (const link of sheet.links) console.log(`  ${end(link.source, link.sourceSlot)} → ${end(link.target, link.targetSlot)}${undrawn.includes(link) ? chalk.dim("  (not drawn: no room for the line)") : ""}`);
+      // What is set on each block rather than wired: the part of the logic a drawing does not show.
+      const set = inFolder.filter((block) => block.settings.length > 0);
+      if (set.length) console.log(chalk.dim("settings"));
+      for (const block of set) console.log(`  ${chalk.bold(block.name)}  ${block.settings.map((item) => `${item.name} ${item.value}`).join(chalk.dim(" · "))}`);
+      if (traced) console.log(`${chalk.cyan("trace")}    ${traced}`);
+      if (sheet.hidden) console.log(`${chalk.yellow("warning")}  ${sheet.hidden} more components in this folder are not shown: a sheet holds ${sheet.blocks.length - sheet.blocks.filter((b) => b.outside).length}.`);
+    })
+  );
+
+/** One line for a change in a plan preview, whichever way the station shaped it. */
+function changeLine(change: Json): string {
+  const where = (ord: unknown) => shortOrd(String(ord ?? ""), 3);
+  const properties = change.properties;
+  const names = Array.isArray(properties) ? properties.map((p) => String((p as Json).property)) : Object.keys((properties ?? {}) as object);
+  switch (change.action) {
+    case "create": case "clone": case "create_hierarchy": return `add     ${chalk.bold(where(change.ord ?? `${change.parent}/${change.name}`))}  ${chalk.dim(String(change.typeSpec ?? ""))}`;
+    case "create_link": return `link    ${chalk.bold(`${where(change.source)}.${change.sourceSlot}`)} → ${chalk.bold(`${where(change.target)}.${change.targetSlot}`)}`;
+    case "delete_link": return `unlink  ${chalk.bold(where(change.ord))}  ${chalk.dim(String(change.slot ?? ""))}`;
+    case "update": case "configure_hierarchy": return `set     ${chalk.bold(where(change.ord))}  ${chalk.dim(names.join(", "))}`;
+    case "rename": return `rename  ${chalk.bold(where(change.ord))} to ${chalk.bold(String(change.name))}`;
+    case "move": return `move    ${chalk.bold(where(change.ord))} to ${where(change.parent)}`;
+    case "delete": return `delete  ${chalk.bold(where(change.ord))}${change.recursive ? chalk.dim("  and everything under it") : ""}`;
+    case "invoke": return `invoke  ${chalk.bold(`${where(change.ord)}.${change.slot}`)}`;
+    default: return `${String(change.action)}  ${where(change.ord)}`;
+  }
+}
+
+program
+  .command("plan")
+  .description("check a set of station changes from a JSON file (components, properties, links, actions) and list them; --apply makes them")
+  .argument("<file>", 'a JSON file holding {"changes": [...]} or the array itself (see bask logic guide)')
+  .option("--apply", "make the changes after listing them")
+  .option("--show <ord>", "afterwards, open this folder as a wire sheet in the Logic view (default: where the first thing was added)")
+  .action((file: string, opts: { apply?: boolean; show?: string }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(readFileSync(file, "utf8"));
+      } catch (error) {
+        throw new Error(`${file} could not be read as JSON: ${(error as Error).message}`);
+      }
+      const changes = Array.isArray(parsed) ? parsed : (parsed as Json | null)?.changes;
+      if (!Array.isArray(changes) || changes.length === 0) throw new Error(`${file} holds no changes. It should be {"changes": [...]}: bask logic guide shows one.`);
+      const plan = (await client.call("preview_model_changes", { changes: changes as Json[] }, { timeoutMs: 120000 })).result as Json;
+      const listed = (plan.changes ?? []) as Json[];
+      if (g.output === "table") for (const change of listed) console.log(`  ${changeLine(change)}`);
+      if (!opts.apply) {
+        if (g.output !== "table") return console.log(JSON.stringify(plan, null, 2));
+        return console.error(chalk.dim(`\nThe station accepts these ${listed.length === 1 ? "change" : `${listed.length} changes`}. Nothing is changed yet: run again with --apply.`));
+      }
+      await requireWrite(g, `Make ${listed.length === 1 ? "this change" : `these ${listed.length} changes`} on the station?`);
+      const applied = (await client.call("apply_model_changes", { planId: plan.planId, planHash: plan.planHash, idempotencyKey: randomUUID(), ...reasonOf(g) }, { timeoutMs: 300000 })).result as Json;
+      const results = (applied.results ?? []) as Json[];
+      const failed = results.filter((r) => r.ok === false);
+      // Where the work is, for the person's Logic view: the folder named, else the one most of the
+      // changes landed in (a new folder holds the blocks made after it, so it wins over its own parent).
+      const landed = new Map<string, number>();
+      for (const change of listed) {
+        const ord = String(change.action === "create_link" ? change.target ?? "" : change.ord ?? `${change.parent ?? ""}/${change.name ?? ""}`);
+        if (!ord.includes("/") || change.typeSpec === "baja:Folder") continue;
+        const parent = ord.slice(0, ord.lastIndexOf("/"));
+        landed.set(parent, (landed.get(parent) ?? 0) + (change.action === "create" ? 2 : 1));
+      }
+      const most = [...landed].sort((a, b) => b[1] - a[1])[0]?.[0];
+      const folder = opts.show ? normalizeOrd(opts.show) : most;
+      if (folder && failed.length === 0) new Link(client.http.url.origin).show("logic", folder);
+      if (g.output !== "table") return console.log(JSON.stringify(applied, null, 2));
+      if (applied.state !== "applied" || failed.length > 0) {
+        for (const result of failed) console.error(`${chalk.red("failed")}  change ${Number(result.index) + 1}: ${result.message ?? result.code ?? "refused"}`);
+        throw new Error(`The plan ended ${applied.state}: ${failed.length} of ${listed.length} changes failed, and ${applied.unattempted ?? 0} were not tried.`);
+      }
+      console.log(`${chalk.green("✓")} Made ${listed.length === 1 ? "the change" : `${listed.length} changes`}.${folder ? chalk.dim(`  Check it: bask logic print ${folder}`) : ""}`);
+    })
+  );
+
 program
   .command("show")
-  .description("show something in the open bask windows: select an ORD in the Explorer, chart it, or add it to the watch list")
+  .description("show something in the open bask windows: select an ORD in the Explorer, chart it, add it to the watch list, or open its wire sheet")
   .argument("<ord>", "a component or point")
   .option("--trend", "chart it in Trends")
   .option("--watch", "add it to the watch list")
-  .action((ord: string, opts: { trend?: boolean; watch?: boolean }, cmd: Command) => {
+  .option("--logic", "open it as a wire sheet in Logic (a folder, or the folder a component sits in)")
+  .action((ord: string, opts: { trend?: boolean; watch?: boolean; logic?: boolean }, cmd: Command) => {
     const { profile } = getProfile(globals(cmd).profile);
     const link = new Link(profile.station);
     const target = normalizeOrd(ord);
     if (opts.watch) link.update((s) => void (s.watch = [...new Set([...s.watch, target])]));
-    if (opts.trend || !opts.watch) link.show(opts.trend ? "trend" : "reveal", target);
-    const what = [opts.watch ? "added to the watch list" : "", opts.trend ? "charted in Trends" : opts.watch ? "" : "selected in the Explorer"].filter(Boolean).join(" and ");
+    if (opts.logic) link.show("logic", target);
+    else if (opts.trend || !opts.watch) link.show(opts.trend ? "trend" : "reveal", target);
+    const what = [opts.watch ? "added to the watch list" : "", opts.logic ? "opened as a wire sheet in Logic" : opts.trend ? "charted in Trends" : opts.watch ? "" : "selected in the Explorer"].filter(Boolean).join(" and ");
     console.log(link.anyOpen() ? `${chalk.green("✓")} ${shortOrd(target, 3)} ${what}.` : `${chalk.yellow("!")} No bask window is open on ${new URL(profile.station).host}; ${shortOrd(target, 3)} will be ${what} when one is.`);
   });
 

@@ -172,10 +172,46 @@ final class BaskStreamModelResolver
     BComplex target = complex(ord, cx, false);
     Map<String, Object> result = summary(target, ord);
     result.put("slots", slots(target, ord, cx));
-    if (target instanceof BComponent) result.put("dependencies", dependencies((BComponent)target, cx, false));
+    if (target instanceof BComponent)
+    {
+      result.put("dependencies", dependencies((BComponent)target, cx, false));
+      result.put("links", links((BComponent)target, cx));
+    }
     result.put("writesEnabled", service.writesAllowed());
     result.put("modelEditsEnabled", service.modelEditsAllowed());
     return result;
+  }
+
+  /**
+   * The links at a component, both ways: those that arrive at its slots ("in") and those that leave
+   * them ("out", its knobs). A wire sheet is drawn from these. An end this user may not read, or
+   * one that is not mounted, is left out.
+   */
+  private List<Object> links(BComponent c, Context cx)
+  {
+    List<Object> found = new ArrayList<Object>();
+    String self = c.getSlotPathOrd().toString();
+    for (BLink link : c.getLinks())
+    {
+      try
+      {
+        String source = link.getSourceComponent().getSlotPathOrd().toString(); target(source, cx, false);
+        found.add(map("direction", "in", "source", source, "sourceSlot", link.getSourceSlotName(), "target", self,
+            "targetSlot", link.getTargetSlotName(), "enabled", link.getEnabled()));
+      }
+      catch (Exception e) { /* Hidden from this user, or its source is gone. */ }
+    }
+    for (javax.baja.sys.Knob knob : c.getKnobs())
+    {
+      try
+      {
+        String other = knob.getTargetComponent().getSlotPathOrd().toString(); target(other, cx, false);
+        found.add(map("direction", "out", "source", self, "sourceSlot", knob.getSourceSlotName(), "target", other,
+            "targetSlot", knob.getTargetSlotName()));
+      }
+      catch (Exception e) { /* Hidden from this user, or its target is gone. */ }
+    }
+    return found;
   }
 
   private List<Object> slots(BComplex c, String ord, Context cx) throws Exception

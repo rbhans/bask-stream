@@ -1353,6 +1353,7 @@ Third-party clients should not require every metadata subfield to be populated. 
 - `approval_required` messages name the setting that would allow the refused change.
 - New error code `agent_use_write`: an agent's model plan may not command a writable point (invoke `set`/`override`/`auto` and their emergency and boolean forms, or set `in1`…`in16` or `fallback`). **Changed for agents with approval off**, who could do this through a plan before; they use `write`, where value limits and the emergency rule apply.
 - The protocol spec lists `agentDirect` on each operation an agent setting covers.
+- `describe_component` adds `links`: the links arriving at and leaving the component, each with `direction`, `source`, `sourceSlot`, `target` and `targetSlot`. (`dependencies.knownReferences` still lists only the ones that leave it.) Any slot of any component can already be read and subscribed like a point (`slot:/Logic/Reset/inA`), so a client can draw a live wire sheet from these two.
 
 ### API 1.10 changes
 

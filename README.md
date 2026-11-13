@@ -56,7 +56,7 @@ watch.on("change", (point) => console.log(point.point, point.value));
 
 ## bask CLI and dashboard
 
-[`cli/`](cli/README.md) is a command-line tool built on the SDK. Run `bask` with no command for a full-screen terminal dashboard with eleven views: station home, an explorer with live values and a property sheet, a watch list, alarms, trends, schedules, queries and reports, station files, jobs and discovery, AI activity, and graphics (equipment drawn in the terminal, moving, with live values, from small files a person or an AI agent writes and the station keeps). `bask workspace` lays the same views out as panes in Rex or tmux beside an AI agent session, and `bask demo` runs it all on a simulated building.
+[`cli/`](cli/README.md) is a command-line tool built on the SDK. Run `bask` with no command for a full-screen terminal dashboard with twelve views: station home, an explorer with live values and a property sheet, a watch list, alarms, trends, schedules, queries and reports, station files, jobs and discovery, AI activity, graphics (equipment drawn in the terminal, moving, with live values, from small files a person or an AI agent writes and the station keeps), and logic (a folder as a wire sheet in text, with live values and a trace of any value through its links). `bask workspace` lays the same views out as panes in Rex or tmux beside an AI agent session, and `bask demo` runs it all on a simulated building.
 
 ### 1. Install
 
