@@ -3,9 +3,9 @@
 // and counts ai-claude as an agent, the way a station with agentUsers set does.
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -124,14 +124,20 @@ test("the two logins are separate on the station: the agent's is an agent withou
 });
 
 test("workspace says which login the agent gets, and its pane keeps that login in use", async () => {
-  const plan = await bask({}, "workspace", "--dry-run", "--mux", "tmux", "--layout", "graphics");
+  // The default agent is claude, and without it on the PATH the workspace has no agent pane: a stand-in
+  // keeps this test meaningful where Claude Code is not installed (the release workflow's runners).
+  const bin = mkdtempSync(join(tmpdir(), "bask-claude-"));
+  writeFileSync(join(bin, "claude"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const withClaude = { PATH: `${bin}${delimiter}${process.env.PATH}` };
+  const plan = await bask(withClaude, "workspace", "--dry-run", "--mux", "tmux", "--layout", "graphics");
   if (plan.code !== 0) return assert.match(plan.out, /tmux is not installed/);
   assert.match(plan.out, /# agent login: ai-claude \(profile "ai", as last time\)/);
   assert.match(plan.out, /# pane Graphics: .* -p stat tui --view graphics --pane/);
-  const fresh = await bask({}, "workspace", "--dry-run", "--mux", "tmux", "--agent-user", "night-shift");
+  const fresh = await bask(withClaude, "workspace", "--dry-run", "--mux", "tmux", "--agent-user", "night-shift");
   assert.match(fresh.out, /# agent login: night-shift \(a new saved login, profile "stat-ai-2"\), logged in and saved when this runs/);
-  assert.match((await bask({}, "workspace", "--dry-run", "--mux", "tmux", "--agent-profile", "stat")).out, /# agent login: admin, shared with you/);
-  assert.match((await bask({}, "workspace", "--dry-run", "--mux", "tmux", "--demo", "--agent-user", "ai-claude")).out, /A simulated building has one login/);
+  assert.match((await bask(withClaude, "workspace", "--dry-run", "--mux", "tmux", "--agent-profile", "stat")).out, /# agent login: admin, shared with you/);
+  assert.match((await bask(withClaude, "workspace", "--dry-run", "--mux", "tmux", "--demo", "--agent-user", "ai-claude")).out, /A simulated building has one login/);
+  rmSync(bin, { recursive: true, force: true });
 
   // The agent's pane starts the keep-alive before its command, tied to that command's process.
   const panes = buildLayout({ layout: "duo", profile: "stat", allowWrites: false, agent: { label: "Claude Code", shell: "claude", env: { BASKSTREAM_PROFILE: "ai" }, before: ["bask keep-alive --while $$ >/dev/null 2>&1 &"] } });
