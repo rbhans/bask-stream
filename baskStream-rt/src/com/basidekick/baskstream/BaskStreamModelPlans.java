@@ -30,6 +30,8 @@ final class BaskStreamModelPlans
   private static final class Plan
   {
     String id, user, hash, key, state = "preview";
+    /** Where the plan came from, when that matters: "discovery" for one add_discovered built. */
+    String kind;
     long expires;
     Check check;
     List<Step> steps;
@@ -143,6 +145,20 @@ final class BaskStreamModelPlans
     try { audit.record("model_apply_finished", p.id, map("state", p.state, "results", p.results)); }
     catch (Exception e) { /* Per-step outcomes remain retrievable even if final audit fails. */ }
     synchronized (this) { return wire(p); }
+  }
+
+  /** Notes where a previewed plan came from. An unknown id is ignored. */
+  synchronized void mark(String id, String kind)
+  {
+    Plan p = plans.get(id);
+    if (p != null) p.kind = kind;
+  }
+
+  /** Where a plan came from, or null: for an unknown plan too, so a caller can only be stricter. */
+  synchronized String kind(String id)
+  {
+    Plan p = plans.get(id);
+    return p == null ? null : p.kind;
   }
 
   synchronized Map<String, Object> status(String user, String id, long now) throws Exception

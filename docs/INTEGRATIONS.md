@@ -32,8 +32,8 @@ baskStream core
 protocol adapters
   current MessagePack WebSocket API
   Grafana backend data source plugin
+  OpenMetrics counters at GET /stream/metrics (API 1.7)
   future REST/OpenAPI adapter
-  future OpenMetrics adapter
 
 external tools
   Grafana data source plugin
@@ -89,7 +89,7 @@ Expected module responsibilities:
 Add these only when a real integration proves the need:
 
 - Batched history reads for multiple points.
-- Server-side history windowing or downsampling for large Grafana time ranges.
+- Server-side history windowing or downsampling for large Grafana time ranges. (The module has `read_history_rollup` since API 1.7; the Grafana plugin does not use it yet.)
 - Stable series metadata for labels, units, display names, and status quality.
 - A read-only integration mode that blocks write and alarm-action operations.
 - A generic REST query endpoint if it helps more than Grafana.
@@ -102,7 +102,7 @@ These additions should be generic. For example, prefer `history_query` or `histo
 | -------- | ---------------------- | -------------------------------------------------------------- |
 | 1        | Grafana                | Grafana plugin first, optional module endpoints only if needed |
 | 2        | REST/OpenAPI           | Optional module adapter                                        |
-| 3        | Prometheus/OpenMetrics | Optional module `/metrics` endpoint                            |
+| 3        | Prometheus/OpenMetrics | Done: `GET /stream/metrics` (API 1.7)                          |
 | 4        | InfluxDB/Timescale     | External exporter first                                        |
 | 5        | MQTT/Sparkplug B       | External bridge first                                          |
 | 6        | Node-RED               | External node wrapping the WebSocket API                       |

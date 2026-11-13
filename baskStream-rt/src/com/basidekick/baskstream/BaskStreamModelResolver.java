@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import javax.baja.control.BIWritablePoint;
 import javax.baja.naming.BOrd;
 import javax.baja.naming.OrdTarget;
 import javax.baja.registry.TypeInfo;
@@ -47,10 +48,65 @@ final class BaskStreamModelResolver
   private final BBaskStreamService service;
   private final BaskStreamModelPlans plans = new BaskStreamModelPlans();
   private final ThreadLocal<Context> applyingContext = new ThreadLocal<Context>();
+  // Set while the request on this thread comes from an AI agent; agents never get security edits.
+  private final ThreadLocal<Boolean> agentCall = new ThreadLocal<Boolean>();
   // Keep value commitments opaque, including low-entropy credentials in redacted diffs.
   private final String fingerprintKey = java.util.UUID.randomUUID().toString();
 
   BaskStreamModelResolver(BBaskStreamService service) { this.service = service; }
+
+  /** Marks (or clears) the current thread's request as an agent's. Clear it in a finally. */
+  void agentCall(boolean agent)
+  {
+    if (agent) agentCall.set(Boolean.TRUE);
+    else agentCall.remove();
+  }
+
+  /** Notes where a previewed plan came from: add_discovered marks its plans "discovery". */
+  void markPlan(Object planId, String kind)
+  {
+    if (planId instanceof String) plans.mark((String)planId, kind);
+  }
+
+  /** Where a plan came from, or null. */
+  String planKind(Object planId)
+  {
+    return planId instanceof String ? plans.kind((String)planId) : null;
+  }
+
+  private static final List<String> POINT_COMMANDS = Arrays.asList("set", "override", "auto", "emergencyOverride", "emergencyAuto",
+      "active", "inactive", "emergencyActive", "emergencyInactive");
+
+  private static boolean commandInput(String slot)
+  {
+    return "fallback".equals(slot) || slot.matches("in([1-9]|1[0-6])");
+  }
+
+  private static BaskStreamProtocolException useWrite(String what)
+  {
+    return error("agent_use_write", "Agents command points with the write operation, where approval and value limits apply. A model plan cannot "
+        + what + " on a writable point.");
+  }
+
+  /**
+   * An agent's plan may not set a writable point's priority inputs or fallback: that is a point
+   * command, and those go through write, where they become proposals and meet the value limits.
+   * Linking logic into an input is programming and stays allowed.
+   */
+  private void notAPointCommand(BComplex root, String path) throws Exception
+  {
+    if (agentCall.get() == null) return;
+    BComplex at = root;
+    for (String part : path.split("/", -1))
+    {
+      if (at instanceof BIWritablePoint && commandInput(part)) throw useWrite("set " + part);
+      Property p = at.getProperty(part);
+      if (p == null) return;
+      BValue value = at.get(p);
+      if (!(value instanceof BComplex)) return;
+      at = (BComplex)value;
+    }
+  }
 
   private static final List<String> TYPE_FIELDS = Arrays.asList("op", "id", "typeSpec", "typeSpecs", "module", "baseType", "offset", "limit");
 
@@ -116,10 +172,46 @@ final class BaskStreamModelResolver
     BComplex target = complex(ord, cx, false);
     Map<String, Object> result = summary(target, ord);
     result.put("slots", slots(target, ord, cx));
-    if (target instanceof BComponent) result.put("dependencies", dependencies((BComponent)target, cx, false));
+    if (target instanceof BComponent)
+    {
+      result.put("dependencies", dependencies((BComponent)target, cx, false));
+      result.put("links", links((BComponent)target, cx));
+    }
     result.put("writesEnabled", service.writesAllowed());
     result.put("modelEditsEnabled", service.modelEditsAllowed());
     return result;
+  }
+
+  /**
+   * The links at a component, both ways: those that arrive at its slots ("in") and those that leave
+   * them ("out", its knobs). A wire sheet is drawn from these. An end this user may not read, or
+   * one that is not mounted, is left out.
+   */
+  private List<Object> links(BComponent c, Context cx)
+  {
+    List<Object> found = new ArrayList<Object>();
+    String self = c.getSlotPathOrd().toString();
+    for (BLink link : c.getLinks())
+    {
+      try
+      {
+        String source = link.getSourceComponent().getSlotPathOrd().toString(); target(source, cx, false);
+        found.add(map("direction", "in", "source", source, "sourceSlot", link.getSourceSlotName(), "target", self,
+            "targetSlot", link.getTargetSlotName(), "enabled", link.getEnabled()));
+      }
+      catch (Exception e) { /* Hidden from this user, or its source is gone. */ }
+    }
+    for (javax.baja.sys.Knob knob : c.getKnobs())
+    {
+      try
+      {
+        String other = knob.getTargetComponent().getSlotPathOrd().toString(); target(other, cx, false);
+        found.add(map("direction", "out", "source", self, "sourceSlot", knob.getSourceSlotName(), "target", other,
+            "targetSlot", knob.getTargetSlotName()));
+      }
+      catch (Exception e) { /* Hidden from this user, or its target is gone. */ }
+    }
+    return found;
   }
 
   private List<Object> slots(BComplex c, String ord, Context cx) throws Exception
@@ -372,6 +464,7 @@ final class BaskStreamModelResolver
         String key = child(ord(c), path);
         touch(key);
         PropertyTarget pt = property(c, path);
+        notAPointCommand(c, path);
         BaskStreamModelPlans.Check identity = () -> {
           PropertyTarget current = property(c, path);
           if (current.owner != pt.owner || current.property != pt.property) throw error("stale_plan", "Property owner changed: " + path);
@@ -427,6 +520,7 @@ final class BaskStreamModelResolver
       String slotName = required(change, "slot"); name(slotName);
       Action action = c.getAction(slotName);
       if (action == null) throw error("invalid_action", "No such action.");
+      if (agentCall.get() != null && c instanceof BIWritablePoint && POINT_COMMANDS.contains(slotName)) throw useWrite("invoke " + slotName);
       if (withinProtected(c))
         throw error("protected_component", "Actions on protected services must be invoked in Workbench.");
       final boolean confirmRequired = Flags.isConfirmRequired(c, action);
@@ -687,7 +781,8 @@ final class BaskStreamModelResolver
       if (component == service || (component != null && component.isDescendentOf(service)))
         throw error("protected_component", "Edit the baskStream service in Workbench; it cannot change its own write controls remotely.");
       if (component != null && withinProtected(component))
-        throw error("protected_component", "Security, identity, remote-access, platform and audit services must be changed in Workbench.");
+        throw error("protected_component", "Security, identity, remote-access, platform and audit services must be changed in Workbench"
+            + " (securityEditsEnabled on BASkStreamService opens users, roles and categories to people, not agents).");
     }
     return t;
   }
@@ -700,6 +795,15 @@ final class BaskStreamModelResolver
       "platform:PlatformServiceContainer", "fox:FoxService", "web:WebService",
       "history:AuditHistoryService", "program:ProgramService" };
 
+  /** Opened by securityEditsEnabled, for people only. How users sign in, remote access, audit and code stay closed. */
+  private static final String[] SECURITY_EDIT_TYPES = { "baja:UserService", "baja:RoleService", "baja:CategoryService" };
+
+  private boolean protectedName(String spec)
+  {
+    if (!Arrays.asList(PROTECTED_TYPES).contains(spec)) return false;
+    return !(Arrays.asList(SECURITY_EDIT_TYPES).contains(spec) && agentCall.get() == null && service.securityEditsAllowed());
+  }
+
   /**
    * Walks the type's own (already loaded) superclass chain and compares names. It never calls
    * Sys.getType for the protected names: on a live station, loading program-module types from
@@ -711,7 +815,7 @@ final class BaskStreamModelResolver
     for (int depth = 0; t != null && depth < 64; depth++)
     {
       String spec = t.toString();
-      if (spec.equals(service.getType().toString()) || Arrays.asList(PROTECTED_TYPES).contains(spec)) return true;
+      if (spec.equals(service.getType().toString()) || protectedName(spec)) return true;
       Type next = t.getSuperType();
       if (next == t) break;
       t = next;
@@ -727,9 +831,9 @@ final class BaskStreamModelResolver
   }
 
   /** Name-only check for a requested type, made before anything is loaded or created. */
-  private static boolean protectedSpec(String spec)
+  private boolean protectedSpec(String spec)
   {
-    return spec.startsWith("program:") || spec.startsWith("baskStream:") || Arrays.asList(PROTECTED_TYPES).contains(spec);
+    return spec.startsWith("program:") || spec.startsWith("baskStream:") || protectedName(spec);
   }
 
   private boolean protectedType(BComponent c)
@@ -877,8 +981,10 @@ final class BaskStreamModelResolver
   {
     if (depth > 16) throw error("model_limit", "Value nesting exceeds 16 levels.");
     Map<String, Object> wire = object(raw, "typed value");
-    if (wire.containsKey("encoded") == wire.containsKey("properties")) throw error("bad_request", "Supply exactly one of encoded or properties.");
-    for (String key : wire.keySet()) if (!Arrays.asList("encoded", "properties", "typeSpec").contains(key)) throw error("bad_request", "Unknown typed value field: " + key);
+    boolean plain = wire.containsKey("plain");
+    if (plain ? wire.containsKey("encoded") || wire.containsKey("properties") : wire.containsKey("encoded") == wire.containsKey("properties"))
+      throw error("bad_request", "Supply exactly one of encoded or properties (or plain, for a password).");
+    for (String key : wire.keySet()) if (!Arrays.asList("encoded", "properties", "typeSpec", "plain").contains(key)) throw error("bad_request", "Unknown typed value field: " + key);
     String spec = optional(wire, "typeSpec");
     if (spec != null) requireLoadable(spec);
     Type type = spec == null ? expected : Sys.getType(spec);
@@ -887,6 +993,13 @@ final class BaskStreamModelResolver
       throw error("invalid_type", "Type " + type + " is abstract; supply a concrete typeSpec" + (spec == null ? " (the property is declared as " + type + ")." : "."));
     if (expected != null && !type.is(expected)) throw error("invalid_type", "Type " + type + " is not compatible with the property type " + expected + ".");
     if (type.is(BLink.TYPE) || type.is(BRelation.TYPE)) throw error("invalid_type", "Use create_link or the relation operations for links and relations.");
+    if (plain)
+    {
+      // A new password as text; Niagara hashes it. It is redacted in previews, results and logs.
+      if (!type.is(BPassword.TYPE) || !(wire.get("plain") instanceof String) || ((String)wire.get("plain")).isEmpty())
+        throw error("bad_request", "'plain' takes a nonempty string and is only for baja:Password values.");
+      return BPassword.make((String)wire.get("plain"));
+    }
     BObject value = type.getInstance();
     if (value instanceof BSimple)
     {
@@ -912,6 +1025,7 @@ final class BaskStreamModelResolver
     for (Map.Entry<String, Object> entry : properties.entrySet())
     {
       PropertyTarget pt = property(value, entry.getKey());
+      notAPointCommand(value, entry.getKey());
       if (Flags.isReadonly(pt.owner, pt.property)) throw error("readonly", "Cannot initialize a read-only property: " + entry.getKey());
       BValue decoded = decode(entry.getValue(), pt.property.getType(), cx, depth);
       pt.owner.set(pt.property, decoded, cx);

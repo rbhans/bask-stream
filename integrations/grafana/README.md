@@ -170,7 +170,7 @@ Add these only after the plugin demonstrates real need:
 
 - `history_batch`: read multiple point/history ORDs in one request.
 - `history_query`: accept Grafana-style range, interval, and max datapoints.
-- Server-side history downsampling with average, min, max, last, and count.
+- Server-side history downsampling with average, min, max, last, and count. (The module has this as `read_history_rollup` since API 1.7; the plugin does not use it yet.)
 - Stable series metadata for labels and units.
 - Read-only integration mode that rejects mutation operations.
 

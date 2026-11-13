@@ -90,14 +90,14 @@ Returns API version, supported operations, limits, schema versions, and live sub
 { "op": "capabilities", "id": "caps-1" }
 ```
 
-Response:
+Response (shortened: a real reply lists every operation the station supports, 60 in API 1.11, and also carries `module`, `transport`, `serverTime` and `authenticatedUser`, and the `agents`, `session`, `schemas`, `tags`, `workbench` and `policy` blocks):
 
 ```json
 {
   "op": "capabilities_result",
   "id": "caps-1",
   "capabilities": {
-    "apiVersion": "1.9",
+    "apiVersion": "1.11",
     "operations": ["ping", "capabilities", "browse", "describe", "search", "read", "subscribe", "unsubscribe", "replace_subscriptions", "renew_subscriptions", "release_subscriptions", "subscription_status", "write", "describe_write", "read_history", "describe_history", "read_alarms", "ack_alarm", "ack_alarms", "clear_alarm", "clear_alarms", "subscribe_alarms", "unsubscribe_alarms", "read_schedule", "subscribe_model", "unsubscribe_model", "read_tags", "write_tags", "write_relations", "describe_component_types", "describe_component", "preview_model_changes", "apply_model_changes", "model_plan_status", "cancel_model_plan", "create_components", "update_component_properties", "rename_component", "move_components", "delete_components", "create_hierarchy", "configure_hierarchy"],
     "writesEnabled": true,
     "modelEditing": { "enabled": false, "maxChanges": 100, "previewRequired": true, "atomic": false },
@@ -1046,6 +1046,17 @@ Optional controls for AI agents: actor context, a `reason` on changes, rate and 
 - Change operations accept a `reason`. For agent sessions, `write` entries carry `outcome` (`proposed` with a `proposal`, or `written`).
 - `proposal_cov` notices report proposals as they are created and decided.
 
+### Headless Workbench
+
+Queries, station files, jobs and driver discovery, for clients that engineer a station rather than only operate it. Full details: [HEADLESS_WORKBENCH.md](HEADLESS_WORKBENCH.md).
+
+- `query` runs one read-only BQL select or NEQL tag query and returns a table or a list of entities.
+- `list_files`, `read_file`, `write_file` and `delete_file` work on the station file space (`^`), such as Px and nav files.
+- `list_jobs`, `read_job` and `cancel_job` follow station jobs; `read_job` includes the job's log and results.
+- `discover` starts a driver's discovery job (BACnet devices on a network, or a device's points).
+- `add_discovered` turns chosen discovery results into a model plan preview, with facets learned from the device.
+- `capabilities.workbench` reports what is available. `securityEditsEnabled` (default off) lets model plans edit users, roles and categories.
+
 ## Error Codes
 
 Failures arrive in two ways. A **request** error fails the whole request with an `error` message carrying `code` and `message`. An **entry** error appears inside a batch result (per point, alarm, tag target and so on) with `ok: false`, while the other entries still succeed. Clients should branch on `code`, never on `message`. This table is generated from `spec/baskstream-protocol.json`.
@@ -1055,19 +1066,28 @@ Failures arrive in two ways. A **request** error fails the whole request with an
 | `agent_cannot_approve` | request | Agent sessions and agent users cannot approve or reject proposals. |
 | `agent_priority_blocked` | entry | Agent used an emergency (level 1) action while agentAllowEmergency is off. |
 | `agent_rate_limited` | entry | Agent user exceeded agentMaxChangesPerMinute, or has too many pending proposals; request or entry. |
+| `agent_use_write` | request | An agent's model plan tried to command a writable point (invoke set, override or auto, or set a priority input or the fallback). Agents command points with write, where approval and value limits apply. |
 | `agent_value_out_of_bounds` | entry | Agent value is outside the point's min/max facets or the matching agentBoundN rule. |
 | `alarm_failed` | request | AlarmService unavailable or alarm database/read failure; also a per-uuid entry for unexpected ack/clear failures. |
-| `approval_required` | request | Agents can only propose point writes while agentApprovalRequired is on; other agent changes need a person or approval turned off. |
+| `approval_required` | request | While agentApprovalRequired is on, an agent's change other than a point write is refused unless the agentDirect setting for that kind of change allows it; the message names the setting. |
 | `auth_required` | request | No authenticated Niagara user at the WebSocket handshake; the socket is closed (1008), no frame is sent. |
+| `bad_query` | request | Niagara rejected the BQL or NEQL text, the query is too long or contains a pipe character, or it did not return a table. |
 | `bad_reference` | request | Model @ref does not identify an earlier create/clone, or a ref is duplicated. |
 | `bad_request` | request | Malformed request or field (type, range, missing field, MessagePack decoding); also per-item in write/tag results. |
 | `browse_failed` | request | Unexpected failure resolving a browse/describe target. |
 | `children_present` | request | Deleting a component with children requires recursive=true. |
 | `confirm_required` | request | The model plan invokes an action Niagara marks confirm-required; resend the change with confirm: true. |
 | `cycle` | request | Cannot move a component into its own subtree. |
+| `discovery_failed` | request | The driver did not start discovery or returned no job. |
+| `discovery_unsupported` | request | No built-in discovery for this component type, or the job is not a discovery job baskStream can add from. |
+| `file_exists` | request | write_file target exists and overwrite was not true. |
+| `file_failed` | request | The file system reported an error while reading, writing or deleting. |
+| `file_not_found` | request | No such file or folder. |
+| `file_too_large` | request | File is larger than maxBytes or the 4 MiB read limit. |
 | `forbidden_action` | entry | User cannot invoke the write action slot on the point; also request-level for model invoke without invoke+admin-write. |
 | `forbidden_alarm` | entry | Missing operator write (ack) or admin write (force-clear) on the alarm class. |
 | `forbidden_component` | request | Model target outside allowedPathPatterns, unreadable, or lacking admin write. |
+| `forbidden_file` | request | Path is outside the station file space (^), the user lacks file permission, or the file is read-only. |
 | `forbidden_point` | request | Target outside allowedPathPatterns or not readable/invokable/admin-writable; also per-item in read/subscribe/write/tag/alarm results. |
 | `frozen_slot` | request | Only dynamic child components/properties can be moved, renamed, deleted or removed. |
 | `group_not_found` | request | Subscription group does not exist. |
@@ -1079,6 +1099,7 @@ Failures arrive in two ways. A **request** error fails the whole request with an
 | `invalid_action` | request | Model invoke names an action slot that does not exist. |
 | `invalid_alarm` | entry | Alarm record not found or not readable. |
 | `invalid_component` | request | Model ORD does not resolve to a component/struct, or configure_hierarchy target is not hierarchy:Hierarchy. |
+| `invalid_job` | request | ORD is not a job, the station has no JobService, or the job could not be cancelled. |
 | `invalid_link` | request | Niagara link check failed, or delete_link slot does not hold a link. |
 | `invalid_name` | request | Not a valid Niagara slot name (1-128 chars). |
 | `invalid_point` | request | Blank/unsupported ORD scheme, unresolvable target or wrong target kind; also per-item in read/subscribe/write/tag results. |
@@ -1100,7 +1121,8 @@ Failures arrive in two ways. A **request** error fails the whole request with an
 | `plan_not_found` | request | Plan unknown, expired, or owned by another user. |
 | `proposal_closed` | request | Proposal is no longer pending: already decided or expired. |
 | `proposal_not_found` | request | No such proposal (ids do not survive a station restart). |
-| `protected_component` | request | The baskStream service and its descendants cannot be edited remotely. |
+| `protected_component` | request | The baskStream service and its descendants cannot be edited remotely; protected services too, except users, roles and categories for people while securityEditsEnabled is on. |
+| `query_not_allowed` | request | BQL is unavailable while allowedPathPatterns is narrowed; use neql, search or browse. |
 | `read_failed` | entry | Point snapshot could not be produced or the target is no longer available. |
 | `readonly` | request | Property is read-only. |
 | `reason_required` | request | Agent change or proposal without a 'reason' while agentRequireReason is on. |
@@ -1321,6 +1343,27 @@ Recommended client approach:
 The `metadata` block is additive and request-controlled. Clients can ignore it or omit it and continue using `ord`, `slotPath`, `name`, `typeSpec`, `features`, `operations`, and point read/write payloads.
 
 Third-party clients should not require every metadata subfield to be populated. Different protocols and station models expose different evidence.
+
+### API 1.11 changes
+
+`apiVersion` advanced from `1.10` to `1.11`. Additive for people; for agents it only allows more, when a station turns it on. See [AI_AGENTS.md](AI_AGENTS.md#what-an-agent-may-do-by-itself).
+
+- New service properties `agentDirectFiles`, `agentDirectDiscovery`, `agentDirectModelEdits`, `agentDirectTags`, `agentDirectSchedules` and `agentDirectAlarms` (all off or blank by default). While `agentApprovalRequired` is on, each lets agents do one kind of work directly; point writes stay proposals. With none set, behavior is as in 1.10.
+- `capabilities.agents.direct`: `{pointWrites, files, discovery, modelEdits, tags, schedules, alarms}`, what agents may change without a person right now.
+- `approval_required` messages name the setting that would allow the refused change.
+- New error code `agent_use_write`: an agent's model plan may not command a writable point (invoke `set`/`override`/`auto` and their emergency and boolean forms, or set `in1`…`in16` or `fallback`). **Changed for agents with approval off**, who could do this through a plan before; they use `write`, where value limits and the emergency rule apply.
+- The protocol spec lists `agentDirect` on each operation an agent setting covers.
+- `describe_component` adds `links`: the links arriving at and leaving the component, each with `direction`, `source`, `sourceSlot`, `target` and `targetSlot`. (`dependencies.knownReferences` still lists only the ones that leave it.) Any slot of any component can already be read and subscribed like a point (`slot:/Logic/Reset/inA`), so a client can draw a live wire sheet from these two.
+
+### API 1.10 changes
+
+`apiVersion` advanced from `1.9` to `1.10`. Additive: existing operations and replies are unchanged. Note that `1.10` is newer than `1.9`; compare the parts as numbers.
+
+- New operations: `query`, `list_files`, `read_file`, `write_file`, `delete_file`, `list_jobs`, `read_job`, `cancel_job`, `discover`, `add_discovered`. See [HEADLESS_WORKBENCH.md](HEADLESS_WORKBENCH.md).
+- `capabilities.workbench` and `schemas.workbench`.
+- New service property `securityEditsEnabled` (default off): model plans may edit the User, Role and Category services. Never for agents.
+- Typed values accept `{"typeSpec": "baja:Password", "plain": "..."}` to set a password.
+- New error codes: `bad_query`, `query_not_allowed`, `forbidden_file`, `file_not_found`, `file_exists`, `file_too_large`, `file_failed`, `invalid_job`, `discovery_unsupported`, `discovery_failed`.
 
 ### API 1.9 changes
 

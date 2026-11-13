@@ -25,6 +25,11 @@ import javax.baja.sys.Property;
  * for each change, rate and value limits, and proposals a person approves before they run. Each
  * agent action also leaves one "Agent" record in the station's audit history, next to Niagara's own
  * record of the change. With no agent users and no declarations nothing here has any effect.
+ *
+ * While approval is required, a point write becomes a proposal and every other kind of change is
+ * refused, unless the {@code agentDirect} setting for that kind allows it: station files under
+ * named paths, discovery, model plans, tags, schedules, alarms. Every changing operation belongs
+ * to exactly one kind ({@link #DIRECT_SETTINGS}), so none is left without a switch.
  */
 final class BaskStreamAgents
 {
@@ -38,6 +43,28 @@ final class BaskStreamAgents
   /** How long decided and expired proposals stay listed. */
   private static final long KEEP_DECIDED_MILLIS = 60L * 60L * 1000L;
   private static final int MAX_LISTED = 500;
+
+  /**
+   * The setting that lets an agent make each kind of change directly while approval is required.
+   * Every operation that changes the station is here, except {@code write} (a proposal instead)
+   * and deciding proposals (never an agent's). tests/protocol_contract.py checks that.
+   */
+  static final Map<String, String> DIRECT_SETTINGS = new LinkedHashMap<String, String>();
+  static
+  {
+    DIRECT_SETTINGS.put("write_file", "agentDirectFiles");
+    DIRECT_SETTINGS.put("delete_file", "agentDirectFiles");
+    DIRECT_SETTINGS.put("discover", "agentDirectDiscovery");
+    DIRECT_SETTINGS.put("cancel_job", "agentDirectDiscovery");
+    DIRECT_SETTINGS.put("apply_model_changes", "agentDirectModelEdits");
+    DIRECT_SETTINGS.put("write_tags", "agentDirectTags");
+    DIRECT_SETTINGS.put("write_relations", "agentDirectTags");
+    DIRECT_SETTINGS.put("write_schedule", "agentDirectSchedules");
+    DIRECT_SETTINGS.put("ack_alarm", "agentDirectAlarms");
+    DIRECT_SETTINGS.put("ack_alarms", "agentDirectAlarms");
+    DIRECT_SETTINGS.put("clear_alarm", "agentDirectAlarms");
+    DIRECT_SETTINGS.put("clear_alarms", "agentDirectAlarms");
+  }
 
   /** Who a session says is behind it. These are claims; the Niagara login stays the identity. */
   static final class Actor
@@ -221,6 +248,74 @@ final class BaskStreamAgents
     return Math.max(1, Math.min(1440, intSetting("agentProposalMinutes", 15))) * 60000L;
   }
 
+  /**
+   * The station file paths in {@code agentDirectFiles}, e.g. {@code ^bask/*}. A piece that does not
+   * start with {@code ^} is ignored, so a typo turns a path off rather than opening more.
+   */
+  List<String> directFilePatterns()
+  {
+    List<String> patterns = new ArrayList<String>();
+    for (String piece : stringSetting("agentDirectFiles", "").split("[\\s,;]+"))
+    {
+      String text = piece.trim();
+      if (text.startsWith("file:")) text = text.substring(5);
+      if (text.startsWith("^") && !text.startsWith("^^")) patterns.add(text);
+    }
+    return patterns;
+  }
+
+  private boolean directFile(String path)
+  {
+    for (String pattern : directFilePatterns())
+      if (Pattern.compile(BaskStreamAccessPolicy.toRegex(pattern)).matcher(path).matches()) return true;
+    return false;
+  }
+
+  /**
+   * Why this change may not be made directly while approval is required, or null when the setting
+   * for its kind allows it. A plan that add_discovered built counts as discovery; any other plan
+   * needs model edits, which also cover discovery's plans.
+   */
+  private String directRefusal(String op, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    String setting = DIRECT_SETTINGS.get(op);
+    String ask = " A person can change that on BASkStreamService, or make this change themselves.";
+    if (setting == null) return "With agentApprovalRequired on, agents cannot " + op + " directly." + ask;
+    if ("agentDirectFiles".equals(setting))
+    {
+      String path = BaskStreamFileResolver.canonical(request.get("path"));
+      if (directFile(path)) return null;
+      List<String> patterns = directFilePatterns();
+      return "With agentApprovalRequired on, agents write and delete station files only under the paths in agentDirectFiles ("
+          + (patterns.isEmpty() ? "blank now" : "now " + patterns) + "), and " + path + " is not under one." + ask;
+    }
+    if (booleanSetting(setting, false)) return null;
+    if ("apply_model_changes".equals(op) && "discovery".equals(runtime.getModelResolver().planKind(request.get("planId"))))
+    {
+      if (booleanSetting("agentDirectDiscovery", false)) return null;
+      return "With agentApprovalRequired on, agents add what discovery found only when agentDirectDiscovery (or agentDirectModelEdits) is on; both are off." + ask;
+    }
+    return "With agentApprovalRequired on, agents cannot " + op + " directly unless " + setting + " is on; it is off." + ask;
+  }
+
+  /** What agents may change without a person, as clients see it: everything when approval is off. */
+  private Map<String, Object> directWire()
+  {
+    boolean all = !approvalRequired();
+    Map<String, Object> wire = new LinkedHashMap<String, Object>();
+    wire.put("pointWrites", Boolean.valueOf(all));
+    List<String> files = new ArrayList<String>();
+    if (all) files.add("^*");
+    else files.addAll(directFilePatterns());
+    wire.put("files", files);
+    wire.put("discovery", Boolean.valueOf(all || booleanSetting("agentDirectDiscovery", false)));
+    wire.put("modelEdits", Boolean.valueOf(all || booleanSetting("agentDirectModelEdits", false)));
+    wire.put("tags", Boolean.valueOf(all || booleanSetting("agentDirectTags", false)));
+    wire.put("schedules", Boolean.valueOf(all || booleanSetting("agentDirectSchedules", false)));
+    wire.put("alarms", Boolean.valueOf(all || booleanSetting("agentDirectAlarms", false)));
+    return wire;
+  }
+
   Limits limits()
   {
     List<Bound> bounds = new ArrayList<Bound>();
@@ -269,6 +364,7 @@ final class BaskStreamAgents
     wire.put("actor", session.actor == null ? null : session.actor.toWire());
     wire.put("agentUsersConfigured", Boolean.valueOf(!agentUsers().isEmpty()));
     wire.put("approvalRequired", Boolean.valueOf(approvalRequired()));
+    wire.put("direct", directWire());
     wire.put("reasonRequired", Boolean.valueOf(reasonRequired()));
     wire.put("maxChangesPerMinute", Long.valueOf(maxChangesPerMinute()));
     Limits limits = limits();
@@ -326,7 +422,9 @@ final class BaskStreamAgents
 
   /**
    * Runs before an agent's change. Point writes go on to {@link BaskStreamRequests#handleWrite},
-   * which checks each point and turns it into a proposal when approval is required.
+   * which checks each point and turns it into a proposal when approval is required. Any other
+   * change is made directly when approval is off or the setting for its kind allows it, and is
+   * refused otherwise.
    */
   void beforeChange(BaskStreamClientSession session, String op, BaskStreamOperations.Gate gate, Map<String, Object> request)
       throws BaskStreamProtocolException
@@ -338,9 +436,12 @@ final class BaskStreamAgents
     if ("write".equals(op)) return;
     if (approvalRequired())
     {
-      record(session, opTarget(request), op, null, reason, "refused", "approval_required");
-      throw new BaskStreamProtocolException("approval_required",
-          "With agentApprovalRequired on, agents can propose point writes but cannot " + op + " directly. Ask a person, or turn approval off.");
+      String refusal = directRefusal(op, request);
+      if (refusal != null)
+      {
+        record(session, opTarget(request), op, null, reason, "refused", "approval_required");
+        throw new BaskStreamProtocolException("approval_required", refusal);
+      }
     }
     takeChangeSlot(session, op, opTarget(request), reason);
   }
@@ -692,7 +793,7 @@ final class BaskStreamAgents
   /** The best target to name in a record for a non-write change. */
   private static String opTarget(Map<String, Object> request)
   {
-    for (String key : new String[] { "ord", "point", "planId", "source" })
+    for (String key : new String[] { "ord", "point", "planId", "source", "path", "job" })
     {
       Object value = request.get(key);
       if (value instanceof String && ((String)value).length() > 0) return (String)value;

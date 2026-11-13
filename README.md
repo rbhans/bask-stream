@@ -10,9 +10,18 @@ This project is not affiliated with, endorsed by, or sponsored by Tridium, Honey
 
 The repository's own code and documentation are open source under the [Apache License 2.0](LICENSE). That license does not grant rights to Niagara Framework, Tridium/Honeywell software, product documentation, license keys, services, marks, or customer systems.
 
+## Start here
+
+1. **Put the module on a station.** The signed `baskStream-rt.jar` at the repository root is API 1.11: [install it](#install-it-on-a-station), add `BASkStreamService`, and [decide its settings](#service-settings-to-decide), including what AI agents may do.
+2. **Connect a client.** Talk to the [WebSocket protocol](docs/THIRD_PARTY_API.md) directly, use the [TypeScript SDK](#typescript-sdk), chart with the [Grafana data source](#grafana-integration), or work from a terminal with [`bask`](#bask-cli-and-dashboard), the command-line client built on the SDK.
+3. **No station yet?** [Install `bask`](#1-install) and run [`bask demo`](#2-try-it-without-a-station): a simulated building that speaks the same protocol.
+
 ## Current API highlights
 
-- The current source advertises API version `1.9`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
+- The current source advertises API version `1.11`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
+- The signed `baskStream-rt.jar` at the repository root is built from this source and reports API `1.11` (see [Station setup](#station-setup)).
+- API 1.11 adds the `agentDirect…` settings: while an agent's point writes wait for approval, a station can let it do chosen kinds of work by itself (station files, discovery, model edits, tags, schedules, alarms). `describe_component` also returns a component's `links`, which bask's Logic view draws. See the [compatibility notes](docs/THIRD_PARTY_API.md#api-111-changes).
+- API 1.10 adds the [headless Workbench](docs/HEADLESS_WORKBENCH.md) operations: BQL and NEQL queries, the station's files (Px, nav and so on), jobs, and BACnet discovery that adds devices and points with their facets learned. With model editing (create, wire, set any property, invoke any action), a client can engineer a station without Workbench. An opt-in `securityEditsEnabled` lets model plans edit users, roles and categories.
 - API 1.9 fixes relation endpoints, alarm messages, facet-formatted display text, hierarchy browsing and model move/rename/delete, and slims large replies (tag writes, model plans). Point snapshots now separate `ok` (the read worked) from `state`; see the [compatibility notes](docs/THIRD_PARTY_API.md#api-19-changes).
 - API 1.8 added optional [AI agent controls](docs/AI_AGENTS.md): actor context, a reason on every change, rate and value limits, point-write proposals a person approves, and `Agent` records in the station's audit history. Nothing changes until an agent user is listed or a session declares itself an agent.
 - API 1.7 added, all additive: `read_history_rollup` (time-bucketed min/max/avg for charts), alarm filters with newest-first reads and filtered acknowledge/clear with `dryRun`, `read_schedule_events` and `write_schedule`, OpenMetrics counters at `/stream/metrics`, and audit-trail records for every change made through the stream.
@@ -34,7 +43,7 @@ The repository's own code and documentation are open source under the [Apache Li
 | Companion app | Guided startup, live station testing, API inspection, and setup snippets for external tools. | [Companion guide and demo app](#companion-guide-and-demo-app) |
 | WebSocket protocol | Production apps, graphics, dashboards, and integrations that should talk directly to the station. | [docs/THIRD_PARTY_API.md](docs/THIRD_PARTY_API.md) |
 | TypeScript SDK | JavaScript/TypeScript apps (Node, Electron, tooling) that want login, reconnects and live subscriptions handled for them. | [TypeScript SDK](#typescript-sdk) |
-| `bask` CLI | Quick station checks, scripts and exports from a terminal, plus a full-screen live dashboard. | [bask CLI and dashboard](#bask-cli-and-dashboard) |
+| `bask` CLI | Quick station checks, scripts and exports from a terminal, a full-screen live dashboard, workspaces beside an AI agent, and simulated buildings to try it on. | [bask CLI and dashboard](#bask-cli-and-dashboard) |
 | Integration direction | Compatibility rules and the future adapter strategy for Grafana, REST, OpenMetrics, and exporters. | [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) |
 | Python tools | Bench tests, quick station checks, and scripting experiments. | [Python test tools](#python-test-tools) |
 
@@ -43,7 +52,7 @@ The repository's own code and documentation are open source under the [Apache Li
 [`sdk/`](sdk/README.md) is a typed client for the WebSocket API (Node 20+). It handles the connection plumbing every app otherwise repeats:
 
 - Niagara SCRAM-SHA-256 login with the station's signature verified, session reuse, and re-login when a session expires.
-- `call()` for all 45 operations, generated from [spec/baskstream-protocol.json](spec/baskstream-protocol.json), with protocol error codes on every failure, plus helpers such as `read`, `browse`, `historyRollup`, `alarms` and `writeSchedule`.
+- `call()` for all 60 operations, generated from [spec/baskstream-protocol.json](spec/baskstream-protocol.json), with protocol error codes on every failure, plus helpers such as `read`, `browse`, `historyRollup`, `alarms` and `writeSchedule`.
 - `watch()` subscription groups that renew their lease, re-read after `resync_required`, and come back after a reconnect.
 - Keepalive pings and reconnect with backoff.
 
@@ -55,7 +64,7 @@ watch.on("change", (point) => console.log(point.point, point.value));
 
 ## bask CLI and dashboard
 
-[`cli/`](cli/README.md) is a command-line tool built on the SDK. Run `bask` with no command for a full-screen terminal dashboard: a station tree with live details, a watch list with sparklines, live alarms, history charts, and station status.
+[`cli/`](cli/README.md) is a command-line tool built on the SDK. Run `bask` with no command for a full-screen terminal dashboard with twelve views: station home, an explorer with live values and a property sheet, a watch list, alarms, trends, schedules, queries and reports, station files, jobs and discovery, AI activity, graphics (equipment drawn in the terminal, moving, with live values, from small files a person or an AI agent writes and the station keeps), and logic (a folder as a wire sheet in text, with live values and a trace of any value through its links). `bask workspace` lays the same views out as panes in Rex or tmux beside an AI agent session, and `bask demo` runs it all on a simulated building.
 
 ### 1. Install
 
@@ -73,9 +82,19 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/rbhans/bask-stream/main/cli/install.ps1 | iex
 ```
 
-It installs to `~/.local/bin/bask` (Windows: `%LOCALAPPDATA%\Programs\bask\bask.exe`, added to your user PATH). If `bask` is not found afterwards, open a new terminal or follow the PATH hint the installer prints. Run `bask --version` to check.
+It installs to `~/.local/bin/bask` (Windows: `%LOCALAPPDATA%\Programs\bask\bask.exe`, added to your user PATH). If `bask` is not found afterwards, open a new terminal or follow the PATH hint the installer prints. Run `bask --version` to check; it prints `0.6.0` for this release.
 
-### 2. Log in to a station
+### 2. Try it without a station
+
+```bash
+bask demo                  # the dashboard on Northgate, a simulated office building
+bask demo --list           # the five buildings and how each starts
+bask demo --site eastgate  # a new station with an empty BACnet network, to discover and add
+```
+
+The first `bask demo` window runs the demo station, and it stops when that window quits (`q`). Nothing done to it is kept, so the next start is fresh. See [Demo buildings](cli/README.md#demo-buildings).
+
+### 3. Log in to a station
 
 The station needs the baskStream module and `BASkStreamService` running (see [Station setup](#station-setup)).
 
@@ -85,7 +104,7 @@ bask login https://<station> -u <user> --insecure
 
 It asks for the password and saves only the session, never the password. Use `--insecure` for the self-signed certificate most stations have. Add `--name <profile>` to keep several stations, then switch with `bask use <profile>` or `-p <profile>`.
 
-### 3. Use it
+### 4. Use it
 
 ```bash
 bask                                                     # full-screen dashboard (? for keys, q to quit)
@@ -98,14 +117,37 @@ bask history Drivers/.../ZoneTemp --since 7d --rollup 1h -o csv > zonetemp.csv
 bask alarms --unacked -f                                 # alarms, then follow new ones
 ```
 
-In the dashboard: `1`–`5` switch between Browse, Watch, Alarms, History and Status. Press `/` to find any point by name. In Browse, arrow keys move and open branches, `w` adds a point to Watch, and `t` opens its trend.
+In the dashboard, `1` to `9` and `0` switch between Home, Explorer, Watch, Alarms, Trends, Schedules, Query, Files, Jobs and AI Activity; `g` opens Graphics and `L` opens Logic. Press `/` to find any point by name. In the Explorer, arrow keys move and open branches, `w` adds a point to Watch, and `t` opens its trend.
 
-Everything is read-only unless you add `--allow-writes`, and every write or alarm acknowledgement asks before sending. The full command list is in [cli/README.md](cli/README.md).
+Everything is read-only unless you add `--allow-writes` (or press `W` in the dashboard), and every write or alarm acknowledgement asks before sending. The full command list is in [cli/README.md](cli/README.md#commands).
+
+### 5. A workspace with an AI agent
+
+```bash
+bask workspace --demo                   # on the demo building
+bask workspace --agent-user ai-claude   # on your station; the agent signs in as the Niagara user ai-claude
+```
+
+`bask workspace` lays out Explorer, Alarms and AI Activity panes and an AI agent session (Claude Code by default) in Rex or tmux. It needs one of the two installed, and `claude` on the PATH for the agent pane (`--agent <command>` names another, `--no-agent` leaves it out). Your panes stay on your login. bask asks for the agent user's password once and saves that login; plain `bask workspace` uses it after that. Layouts, the agent's login and what the station lets it do are in [cli/README.md](cli/README.md#workspace).
 
 ### Update or uninstall
 
 - **Update:** run the install command again.
-- **Uninstall:** delete the `bask` executable and the saved sessions in `~/.config/baskstream` (Windows: `%APPDATA%\baskstream`).
+- **Uninstall:** delete the `bask` executable and the `~/.config/baskstream` folder (Windows: `%APPDATA%\baskstream`), which holds the saved sessions, watch lists and workspace files.
+
+## Headless Workbench
+
+For clients that build a station rather than only operate it; see [docs/HEADLESS_WORKBENCH.md](docs/HEADLESS_WORKBENCH.md).
+
+```bash
+bask query "select slotPath, out.value from control:NumericPoint where status.fault"
+```
+
+```bash
+bask discover Drivers/BacnetNetwork --allow-writes
+```
+
+`bask files`, `cat`, `put` and `rm` work on the station's files, `bask jobs` and `bask job` follow jobs, and `bask add <job> <slots...> --apply` adds discovered devices or points. Changes still need `writesEnabled`, model changes need `modelEditsEnabled`, and Niagara roles decide the rest.
 
 ## AI agents
 
@@ -114,7 +156,9 @@ All optional; see [docs/AI_AGENTS.md](docs/AI_AGENTS.md). In short:
 1. Give the agent its own Niagara user with a role covering only what it should touch.
 2. List that login in **`agentUsers`** on BASkStreamService.
 
-That agent's point writes then become proposals that a person approves in Workbench, with `bask approve P7`, or in the dashboard's Proposals view. Each change needs a reason, stays within simple limits (rate, no emergency level, value ranges), and leaves an `Agent` record next to Niagara's own audit record. With `bask`, an agent declares itself with `--agent "Claude Code" --reason "…"`.
+That agent's point writes then become proposals that a person approves in Workbench, with `bask approve P7`, or in the dashboard's AI Activity view (`0`, then `a` to approve or `x` to reject). Each change needs a reason, stays within simple limits (rate, no emergency level, value ranges), and leaves an `Agent` record next to Niagara's own audit record. With `bask`, an agent declares itself with `--agent "Claude Code" --reason "…"`; in a `bask workspace` the agent's pane declares it, and `bask workspace --agent-user <user>` gives it its own login.
+
+To let the agent do some kinds of work by itself while its point writes still wait for approval, turn on the matching **`agentDirect…`** setting (API 1.11): `agentDirectFiles` (station files under named paths, such as `^bask/*` for graphics), `agentDirectDiscovery`, `agentDirectModelEdits`, `agentDirectTags`, `agentDirectSchedules`, `agentDirectAlarms`. All are off by default, and a refused change names the setting that would allow it.
 
 ## Grafana integration
 
@@ -141,8 +185,13 @@ For private signed installs, the Grafana root URL used during signing must exact
 
 ```text
 baskStream-rt/                   Niagara runtime module source
+niagara-module.xml               Module descriptor the Niagara build reads
+baskStream-rt.jar                Signed module jar built from this source (API 1.11)
 LICENSE                          Apache License 2.0 for this repository's code
 docs/THIRD_PARTY_API.md          Detailed WebSocket protocol guide
+docs/AI_AGENTS.md                AI agent rules: agent users, proposals, agentDirect settings
+docs/HEADLESS_WORKBENCH.md       Queries, station files, jobs and discovery
+docs/MODEL_EDITING_API.md        Station model editing (preview and apply)
 docs/INTEGRATIONS.md             Integration adapter direction and compatibility rules
 docs/LEGAL_AND_SAFETY.md         EULA, AI-tool, and distribution checklist
 docs/PRIVACY.md                  Local data-handling notes
@@ -205,21 +254,21 @@ This is engineering guidance, not legal advice. Review the current [Tridium Niag
 
 ## Station setup
 
-1. Compile the module jar with your Niagara build environment.
-2. Install the compiled baskStream module jar on the station host.
-3. Restart Niagara so the module is available.
-4. Add the BASkStreamService to the station.
-5. Confirm the service `servletName` property is `stream`; blank values are defaulted to `stream` on startup.
-6. Verify the health endpoint responds after station login:
+### Build the module
 
-```text
-GET https://<station>/stream/health
+The `baskStream-rt.jar` at the repository root is built from this source (API `1.11`) and code-signed, so most stations can [install it](#install-it-on-a-station) as it is. To build the module yourself:
+
+1. Put this repository inside a Niagara 4 module workspace: the folder that holds Niagara's Gradle build (`gradlew`, `settings.gradle.kts`, and `gradle.properties` with `niagara_home` set to the Niagara install you build against). The workspace settings find `baskStream-rt/baskStream-rt.gradle.kts` as the `:baskStream-rt` project.
+2. From that workspace folder, regenerate the slot code, then build the jar:
+
+```bash
+./gradlew :baskStream-rt:slotomatic
+./gradlew :baskStream-rt:jar
 ```
 
-7. Create or choose a Niagara user with only the permissions your external application needs.
-8. For browser clients hosted outside the station origin, add those exact origins to the BASkStreamService `allowedOrigins` property. Same-origin station pages and non-browser service clients do not need this setting.
+On Windows use `gradlew.bat`. The jar is written to `baskStream-rt/build/libs/baskStream-rt.jar` and copied into the `modules` folder of that Niagara install. Slot-o-matic may write `BBaskStreamService.java` with CRLF line endings; if git then shows the whole file as changed, convert it back to LF.
 
-The Niagara build may add a development code-signing block to the jar. If your target station or distribution workflow requires an unsigned module jar, remove the signature artifacts and stale manifest digest sections before installing it:
+The Niagara build may add a development code-signing block to the jar. If your target station or distribution workflow requires an unsigned module jar, remove the signature artifacts and stale manifest digest sections before installing it. Run this in the folder that holds the jar (`baskStream-rt/build/libs`):
 
 ```bash
 tmpdir="$(mktemp -d)"
@@ -240,6 +289,33 @@ jarsigner -verify -verbose -certs baskStream-rt.jar
 ```
 
 The expected unsigned result is `jar is unsigned`.
+
+### Install it on a station
+
+1. Install the baskStream module jar on the station host: copy it into the `modules` folder of the Niagara install the station runs on, or install it from Workbench with the platform's Software Manager.
+2. Restart Niagara so the module is available.
+3. Add `BASkStreamService` (from the `baskStream` palette) to the station's Services.
+4. Confirm the service `servletName` property is `stream`; blank values are defaulted to `stream` on startup.
+5. Verify the health endpoint responds after station login:
+
+```text
+GET https://<station>/stream/health
+```
+
+6. Create or choose a Niagara user with only the permissions your external application needs.
+7. For browser clients hosted outside the station origin, add those exact origins to the BASkStreamService `allowedOrigins` property. Same-origin station pages and non-browser service clients do not need this setting.
+
+### Service settings to decide
+
+| Setting | Default | What it is for |
+| --- | --- | --- |
+| `writesEnabled` | true | Any change through the module. False keeps every client read-only. |
+| `modelEditsEnabled` | false | Model plans: editing components in bask's Explorer, `bask plan` (logic), and adding discovered devices and points. |
+| `securityEditsEnabled` | false | Model plans that edit users, roles and categories. Never applies to agents. |
+| `agentUsers` | blank | The Niagara logins that are AI agents, such as the user you give `bask workspace --agent-user`. |
+| `agentDirectFiles`, `agentDirectDiscovery`, `agentDirectModelEdits`, `agentDirectTags`, `agentDirectSchedules`, `agentDirectAlarms` | off | Kinds of work an agent may do by itself while its point writes wait for approval. For an agent that draws graphics and brings equipment in: `agentDirectFiles` = `^bask/*` and `agentDirectDiscovery` = true. |
+
+The agent settings are described in [docs/AI_AGENTS.md](docs/AI_AGENTS.md#settings), and the other properties under [Network and security](#network-and-security).
 
 The WebSocket API runs through Niagara web authentication. A client must authenticate to the station first, then connect to:
 
@@ -278,6 +354,8 @@ Recommended external app flow:
 | Tags and relations | `read_tags`, `write_tags`, `write_relations` | Read direct and implied tags, edit direct tags, and manage component relations. |
 | Model changes | `subscribe_model`, `unsubscribe_model` | Receive branch-scoped structure-change hints, then refresh affected nodes. |
 | Model editing | `describe_component_types`, `describe_component`, `preview_model_changes`, `apply_model_changes`, and convenience previews | Preview, then apply, station model changes. See [docs/MODEL_EDITING_API.md](docs/MODEL_EDITING_API.md). |
+| Headless Workbench | `query`, `list_files`, `read_file`, `write_file`, `delete_file`, `list_jobs`, `read_job`, `cancel_job`, `discover`, `add_discovered` | BQL and NEQL queries, station files, jobs, and BACnet discovery. See [docs/HEADLESS_WORKBENCH.md](docs/HEADLESS_WORKBENCH.md). |
+| AI agents | `declare_actor`, `list_proposals`, `approve_proposal`, `reject_proposal`, `read_agent_log` | Declare an agent session, decide its point-write proposals, read the `Agent` audit records. See [docs/AI_AGENTS.md](docs/AI_AGENTS.md). |
 | Diagnostics | `subscription_status`, `GET /stream/metrics` | Inspect subscriptions, groups and leases; scrape request, error, resync and connection counters. |
 
 ## Changed, tightened, or removed

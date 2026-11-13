@@ -23,6 +23,10 @@ Some parts of a station decide who can reach it and what they may do. Model edit
 
 Service types that are not installed on a station are skipped.
 
+**AI agents (API 1.11).** While `agentApprovalRequired` is on, an agent applies a plan only when `agentDirectModelEdits` is on, or `agentDirectDiscovery` for a plan that `add_discovered` built; otherwise `apply_model_changes` returns `approval_required`. Previews are always allowed. An agent's plan can never command a writable point (`agent_use_write`): that goes through `write`. See [AI_AGENTS.md](AI_AGENTS.md#what-an-agent-may-do-by-itself).
+
+`securityEditsEnabled` on the service (default off, API 1.10) opens the User, Role and Category services to model plans for people; agent sessions never get it, and the other protected services stay closed. See [HEADLESS_WORKBENCH.md](HEADLESS_WORKBENCH.md#users-roles-and-categories).
+
 ## Operations
 
 All new request/response operations return `{op:"model_result", id, operation, result}`. Existing response formats are unchanged.
@@ -30,7 +34,7 @@ All new request/response operations return `{op:"model_result", id, operation, r
 | Operation | Request fields | Behavior |
 | --- | --- | --- |
 | `describe_component_types` | `typeSpec`, or `module`, `baseType`, `offset`, `limit` | Specific type schema, or paged installed types. Default base `baja:Component`, limit 100, maximum 500. |
-| `describe_component` | `ord` | Slot names, types, encoded values, flags, facets, permissions, actions and known link/relation references. |
+| `describe_component` | `ord` | Slot names, types, encoded values, flags, facets, permissions, actions and known link/relation references. From API 1.11 also `links`: every link at the component as `{direction: "in"\|"out", source, sourceSlot, target, targetSlot}`, which is what a wire sheet is drawn from. |
 | `preview_model_changes` | `changes` | Validates 1–100 ordered changes and returns a stored plan, exact normalized diff, hash and expiry. No mounted station edits. |
 | `apply_model_changes` | `planId`, `planHash`, `idempotencyKey` | Applies the stored plan once after fresh identity, permission, value and collision checks. |
 | `model_plan_status` | `planId` | Retrieves the current principal's retained preview/outcome after reconnect or an uncertain response. |
@@ -76,6 +80,8 @@ Simple values use Niagara's encoded text representation. For an existing propert
 ```
 
 These property names are examples; inspect the actual type's slots before using them. Complex values use `{typeSpec, properties:{...}}`, with typed values recursively. Property paths such as `scope/someProperty` can address nested existing values. Child components are created/deleted through component actions rather than replaced using `update`. Read-only/frozen restrictions and Niagara validators apply. Nesting, model snapshot size and request sizes are bounded.
+
+A password property takes `{"typeSpec": "baja:Password", "plain": "new password"}` in place of `encoded` (API 1.10); Niagara hashes it.
 
 Credential-like property names and password/secret types are redacted in descriptions, diffs and audit details. Fingerprints still include their encoded state, so redaction does not weaken stale-plan checking. Avoid placing secrets in arbitrary unmarked string slots or action parameters: the module cannot infer the semantics of every vendor string.
 

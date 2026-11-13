@@ -79,5 +79,6 @@ case ":$PATH:" in
 esac
 
 echo
-echo "Next: bask login https://<station> -u <user> --insecure"
-echo "Then: bask"
+echo "Try it:  bask demo   (a simulated building, no station needed)"
+echo "Next:    bask login https://<station> -u <user> --insecure"
+echo "Then:    bask"

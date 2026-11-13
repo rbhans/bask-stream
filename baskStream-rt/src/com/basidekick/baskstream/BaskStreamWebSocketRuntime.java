@@ -23,6 +23,9 @@ final class BaskStreamWebSocketRuntime
   private final BaskStreamWriteResolver writeResolver;
   private final BaskStreamTagResolver tagResolver;
   private final BaskStreamModelResolver modelResolver;
+  private final BaskStreamQueryResolver queryResolver;
+  private final BaskStreamFileResolver fileResolver;
+  private final BaskStreamJobResolver jobResolver;
   private final BaskStreamSubscriptionManager subscriptions;
   private final BaskStreamMetrics metrics = new BaskStreamMetrics();
   private final ScheduledExecutorService scheduler;
@@ -45,6 +48,9 @@ final class BaskStreamWebSocketRuntime
     this.writeResolver = new BaskStreamWriteResolver(service, resolver);
     this.tagResolver = new BaskStreamTagResolver(service);
     this.modelResolver = new BaskStreamModelResolver(service);
+    this.queryResolver = new BaskStreamQueryResolver(service);
+    this.fileResolver = new BaskStreamFileResolver(service);
+    this.jobResolver = new BaskStreamJobResolver(service);
     this.subscriptions = new BaskStreamSubscriptionManager(service);
     this.agents = new BaskStreamAgents(this);
     java.util.concurrent.ScheduledThreadPoolExecutor scheduled =
@@ -110,6 +116,21 @@ final class BaskStreamWebSocketRuntime
   BaskStreamModelResolver getModelResolver()
   {
     return modelResolver;
+  }
+
+  BaskStreamQueryResolver getQueryResolver()
+  {
+    return queryResolver;
+  }
+
+  BaskStreamFileResolver getFileResolver()
+  {
+    return fileResolver;
+  }
+
+  BaskStreamJobResolver getJobResolver()
+  {
+    return jobResolver;
   }
 
   void modelChanged(java.util.Map<String, Object> result)

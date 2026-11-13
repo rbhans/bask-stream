@@ -25,7 +25,7 @@ test("logs in with SCRAM, loads capabilities and reads points", async () => {
   let saved;
   const client = await connect({ onSession: (cookies) => (saved = cookies) });
   try {
-    assert.equal(client.capabilities.apiVersion, "1.9");
+    assert.equal(client.capabilities.apiVersion, "1.10");
     assert.ok(saved?.JSESSIONID, "session cookies were reported");
     const [snapshot] = await client.read(["slot:/Drivers/A"]);
     assert.equal(snapshot.value, 72.5);
@@ -225,6 +225,41 @@ test("read passes fields and fresh, and keeps the old fields-array form", async 
     assert.equal(sent.freshWaitMillis, 1000);
     await client.read(["slot:/A"], ["value"]);
     assert.deepEqual(station.state.requests.filter((r) => r.op === "read").at(-1).fields, ["value"]);
+  } finally {
+    client.close();
+  }
+});
+
+test("queries, station files, jobs and discovery (API 1.10)", async () => {
+  const client = await connect();
+  try {
+    const table = await client.query({ bql: "select slotPath, out.value from control:NumericPoint" }, { ord: "station:|slot:/Drivers" });
+    assert.equal(table.columns[0].name, "slotPath");
+    assert.equal(table.rows[0][1], 72.5);
+    assert.equal(station.state.requests.at(-1).ord, "slot:/Drivers");
+    const tagged = await client.query({ neql: "hs:vav" });
+    assert.equal(tagged.entities[0].name, "VAV_01");
+    await assert.rejects(client.query({ bql: "select x from nothing" }), (error) => error.code === "bad_query");
+
+    assert.deepEqual((await client.listFiles("^px")).entries.map((e) => e.name), ["Home.px"]);
+    assert.equal((await client.readFile("^px/Home.px")).text, "<px/>");
+    await assert.rejects(client.writeFile("^px/Home.px", { text: "<px>2</px>" }), (error) => error.code === "file_exists");
+    assert.equal((await client.writeFile("^px/Home.px", { text: "<px>2</px>" }, { overwrite: true })).created, false);
+    assert.equal((await client.writeFile("^px/New.px", { text: "<px/>" }, { reason: "new page" })).created, true);
+    assert.deepEqual((await client.deleteFile("^px/New.px")).deleted, ["^px/New.px"]);
+    await assert.rejects(client.readFile("^px/New.px"), (error) => error.code === "file_not_found");
+
+    const discovery = await client.discover("slot:/Drivers/Net/VAV_01");
+    assert.equal(discovery.kind, "points");
+    const job = await client.job(discovery.job);
+    assert.equal(job.complete, true);
+    assert.equal(job.results[0].slot, "analogInput_3");
+    assert.equal((await client.jobs()).length, 1);
+    const plan = await client.addDiscovered(discovery.job, [{ slot: "analogInput_3", name: "SpaceTemp" }]);
+    assert.equal(plan.state, "preview");
+    assert.equal(plan.items[0].name, "SpaceTemp");
+    assert.equal((await client.cancelJob(discovery.job)).state, "canceled");
+    await assert.rejects(client.discover("slot:/Drivers/Modbus"), (error) => error.code === "discovery_unsupported");
   } finally {
     client.close();
   }

@@ -13,15 +13,17 @@ export interface Connection {
  * Connects with a saved profile. The saved session is reused; if it has expired the password
  * comes from BASKSTREAM_PASSWORD or a prompt, and is kept in memory only for later reconnects.
  */
-export async function connect(profileName?: string, options: { beforePrompt?: () => void; actor?: Actor } = {}): Promise<Connection> {
+export async function connect(profileName?: string, options: { beforePrompt?: () => void; actor?: Actor; password?: string; prompt?: boolean; promptLabel?: string; envPassword?: boolean } = {}): Promise<Connection> {
   const { name, profile } = getProfile(profileName);
-  let typed: string | undefined = process.env.BASKSTREAM_PASSWORD;
-  let mayPrompt = true;
+  // BASKSTREAM_PASSWORD is the person's own: a second login (an agent's) passes `envPassword: false`.
+  let typed: string | undefined = options.password ?? (options.envPassword === false ? undefined : process.env.BASKSTREAM_PASSWORD);
+  // With `prompt: false` an expired session is an error to show, not a question to ask (several stations at once).
+  let mayPrompt = options.prompt !== false;
   const password = async () => {
     if (typed !== undefined) return typed;
-    if (!mayPrompt) throw new Error("The station session expired. Quit and run bask again to log in.");
+    if (!mayPrompt) throw new Error(options.prompt === false ? `The saved login expired. Run: bask login ${profile.station} -u ${profile.username ?? "<user>"} --name ${name}${profile.insecure ? " -k" : ""}` : "The station session expired. Quit and run bask again to log in.");
     options.beforePrompt?.();
-    typed = await promptHidden(`Password for ${profile.username}@${new URL(profile.station).host}: `);
+    typed = await promptHidden(options.promptLabel ?? `Password for ${profile.username}@${new URL(profile.station).host}: `);
     return typed;
   };
   const client = await BaskStreamClient.connect({

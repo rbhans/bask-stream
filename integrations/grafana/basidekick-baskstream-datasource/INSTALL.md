@@ -4,6 +4,8 @@ The normal install path is a private signed Grafana plugin package. Use unsigned
 
 ## Build A Signed Package
 
+The build needs Node.js 22, Go (the version in `go.mod`, which also provides Mage through `go run`) and `zip`. The plugin runs on Grafana 13.0 or newer. It uses only search, browse, point read, history and subscription operations, so a station on any module from API 1.8 on is enough for it.
+
 From this plugin directory:
 
 ```bash

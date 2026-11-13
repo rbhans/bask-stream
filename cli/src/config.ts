@@ -8,6 +8,8 @@ export interface Profile {
   username?: string;
   insecure?: boolean;
   cookies?: Record<string, string>;
+  /** The profile an AI agent uses on this station in a workspace: the same station under the agent's own Niagara user. */
+  agent?: string;
 }
 
 interface Store {

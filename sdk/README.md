@@ -23,7 +23,7 @@ const open = await client.alarms({ scope: "open", order: "newest" });
 ```
 
 - **Login**: Niagara's SCRAM-SHA-256 web login, verifying the station's signature. Saved cookies are reused; the password is requested only when they have expired.
-- **Requests**: `call(op, fields)` sends any of the 45 operations (generated from `spec/baskstream-protocol.json`); failures reject with `BaskStreamError` whose `code` is the protocol error code, or `timeout`, `not_connected`, `connection_closed`, `login_failed`, `session_expired`, `bad_message`.
+- **Requests**: `call(op, fields)` sends any of the 60 operations (generated from `spec/baskstream-protocol.json`); failures reject with `BaskStreamError` whose `code` is the protocol error code, or `timeout`, `not_connected`, `connection_closed`, `login_failed`, `session_expired`, `bad_message`.
 - **Helpers**: `browse`, `describe`, `search`, `read`, `write`, `describeWrite`, `history`, `historyRollup`, `alarms`, `ackAlarms`, `clearAlarms`, `schedule`, `scheduleEvents`, `writeSchedule`, `subscriptionStatus`, `subscribeAlarms`.
 - **Live data**: `watch()` keeps a named subscription group: it renews the lease, re-reads after `resync_required`, and is restored after a reconnect. The client also emits `value`, `cov`, `alarm`, `model`, `resync`, `revoked` and `notice`.
 - **Staying connected**: keepalive pings; after a drop it reconnects with backoff (1 s → 30 s), logs in again if needed, and emits `disconnected`, `reconnecting`, `reconnected`.
@@ -41,6 +41,8 @@ agent.on("proposal", (p) => console.log(p.id, p.status)); // approved, rejected,
 
 People use `proposals()`, `approveProposal(id)` and `rejectProposal(id, note)`; `agentLog()` reads the `Agent` records from the station's audit history.
 
+While approval is required, an agent's other changes (files, discovery, model plans, tags, schedules, alarms) fail with `approval_required` unless the station's `agentDirect…` setting for that kind is on. `agent.capabilities.agents.direct` (API 1.11) says what is allowed: `{ pointWrites, files, discovery, modelEdits, tags, schedules, alarms }`. An agent's model plan cannot command a writable point (`agent_use_write`); use `write`.
+
 ## Develop
 
 ```bash
@@ -48,6 +50,26 @@ npm install
 npm test
 ```
 
+This repository does not publish the package to npm. To use it in an app, build it here (`npm install && npm run build`), then add it from the app's folder with `npm install <path to this repository>/sdk`.
+
 `npm run gen` regenerates `src/operations.ts` from the spec; `tests/protocol_contract.py` fails if it is stale. Tests run against an in-process fake station (`test/fake-station.mjs`).
 
 On the Parallels shared drive, npm cannot create symlinks, so `.npmrc` sets `bin-links=false` and the scripts call `tsc` through `node`.
+
+## Headless Workbench (API 1.10)
+
+Queries, station files, jobs and discovery; see `docs/HEADLESS_WORKBENCH.md`.
+
+```ts
+const faults = await client.query({ bql: "select slotPath, status from control:ControlPoint where status.fault" }, { ord: "slot:/Drivers" });
+const page = await client.readFile("^px/Home.px");
+await client.writeFile("^px/Home.px", { text: page.text! }, { overwrite: true, reason: "fix label" });
+
+const { job } = await client.discover("slot:/Drivers/BacnetNetwork/AHU_1");
+let found = await client.job(job);
+while (!found.complete) found = await client.job(job);
+const plan = await client.addDiscovered(job, found.results.map((r) => ({ slot: r.slot })));
+await client.call("apply_model_changes", { planId: plan.planId, planHash: plan.planHash, idempotencyKey: crypto.randomUUID() });
+```
+
+Also `listFiles`, `deleteFile`, `jobs` and `cancelJob`.

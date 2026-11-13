@@ -1,6 +1,6 @@
 {
   "protocol": "baskStream",
-  "apiVersion": "1.9",
+  "apiVersion": "1.11",
   "encoding": "msgpack",
   "transport": {
     "path": "/stream",
@@ -953,6 +953,7 @@
     "ack_alarm": {
       "summary": "Acknowledge alarm records (operator write on the alarm class); per-uuid results.",
       "gate": "writes",
+      "agentDirect": "agentDirectAlarms",
       "reply": "alarm_action_result",
       "request": {
         "type": "object",
@@ -1083,6 +1084,7 @@
     "ack_alarms": {
       "summary": "Alias of ack_alarm (batch form).",
       "gate": "writes",
+      "agentDirect": "agentDirectAlarms",
       "reply": "alarm_action_result",
       "request": {
         "type": "object",
@@ -1213,6 +1215,7 @@
     "clear_alarm": {
       "summary": "Force-clear alarm records (admin write on the alarm class); per-uuid results.",
       "gate": "writes",
+      "agentDirect": "agentDirectAlarms",
       "reply": "alarm_action_result",
       "request": {
         "type": "object",
@@ -1343,6 +1346,7 @@
     "clear_alarms": {
       "summary": "Alias of clear_alarm (batch form).",
       "gate": "writes",
+      "agentDirect": "agentDirectAlarms",
       "reply": "alarm_action_result",
       "request": {
         "type": "object",
@@ -1653,6 +1657,7 @@
     "write_schedule": {
       "summary": "Replace the entries of the given weekdays on a weekly schedule, applied through Niagara's audited schedule copy. dryRun returns before/after without applying.",
       "gate": "writes",
+      "agentDirect": "agentDirectSchedules",
       "reply": "schedule_write_result",
       "request": {
         "type": "object",
@@ -1867,6 +1872,7 @@
     "write_tags": {
       "summary": "Set/remove direct tags on components; per-target and per-op results.",
       "gate": "writes",
+      "agentDirect": "agentDirectTags",
       "reply": "tags_written",
       "request": {
         "type": "object",
@@ -2058,6 +2064,7 @@
     "write_relations": {
       "summary": "Add/remove direct relations on components; per-target and per-op results.",
       "gate": "writes",
+      "agentDirect": "agentDirectTags",
       "reply": "relations_written",
       "request": {
         "type": "object",
@@ -2358,6 +2365,7 @@
     "apply_model_changes": {
       "summary": "Apply a previewed plan once after revalidation (needs writesEnabled and modelEditsEnabled).",
       "gate": "modelEdits",
+      "agentDirect": "agentDirectModelEdits",
       "reply": "model_result",
       "request": {
         "type": "object",
@@ -3215,6 +3223,380 @@
           "log"
         ]
       }
+    },
+    "query": {
+      "summary": "Run one read-only BQL select or NEQL tag query as the session user. Rows whose object is a component the user may not see are dropped. BQL is refused while allowedPathPatterns is narrowed.",
+      "gate": "none",
+      "reply": "query_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "bql": {
+            "type": "string",
+            "description": "BQL text without the bql: prefix. Exactly one of bql or neql. Max 4000 characters, no pipe character."
+          },
+          "neql": {
+            "type": "string",
+            "description": "NEQL text without the neql: prefix."
+          },
+          "ord": {
+            "type": "string",
+            "description": "Slot ORD the query starts from; default slot:/."
+          },
+          "limit": {
+            "type": "number",
+            "description": "Rows to return.",
+            "default": 500,
+            "maximum": 5000
+          },
+          "timeoutMillis": {
+            "type": "number",
+            "description": "Time limit for reading rows.",
+            "default": 10000,
+            "maximum": 60000
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "result"
+        ]
+      }
+    },
+    "list_files": {
+      "summary": "List a folder of the station file space (^). Entries the user may not read are left out.",
+      "gate": "none",
+      "reply": "files_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Folder path such as ^px; default ^. A leading file: is accepted. Only ^ paths, no \"..\"."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "folder"
+        ]
+      }
+    },
+    "read_file": {
+      "summary": "Read one file from the station file space, up to 4 MiB. UTF-8 files come as text unless base64 is requested.",
+      "gate": "none",
+      "reply": "file_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path such as ^px/Home.px."
+          },
+          "encoding": {
+            "type": "string",
+            "enum": [
+              "text",
+              "base64"
+            ],
+            "description": "Default: text when the bytes are valid UTF-8, else base64."
+          },
+          "maxBytes": {
+            "type": "number",
+            "description": "Refuse larger files with file_too_large.",
+            "maximum": 4194304
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "response": {
+        "keys": [
+          "file"
+        ]
+      }
+    },
+    "write_file": {
+      "summary": "Create or replace a file in the station file space. Replacing needs overwrite: true. Recorded in the audit history.",
+      "gate": "writes",
+      "agentDirect": "agentDirectFiles",
+      "reply": "file_written",
+      "request": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path such as ^px/Home.px."
+          },
+          "text": {
+            "type": "string",
+            "description": "Content as UTF-8 text. Exactly one of text or base64."
+          },
+          "base64": {
+            "type": "string",
+            "description": "Content as base64."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Replace an existing file; otherwise file_exists.",
+            "default": false
+          },
+          "createDirs": {
+            "type": "boolean",
+            "description": "Create missing parent folders.",
+            "default": true
+          },
+          "dryRun": {
+            "type": "boolean",
+            "description": "Check and report without writing.",
+            "default": false
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why; required for agent sessions when agentRequireReason is on."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "response": {
+        "keys": [
+          "file"
+        ]
+      }
+    },
+    "delete_file": {
+      "summary": "Delete a file or folder in the station file space. A folder with contents needs recursive: true; at most 500 entries per request.",
+      "gate": "writes",
+      "agentDirect": "agentDirectFiles",
+      "reply": "file_deleted",
+      "request": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File or folder path; not the root."
+          },
+          "recursive": {
+            "type": "boolean",
+            "description": "Delete a folder together with its contents.",
+            "default": false
+          },
+          "dryRun": {
+            "type": "boolean",
+            "description": "Report what would be deleted without deleting.",
+            "default": false
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why; required for agent sessions when agentRequireReason is on."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "response": {
+        "keys": [
+          "file"
+        ]
+      }
+    },
+    "list_jobs": {
+      "summary": "The station's jobs the user may see, with state and progress.",
+      "gate": "none",
+      "reply": "jobs_result",
+      "request": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "jobs"
+        ]
+      }
+    },
+    "read_job": {
+      "summary": "One job: state, progress, its last 200 log items, and its results (the struct-like slots a job leaves on itself, such as discovered devices or points) in plain form, paged.",
+      "gate": "none",
+      "reply": "job_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "string",
+            "description": "The job's slot ORD, from list_jobs or discover."
+          },
+          "offset": {
+            "type": "number",
+            "description": "First result to return.",
+            "default": 0
+          },
+          "limit": {
+            "type": "number",
+            "description": "Results per page.",
+            "default": 200,
+            "maximum": 1000
+          }
+        },
+        "required": [
+          "job"
+        ]
+      },
+      "response": {
+        "keys": [
+          "job"
+        ]
+      }
+    },
+    "cancel_job": {
+      "summary": "Cancel a running job. Needs invoke permission on its cancel action.",
+      "gate": "writes",
+      "agentDirect": "agentDirectDiscovery",
+      "reply": "job_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "string",
+            "description": "The job's slot ORD."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why; required for agent sessions when agentRequireReason is on."
+          }
+        },
+        "required": [
+          "job"
+        ]
+      },
+      "response": {
+        "keys": [
+          "job"
+        ]
+      }
+    },
+    "discover": {
+      "summary": "Start a driver's discovery job. A BACnet network discovers devices; a BACnet device or its points container discovers that device's objects. Other drivers return discovery_unsupported.",
+      "gate": "writes",
+      "agentDirect": "agentDirectDiscovery",
+      "reply": "discovery_started",
+      "request": {
+        "type": "object",
+        "properties": {
+          "ord": {
+            "type": "string",
+            "description": "Slot ORD of a BACnet network, device or points container."
+          },
+          "lowLimit": {
+            "type": "number",
+            "description": "Lowest device instance to ask for (device discovery).",
+            "minimum": 0,
+            "maximum": 4194303
+          },
+          "highLimit": {
+            "type": "number",
+            "description": "Highest device instance to ask for (device discovery).",
+            "minimum": 0,
+            "maximum": 4194303
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why; required for agent sessions when agentRequireReason is on."
+          }
+        },
+        "required": [
+          "ord"
+        ]
+      },
+      "response": {
+        "keys": [
+          "discovery"
+        ]
+      }
+    },
+    "add_discovered": {
+      "summary": "Ungated preview: turns chosen results of a discovery job into 'create' changes (BACnet devices, or proxy points with facets learned from the device) and returns a plan for apply_model_changes.",
+      "gate": "modelEdits",
+      "reply": "model_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "string",
+            "description": "The discovery job's slot ORD."
+          },
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Results to add.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "slot": {
+                  "type": "string",
+                  "description": "The result's slot name from read_job."
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Name for the new component; default the discovered name."
+                },
+                "parent": {
+                  "type": "string",
+                  "description": "Overrides the request parent for this item."
+                },
+                "collision": {
+                  "type": "string",
+                  "enum": [
+                    "fail",
+                    "suffix"
+                  ]
+                },
+                "writable": {
+                  "type": "boolean",
+                  "description": "Points: make a writable point; default by object type (outputs and values are writable)."
+                },
+                "typeSpec": {
+                  "type": "string",
+                  "description": "Points: the control point type, overriding the default."
+                },
+                "properties": {
+                  "type": "object",
+                  "description": "Typed values that override the ones built from discovery."
+                }
+              },
+              "required": [
+                "slot"
+              ]
+            }
+          },
+          "parent": {
+            "type": "string",
+            "description": "Where to add. Points default to the job's device's points container; devices need the network or a device folder."
+          },
+          "verbose": {
+            "type": "boolean",
+            "description": "Return the full plan reply instead of the compact one.",
+            "default": false
+          }
+        },
+        "required": [
+          "job",
+          "items"
+        ]
+      },
+      "response": {
+        "keys": [
+          "operation",
+          "result"
+        ]
+      }
     }
   },
   "notices": {
@@ -3317,6 +3699,10 @@
       "meaning": "Agent user exceeded agentMaxChangesPerMinute, or has too many pending proposals; request or entry.",
       "scope": "entry"
     },
+    "agent_use_write": {
+      "meaning": "An agent's model plan tried to command a writable point (invoke set, override or auto, or set a priority input or the fallback). Agents command points with write, where approval and value limits apply.",
+      "scope": "request"
+    },
     "agent_value_out_of_bounds": {
       "meaning": "Agent value is outside the point's min/max facets or the matching agentBoundN rule.",
       "scope": "entry"
@@ -3326,11 +3712,15 @@
       "scope": "request"
     },
     "approval_required": {
-      "meaning": "Agents can only propose point writes while agentApprovalRequired is on; other agent changes need a person or approval turned off.",
+      "meaning": "While agentApprovalRequired is on, an agent's change other than a point write is refused unless the agentDirect setting for that kind of change allows it; the message names the setting.",
       "scope": "request"
     },
     "auth_required": {
       "meaning": "No authenticated Niagara user at the WebSocket handshake; the socket is closed (1008), no frame is sent.",
+      "scope": "request"
+    },
+    "bad_query": {
+      "meaning": "Niagara rejected the BQL or NEQL text, the query is too long or contains a pipe character, or it did not return a table.",
       "scope": "request"
     },
     "bad_reference": {
@@ -3357,6 +3747,30 @@
       "meaning": "Cannot move a component into its own subtree.",
       "scope": "request"
     },
+    "discovery_failed": {
+      "meaning": "The driver did not start discovery or returned no job.",
+      "scope": "request"
+    },
+    "discovery_unsupported": {
+      "meaning": "No built-in discovery for this component type, or the job is not a discovery job baskStream can add from.",
+      "scope": "request"
+    },
+    "file_exists": {
+      "meaning": "write_file target exists and overwrite was not true.",
+      "scope": "request"
+    },
+    "file_failed": {
+      "meaning": "The file system reported an error while reading, writing or deleting.",
+      "scope": "request"
+    },
+    "file_not_found": {
+      "meaning": "No such file or folder.",
+      "scope": "request"
+    },
+    "file_too_large": {
+      "meaning": "File is larger than maxBytes or the 4 MiB read limit.",
+      "scope": "request"
+    },
     "forbidden_action": {
       "meaning": "User cannot invoke the write action slot on the point; also request-level for model invoke without invoke+admin-write.",
       "scope": "entry"
@@ -3367,6 +3781,10 @@
     },
     "forbidden_component": {
       "meaning": "Model target outside allowedPathPatterns, unreadable, or lacking admin write.",
+      "scope": "request"
+    },
+    "forbidden_file": {
+      "meaning": "Path is outside the station file space (^), the user lacks file permission, or the file is read-only.",
       "scope": "request"
     },
     "forbidden_point": {
@@ -3411,6 +3829,10 @@
     },
     "invalid_component": {
       "meaning": "Model ORD does not resolve to a component/struct, or configure_hierarchy target is not hierarchy:Hierarchy.",
+      "scope": "request"
+    },
+    "invalid_job": {
+      "meaning": "ORD is not a job, the station has no JobService, or the job could not be cancelled.",
       "scope": "request"
     },
     "invalid_link": {
@@ -3498,7 +3920,11 @@
       "scope": "request"
     },
     "protected_component": {
-      "meaning": "The baskStream service and its descendants cannot be edited remotely.",
+      "meaning": "The baskStream service and its descendants cannot be edited remotely; protected services too, except users, roles and categories for people while securityEditsEnabled is on.",
+      "scope": "request"
+    },
+    "query_not_allowed": {
+      "meaning": "BQL is unavailable while allowedPathPatterns is narrowed; use neql, search or browse.",
       "scope": "request"
     },
     "read_failed": {
