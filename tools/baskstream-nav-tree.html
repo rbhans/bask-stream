@@ -854,7 +854,7 @@
         <div class="guide-box">
           <div class="guide-title">Quick Start</div>
           <div class="guide-text">
-            Run <code>node tools/baskstream-nav-tree-server.mjs --port=8787</code> and open <code>http://127.0.0.1:8787/</code>. Use this guide for module startup, what's new in API 1.8, AI agents, the <code>bask</code> CLI and TypeScript SDK, and live testing.
+            Run <code>node tools/baskstream-nav-tree-server.mjs --port=8787</code> and open <code>http://127.0.0.1:8787/</code>. Use this guide for module startup, what's new through API 1.11, AI agents, the <code>bask</code> CLI and TypeScript SDK, and live testing.
           </div>
         </div>
         <div class="health-box">
@@ -881,7 +881,7 @@
           </div>
           <div class="guide-panel-body">
             <ol class="guide-list">
-              <li>Build the baskStream runtime jar, install it on the station host, then restart Niagara.</li>
+              <li>Install the signed <code>baskStream-rt.jar</code> from the repository root (API 1.11), or one you built from source, on the station host, then restart Niagara.</li>
               <li>Add the BASkStreamService to the station, confirm <code>servletName</code> is <code>stream</code>, then verify <code>GET /stream/health</code> responds after login.</li>
               <li>Create or choose a Niagara user with only the station permissions your external app needs.</li>
               <li>For this companion app, run <code>node tools/baskstream-nav-tree-server.mjs --port=8787</code>, open <code>http://127.0.0.1:8787/</code>, and connect from the Test Console.</li>
@@ -898,8 +898,11 @@
             <h2>What's New</h2>
           </div>
           <div class="guide-panel-body">
-            <p>The module now reports API <code>1.8</code>, which adds optional AI agent controls (below). API 1.7 added history rollups, alarm filters, schedule events and edits, metrics and the audit trail; API 1.6 added model editing. Everything below is additive unless listed under "Changed or tightened". Call <code>capabilities</code> to see what the deployed station supports.</p>
+            <p>The module now reports API <code>1.11</code>, which lets agents do chosen kinds of work by themselves. API 1.10 added the headless Workbench operations, API 1.9 fixes and lighter replies (some replies changed; see the API 1.9 notes in <code>docs/THIRD_PARTY_API.md</code>), API 1.8 optional AI agent controls (below), API 1.7 history rollups, alarm filters, schedule events and edits, metrics and the audit trail, and API 1.6 model editing. Call <code>capabilities</code> to see what the deployed station supports.</p>
             <div class="guide-grid">
+              <div class="guide-note"><strong>Agents doing chosen work (1.11)</strong>While an agent's point writes wait for approval, <code>agentDirectFiles</code>, <code>agentDirectDiscovery</code>, <code>agentDirectModelEdits</code>, <code>agentDirectTags</code>, <code>agentDirectSchedules</code> and <code>agentDirectAlarms</code> each let it do that kind of work without a person. <code>describe_component</code> also returns a component's <code>links</code>.</div>
+              <div class="guide-note"><strong>Headless Workbench (1.10)</strong><code>query</code> (BQL and NEQL), station files, jobs, and BACnet <code>discover</code> and <code>add_discovered</code>. See <code>docs/HEADLESS_WORKBENCH.md</code>.</div>
+              <div class="guide-note"><strong>Fixes and lighter replies (1.9)</strong>Point reads separate <code>ok</code> (the read worked) from <code>state</code>; tag, relation and model plan replies are compact unless asked for in full; history rollups return every bucket.</div>
               <div class="guide-note"><strong>Station model editing (1.6)</strong>Describe installed types and components, then preview and apply creates, updates, renames, moves, deletes, links and hierarchy changes. Needs <code>modelEditsEnabled</code>. See <code>docs/MODEL_EDITING_API.md</code>.</div>
               <div class="guide-note"><strong>History rollups</strong><code>read_history_rollup</code> returns fixed-width buckets (count, min, max, avg, first, last), so a month of one-hour chart points is about 720 rows instead of every record.</div>
               <div class="guide-note"><strong>Alarm filters</strong><code>read_alarms</code> filters by alarm class, priority, ack state and time, and can return newest first. <code>ack_alarm</code> and <code>clear_alarm</code> accept the same filter, with <code>dryRun</code> to preview.</div>
@@ -928,8 +931,8 @@ bask login https://&lt;station&gt; -u &lt;user&gt; --insecure   # asks for the p
 bask doctor                                          # step-by-step connection check
 bask                                                 # full-screen dashboard</pre>
             <div class="guide-grid">
-              <div class="guide-note"><strong>Dashboard</strong><code>1</code> Browse, <code>2</code> Watch (live values with trend lines), <code>3</code> Alarms, <code>4</code> History chart, <code>5</code> Status. <code>/</code> finds any point by name. <code>?</code> shows every key.</div>
-              <div class="guide-note"><strong>Commands</strong><code>read</code>, <code>watch</code>, <code>history --rollup 1h</code>, <code>alarms -f</code>, <code>schedule</code>, <code>search</code>, <code>call</code>, with <code>-o json</code> or <code>-o csv</code> output.</div>
+              <div class="guide-note"><strong>Dashboard</strong><code>1</code> to <code>9</code> and <code>0</code>: Home, Explorer, Watch, Alarms, Trends, Schedules, Query, Files, Jobs, AI Activity; <code>g</code> Graphics, <code>L</code> Logic. <code>/</code> finds any point by name. <code>?</code> shows every key.</div>
+              <div class="guide-note"><strong>Commands</strong><code>read</code>, <code>watch</code>, <code>history --rollup 1h</code>, <code>alarms -f</code>, <code>schedule</code>, <code>search</code>, <code>query</code>, <code>discover</code>, <code>call</code>, with <code>-o json</code> or <code>-o csv</code> output. <code>bask demo</code> runs a simulated building; <code>bask workspace</code> lays the views out in Rex or tmux beside an AI agent.</div>
               <div class="guide-note"><strong>Safe by default</strong>Read-only unless started with <code>--allow-writes</code>, and every write or alarm acknowledgement asks first. The password is never saved.</div>
               <div class="guide-note"><strong>More</strong>Full command list in <code>cli/README.md</code>. Releases: <code>github.com/rbhans/bask-stream/releases</code>.</div>
             </div>
@@ -944,7 +947,7 @@ bask                                                 # full-screen dashboard</pr
             <p>baskStream can tell an AI agent apart from a person, ask why it is changing something, keep it within limits, and let a person approve its writes first. Nothing changes until you use it. Niagara roles stay the hard boundary, and Niagara's audit history stays the record of truth.</p>
             <div class="guide-grid">
               <div class="guide-note"><strong>Turn it on</strong>Put the agent's Niagara login in <code>agentUsers</code> on BASkStreamService. Agents can also declare themselves with <code>declare_actor</code> (bask: <code>--agent "Claude Code"</code>).</div>
-              <div class="guide-note"><strong>Proposals</strong>By default an agent's point write becomes a proposal. Approve it in Workbench (service actions, ids listed in <code>pendingProposals</code>), with <code>bask approve P7</code>, or in the dashboard's Proposals view. It runs with the approver's permissions.</div>
+              <div class="guide-note"><strong>Proposals</strong>By default an agent's point write becomes a proposal. Approve it in Workbench (service actions, ids listed in <code>pendingProposals</code>), with <code>bask approve P7</code>, or in the dashboard's AI Activity view. It runs with the approver's permissions. From API 1.11 the <code>agentDirect…</code> settings let an agent do chosen other kinds of work by itself.</div>
               <div class="guide-note"><strong>Limits</strong>A reason on every change, 10 changes a minute, no emergency level 1, the point's min/max facets, and up to four ranges like <code>slot:/Drivers/*/ZoneSP 68..76</code>. Each has an off setting.</div>
               <div class="guide-note"><strong>Record</strong>Each agent action adds an <code>Agent</code> record to the station's audit history beside Niagara's own: who, which model, for whom, why, and what happened. <code>bask agent-log</code> reads them.</div>
             </div>

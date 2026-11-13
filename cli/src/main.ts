@@ -935,8 +935,10 @@ tuiOptions(program.command("demo"))
     if (opts.fleet) return fleet(globals(cmd), [], { demo: true, mouse: opts.mouse, theme: opts.theme });
     const demo = await ensureDemo(opts.site, opts.port ? Number(opts.port) : undefined);
     if (opts.serve) {
-      if (!demo.station) throw new Error(`Port ${demo.port} is already in use. A demo station may be running; try bask demo --site ${opts.site}.`);
-      console.log(`${chalk.green("✓")} ${demo.site.station} demo station at ${demo.url} (user ${demo.user}, password ${demo.password}). Open it with: bask demo --site ${opts.site}   ·   ctrl+c stops it.`);
+      // Name the port when it was chosen: plain `bask demo --site` would start another station on the site's own port.
+      const open = `bask demo --site ${opts.site}${opts.port ? ` --port ${demo.port}` : ""}`;
+      if (!demo.station) throw new Error(`Port ${demo.port} is already in use. A demo station may be running; try ${open}.`);
+      console.log(`${chalk.green("✓")} ${demo.site.station} demo station at ${demo.url} (user ${demo.user}, password ${demo.password}). Open it with: ${open}   ·   ctrl+c stops it.`);
       await new Promise<void>((resolve) => process.once("SIGINT", resolve));
       return demo.station.close();
     }

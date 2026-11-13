@@ -60,6 +60,7 @@
   }
 
   Write-Host ""
-  Write-Host "Next: bask login https://<station> -u <user> --insecure"
-  Write-Host "Then: bask"
+  Write-Host "Try it:  bask demo   (a simulated building, no station needed)"
+  Write-Host "Next:    bask login https://<station> -u <user> --insecure"
+  Write-Host "Then:    bask"
 }

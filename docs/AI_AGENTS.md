@@ -18,6 +18,8 @@ It sits on top of Niagara rather than replacing it:
 
 Recommended setup: give each agent its own Niagara user (for example `ai-claude`) with a role covering only what it should touch, and list it in `agentUsers`.
 
+Levels 0, 1 and 3 work from API 1.8. Level 2 needs API 1.11, which the `baskStream-rt.jar` at the repository root reports.
+
 ## In a bask workspace
 
 `bask workspace --agent-user ai-claude` starts the station panes on your own login and the AI agent's pane on that Niagara user. bask asks for the agent user's password once, saves that login and uses it from then on; plain `bask workspace` is enough afterwards. As it starts it reports which user the agent is signed in as and whether the station lists that user in `agentUsers`. See [the CLI's workspace section](../cli/README.md#workspace).
@@ -73,7 +75,7 @@ For an agent that draws graphics and brings equipment in through bask, a typical
 A person (any user not listed in `agentUsers`, in a session that hasn't declared itself an agent) can decide a proposal in three places:
 
 - **Workbench:** read `pendingProposals` on the service, then right-click the service → **Actions → Approve Proposal** (or **Reject Proposal**) and enter the id, e.g. `P7`.
-- **bask:** `bask proposals`, `bask approve P7`, `bask reject P7`, or the dashboard's **6 Proposals** view.
+- **bask:** `bask proposals`, `bask approve P7`, `bask reject P7`, or the dashboard's **AI Activity** view (`0`; `a` approves, `x` rejects).
 - **The API:** `approve_proposal` / `reject_proposal`.
 
 Approving runs the write **with the approver's Niagara permissions**, so the approver needs invoke permission on the point, and Niagara's audit history shows the approver making the change. Proposals live in memory: they expire after `agentProposalMinutes` and do not survive a station restart.
@@ -119,5 +121,5 @@ Errors: `reason_required`, `approval_required`, `agent_rate_limited`, `agent_pri
 
 ## Not covered yet
 
-- Only point writes can be proposed. While approval is on, agents can still preview model plans and dry-run schedule edits and alarm actions, but applying them needs a person.
+- Only point writes can be proposed. While approval is on, agents can still preview model plans and dry-run schedule edits and alarm actions, but applying them is refused unless the matching `agentDirect…` setting is on; there is no proposal for a person to approve instead.
 - Agent details are what the client declares. Use a dedicated Niagara user per agent when the identity must be certain.

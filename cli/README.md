@@ -16,17 +16,19 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/rbhans/bask-stream/main/cli/install.ps1 | iex
 ```
 
-This downloads a single executable from the latest `bask-v*` [release](https://github.com/rbhans/bask-stream/releases), checks it against the release's `SHA256SUMS`, and puts it in `~/.local/bin` (Windows: `%LOCALAPPDATA%\Programs\bask`, added to your user PATH). No Node needed. Set `BASK_VERSION` for a specific version or `BASK_INSTALL_DIR` for another folder. To uninstall, delete that file and `~/.config/baskstream` (Windows: `%APPDATA%\baskstream`).
+This downloads a single executable from the latest `bask-v*` [release](https://github.com/rbhans/bask-stream/releases), checks it against the release's `SHA256SUMS`, and puts it in `~/.local/bin` (Windows: `%LOCALAPPDATA%\Programs\bask`, added to your user PATH). No Node needed. Set `BASK_VERSION` for a specific version (`curl -fsSL https://raw.githubusercontent.com/rbhans/bask-stream/main/cli/install.sh | BASK_VERSION=0.6.0 sh`) or `BASK_INSTALL_DIR` for another folder. Run the command again to update. To uninstall, delete that file and `~/.config/baskstream` (Windows: `%APPDATA%\baskstream`).
 
 ## Use
 
 ```bash
+bask demo                                              # try it on a built-in simulated building, no station needed
 bask login https://192.168.0.126 -u test --insecure   # asks for the password; saves only the session
 bask                                                   # the dashboard: every view in one window
 bask workspace                                         # a multi-pane workspace in Rex or tmux, with an AI agent
 bask fleet                                             # every saved station at once
-bask demo                                              # try it on a built-in simulated building, no station needed
 ```
+
+`bask login` needs a station running the baskStream module (setup is in the [root README](../README.md#station-setup)); the demo does not. `bask doctor` checks a connection step by step when something does not work.
 
 ## Dashboard
 
@@ -166,7 +168,7 @@ bask show --logic slot:/Logic/AHU_01                 # open a sheet in the Logic
 
 ## Workspace
 
-`bask workspace` lays out a station workspace in Rex (Superlogical's terminal multiplexer) or tmux: an Explorer, Alarms and AI Activity pane, and an AI agent session (Claude Code by default) that works on the station through `bask`.
+`bask workspace` lays out a station workspace in Rex (Superlogical's terminal multiplexer) or tmux: an Explorer, Alarms and AI Activity pane, and an AI agent session (Claude Code by default) that works on the station through `bask`. It needs Rex or tmux installed. The agent pane runs `claude` (Claude Code); when that is not on the PATH, the workspace starts without an agent pane and says so. `--agent <command>` starts another agent and `--no-agent` leaves the pane out.
 
 ```bash
 bask workspace                      # Explorer · Alarms · AI Activity · Claude Code
@@ -180,11 +182,11 @@ bask workspace --demo               # the same on a simulated building (--site t
 bask workspace --dry-run            # print what would be started
 ```
 
-It uses the multiplexer the terminal is already in, else Rex, else tmux (`--mux rex|tmux` to choose). Each pane is `bask tui --view <name> --pane`: one view, no tab row, though `1`–`0` and `g` still switch.
+It uses the multiplexer the terminal is already in, else Rex, else tmux (`--mux rex|tmux` to choose). Each pane is `bask tui --view <name> --pane`: one view, no tab row, though `1`–`0`, `g` and `L` still switch.
 
 **Panes work together.** They share the watch list, so `w` in the Explorer pane adds a row to the Watch pane. `t` (trend) and `e` (show in the Explorer) go to the pane that shows that view when there is one. `bask show <ord>`, `bask show --trend <ord>` and `bask show --watch <ord>` do the same from any shell, which is how the agent points at things for you; `bask graphic save` and `bask graphic show <name>` open a graphic in the Graphics pane.
 
-**MCP tools in terminal Claude Code.** The baskStream extension for the Claude desktop app is an MCP server, and it can read a saved `bask` profile. Registered once like this, terminal Claude Code gets the same `baskStream` tools, on the workspace's station inside a workspace pane and on the profile named `ai` anywhere else:
+**MCP tools in terminal Claude Code.** This is optional; the agent works through `bask` without it. The baskStream extension for the Claude desktop app (not part of this repository) is an MCP server, and it can read a saved `bask` profile. Registered once like this, terminal Claude Code gets the same `baskStream` tools, on the workspace's station inside a workspace pane and on the profile named `ai` anywhere else:
 
 ```bash
 claude mcp add --scope user baskStream -e 'BASKSTREAM_PROFILE=${BASKSTREAM_PROFILE:-ai}' -e 'BASKSTREAM_PASSWORD=${BASKSTREAM_PASSWORD:-}' -- node "<the extension's folder>/server/index.mjs"
@@ -244,7 +246,7 @@ A saved login lapses when nothing uses it for a while, and an agent cannot type 
 | `bask agent-log [--since 24h]` | What AI agents did, from the station's audit history |
 | `bask metrics` | OpenMetrics text |
 | `bask tui [--view <name>] [--pane] [--no-mouse] [--theme dark\|light]` | The dashboard (also what `bask` alone runs), opened on a view |
-| `bask workspace [--layout ops\|graphics\|logic\|build\|monitor\|duo] [--mux rex\|tmux] [--agent <cmd>\|--no-agent] [--agent-user <user>\|--agent-profile <name>] [--demo] [--dry-run]` | A multi-pane station workspace in Rex or tmux |
+| `bask workspace [--layout ops\|graphics\|logic\|build\|monitor\|duo] [--mux rex\|tmux] [--agent <cmd>\|--no-agent] [--agent-user <user>\|--agent-profile <name>] [--demo [--site <name>\|all]] [--dry-run]` | A multi-pane station workspace in Rex or tmux (`ws` for short) |
 | `bask show <ord> [--trend] [--watch] [--logic]` | Select an ORD in the open Explorer, chart it, add it to the watch list, or open its wire sheet |
 | `bask logic print <folder> [--trace block.slot]` | A folder's logic as a wire sheet in text, with live values and every link listed |
 | `bask logic guide` | How to build logic through bask: the plan file, the common blocks and their slots, an example |
@@ -256,23 +258,27 @@ A saved login lapses when nothing uses it for a while, and an agent cannot type 
 | `bask graphic save <file> [--name <name>]` | Check a graphic and store it on the station (`^bask/graphics/`); open windows show it |
 | `bask graphic list` · `get <name>` · `show <name>` · `rm <name>` | The saved graphics; one's JSON; open one in the Graphics view; delete one |
 | `bask fleet [profiles...] [--demo]` | Every saved station at once: alarms, AI activity and live values per station, and all alarms in one list |
-| `bask demo [--site <name>] [--fleet] [--list] [--view <name>] [--serve]` | The dashboard on a simulated building; `--serve` only runs the station |
+| `bask demo [--site <name>] [--fleet] [--list] [--view <name>] [--serve] [--port <n>]` | The dashboard on a simulated building; `--serve` only runs the station |
 
 `-o json` or `-o csv` on any listing command; `-p <profile>` picks a station. ORDs may drop the `slot:/` prefix.
 
-- Profiles live in `~/.config/baskstream/profiles.json` (mode 0600; `BASKSTREAM_CONFIG_DIR` overrides). The password is never saved: it is prompted, or read from `BASKSTREAM_PASSWORD` if you set it.
+- Profiles live in `~/.config/baskstream/profiles.json` (mode 0600; `$XDG_CONFIG_HOME/baskstream` when that is set, Windows `%APPDATA%\baskstream`; `BASKSTREAM_CONFIG_DIR` overrides all of these). The password is never saved: it is prompted, or read from `BASKSTREAM_PASSWORD` if you set it.
 - `--insecure` accepts a self-signed station certificate.
 - **AI agents:** an agent running bask declares itself with `--agent <name>` (plus `--model`, `--on-behalf-of`), or the `BASK_AGENT`, `BASK_MODEL` and `BASK_ON_BEHALF_OF` environment variables, and gives `--reason "…"` with changes. While the station requires approval, `bask write` reports "Proposed P7" instead of writing. See `docs/AI_AGENTS.md`.
 
 ## Build
 
+Needs Node 22 or newer. `npm install` here copies the SDK from `../sdk` (its built `dist` only), so build the SDK first:
+
 ```bash
+(cd ../sdk && npm install && npm run build)
 npm install
 npm test
-npm run compile
+node dist/main.js --help        # run it from source
+npm run compile                 # optional: the single executable, needs Bun
 ```
 
-To publish a release, bump `version` in `package.json`, commit, and push a matching tag (`git tag bask-v0.1.0 && git push origin bask-v0.1.0`). The [release workflow](../.github/workflows/release-bask.yml) tests, builds Windows/macOS/Linux executables, and attaches them with checksums.
+To publish a release, bump `version` in `package.json`, commit, and push a matching tag (`git tag bask-v0.6.0 && git push origin bask-v0.6.0`). The [release workflow](../.github/workflows/release-bask.yml) tests, builds Windows/macOS/Linux executables, and attaches them with checksums.
 
 `node test/peek.mjs --view explorer --size 120x36 --keys "down,right"` prints one frame of the dashboard on the demo station (add `--profile <name>` for a real one), which is the quick way to look at a change. Rendering and input notes are in [DEVELOPMENT-NOTES.md](DEVELOPMENT-NOTES.md).
 

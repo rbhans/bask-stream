@@ -90,14 +90,14 @@ Returns API version, supported operations, limits, schema versions, and live sub
 { "op": "capabilities", "id": "caps-1" }
 ```
 
-Response:
+Response (shortened: a real reply lists every operation the station supports, 60 in API 1.11, and also carries `module`, `transport`, `serverTime` and `authenticatedUser`, and the `agents`, `session`, `schemas`, `tags`, `workbench` and `policy` blocks):
 
 ```json
 {
   "op": "capabilities_result",
   "id": "caps-1",
   "capabilities": {
-    "apiVersion": "1.9",
+    "apiVersion": "1.11",
     "operations": ["ping", "capabilities", "browse", "describe", "search", "read", "subscribe", "unsubscribe", "replace_subscriptions", "renew_subscriptions", "release_subscriptions", "subscription_status", "write", "describe_write", "read_history", "describe_history", "read_alarms", "ack_alarm", "ack_alarms", "clear_alarm", "clear_alarms", "subscribe_alarms", "unsubscribe_alarms", "read_schedule", "subscribe_model", "unsubscribe_model", "read_tags", "write_tags", "write_relations", "describe_component_types", "describe_component", "preview_model_changes", "apply_model_changes", "model_plan_status", "cancel_model_plan", "create_components", "update_component_properties", "rename_component", "move_components", "delete_components", "create_hierarchy", "configure_hierarchy"],
     "writesEnabled": true,
     "modelEditing": { "enabled": false, "maxChanges": 100, "previewRequired": true, "atomic": false },

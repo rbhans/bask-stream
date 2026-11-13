@@ -118,6 +118,6 @@ jobs:
           irm https://raw.githubusercontent.com/${{ github.repository }}/main/cli/install.ps1 | iex
           \`\`\`
 
-          Then \`bask login https://<station> -u <user> --insecure\` and \`bask\`.
+          Try it with \`bask demo\`, a simulated building that needs no station. Then \`bask login https://<station> -u <user> --insecure\` and \`bask\`.
           EOF
           gh release create "$GITHUB_REF_NAME" out/* --title "bask $version" --notes-file notes.md
