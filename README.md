@@ -447,7 +447,7 @@ Niagara user permissions are the main access control. Every integration should h
 
 Non-browser clients such as Grafana, the Python tools, and server-to-server integrations may omit the `Origin` header. baskStream allows that by default. Browser clients that send an origin are checked against the station origin and `allowedOrigins`. If every client in a deployment sends an origin, `rejectMissingOrigin` can make that check strict.
 
-The remaining hardening settings are opt-in so existing clients keep working. `requireAuthorizationHeader` rejects cookie-only WebSocket upgrades, `revalidateIntervalSec` periodically checks long-lived sessions, and `maxConnectionsPerUser` limits one Niagara account's open sockets. Check client compatibility before enabling them. `maxMessageBytes` defaults to 1 MiB.
+`revalidateIntervalSec` (default 60) re-checks open sessions: it drops subscriptions the user can no longer read and closes the socket when the user is removed, disabled or expired. Set it to 0 to turn this off. The other hardening settings are opt-in so existing clients keep working. `requireAuthorizationHeader` rejects cookie-only WebSocket upgrades and `maxConnectionsPerUser` limits one Niagara account's open sockets. Check client compatibility before enabling them. `maxMessageBytes` defaults to 1 MiB.
 
 After a point write, baskStream waits for `writeSettleMillis` before reading the point back. The default is 150 ms. Lower it only when the target points settle faster and the shorter response time matters.
 

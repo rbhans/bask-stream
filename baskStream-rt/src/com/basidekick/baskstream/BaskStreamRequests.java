@@ -126,7 +126,16 @@ final class BaskStreamRequests
 
   void handleDeclareActor(String id, Map<String, Object> request) throws BaskStreamProtocolException
   {
-    session.actor = BaskStreamAgents.parseActor(request);
+    BaskStreamAgents.Actor declared = BaskStreamAgents.parseActor(request);
+    BaskStreamAgents.Actor current = session.actor;
+    if (current != null && current.agent && !declared.agent)
+    {
+      // Declaring is one-way: an agent session that could call itself a person again would drop
+      // the agent rules (approval, reasons, limits) and could approve its own proposals.
+      throw new BaskStreamProtocolException("agent_cannot_undeclare",
+          "This session declared itself an agent and stays one; open a new session to act as a person.");
+    }
+    session.actor = declared;
     Map<String, Object> response = session.baseMessage("actor_declared", id);
     response.put("agents", runtime.getAgents().describe(session));
     session.send(response);

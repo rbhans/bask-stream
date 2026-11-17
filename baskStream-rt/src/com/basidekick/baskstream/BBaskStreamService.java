@@ -125,7 +125,7 @@ import javax.baja.sys.Action;
 @NiagaraProperty(
   name = "revalidateIntervalSec",
   type = "int",
-  defaultValue = "0",
+  defaultValue = "60",
   flags = Flags.SUMMARY
 )
 @NiagaraProperty(
@@ -717,7 +717,7 @@ public final class BBaskStreamService extends BWebServlet
    * @see #getRevalidateIntervalSec
    * @see #setRevalidateIntervalSec
    */
-  public static final Property revalidateIntervalSec = newProperty(Flags.SUMMARY, 0, null);
+  public static final Property revalidateIntervalSec = newProperty(Flags.SUMMARY, 60, null);
 
   /**
    * Get the {@code revalidateIntervalSec} property.

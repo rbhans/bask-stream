@@ -105,11 +105,16 @@ final class BaskStreamAgents
       this.bounds = bounds;
     }
 
-    /** The first bound rule whose pattern matches the point, or null. */
-    Bound boundFor(String pointOrd)
+    /**
+     * The first bound rule whose pattern matches the point, or null. Pass every spelling of the
+     * point (the ORD as sent and the resolved component's slot path), so a rule cannot be missed
+     * by writing to the same point through a property ORD such as {@code .../ZoneSP/out}.
+     */
+    Bound boundFor(String... pointOrds)
     {
       for (Bound bound : bounds)
-        if (bound.pattern.matcher(pointOrd).matches()) return bound;
+        for (String ord : pointOrds)
+          if (ord != null && bound.pattern.matcher(ord).matches()) return bound;
       return null;
     }
   }
@@ -413,11 +418,30 @@ final class BaskStreamAgents
 
   // ---- Checks before a change -------------------------------------------------------------------
 
+  /** The changing operations whose handlers honour {@code dryRun} and change nothing with it. */
+  static final Set<String> DRY_RUN_OPS = new LinkedHashSet<String>(java.util.Arrays.asList(
+      "ack_alarm", "ack_alarms", "clear_alarm", "clear_alarms", "write_schedule", "write_file", "delete_file"));
+
   /** True for requests that change the station (not previews, reads or dry runs). */
   static boolean changesStation(String op, BaskStreamOperations.Gate gate, Map<String, Object> request)
   {
-    if (Boolean.TRUE.equals(request.get("dryRun"))) return false;
-    return gate == BaskStreamOperations.Gate.WRITES || "apply_model_changes".equals(op);
+    boolean changing = gate == BaskStreamOperations.Gate.WRITES || "apply_model_changes".equals(op);
+    if (changing && DRY_RUN_OPS.contains(op) && Boolean.TRUE.equals(request.get("dryRun"))) return false;
+    return changing;
+  }
+
+  /**
+   * Refuses {@code dryRun} on a changing operation that does not honour it, for everyone: its
+   * handler would make the real change, and for an agent the change would skip these checks.
+   */
+  static void checkDryRun(String op, BaskStreamOperations.Gate gate, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Object dryRun = request.get("dryRun");
+    if (dryRun == null || Boolean.FALSE.equals(dryRun)) return;
+    boolean changing = gate == BaskStreamOperations.Gate.WRITES || "apply_model_changes".equals(op);
+    if (changing && !DRY_RUN_OPS.contains(op))
+      throw new BaskStreamProtocolException("bad_request", "Operation '" + op + "' has no dry run; leave out 'dryRun'"
+          + ("apply_model_changes".equals(op) ? " and use preview_model_changes." : "."));
   }
 
   /**
@@ -429,6 +453,7 @@ final class BaskStreamAgents
   void beforeChange(BaskStreamClientSession session, String op, BaskStreamOperations.Gate gate, Map<String, Object> request)
       throws BaskStreamProtocolException
   {
+    checkDryRun(op, gate, request);
     if (!isAgent(session) || !changesStation(op, gate, request)) return;
     if ("approve_proposal".equals(op) || "reject_proposal".equals(op))
       throw new BaskStreamProtocolException("agent_cannot_approve", "Agents cannot approve or reject proposals; a person decides.");

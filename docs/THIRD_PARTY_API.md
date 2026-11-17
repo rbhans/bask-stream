@@ -15,7 +15,7 @@ This project is not affiliated with, endorsed by, or sponsored by Tridium or Hon
 - Optional header auth (CSWSH hardening): when the service property `requireAuthorizationHeader` is `true`, the handshake is rejected (HTTP 403) unless it carries an `Authorization` header. This defeats cookie-riding cross-site hijacks because a browser cannot set request headers on a WebSocket handshake. Default is `false`, so cookie-authenticated clients keep working unchanged. Clients that can set handshake headers (e.g. a desktop/Electron client) should send `Authorization` so the deployment can then enable this flag.
 - Origin policy: browser WebSocket requests must come from the station origin or an exact origin listed in the service `allowedOrigins` property. Service clients that do not send an `Origin` header are allowed after Niagara authentication, unless the service property `rejectMissingOrigin` is `true` (default `false`).
 - Path policy: `allowedPathPatterns` defaults to `slot:/*`. An empty value preserves that established wide-open behavior; Niagara user permissions still apply to every resolved target. Configure narrower `slot:/...` patterns when an integration should be confined to part of the station.
-- Optional session revalidation: `revalidateIntervalSec` defaults to `0` (disabled) so existing long-lived clients retain their established connection behavior. When an administrator sets a positive interval, the server periodically checks that the connected user is still present and that each active subscription is still readable, trimming or tearing down as needed. See "Server-Initiated Notices" below.
+- Session revalidation: `revalidateIntervalSec` defaults to `60` (`0` turns it off). Every interval the server checks that the connected user is still present, enabled and not expired, and that each active subscription is still readable, trimming or tearing down as needed. See "Server-Initiated Notices" below.
 
 Every request frame should include:
 
@@ -1039,7 +1039,8 @@ Tag and relation writes on subscribed model branches surface to other clients as
 
 Optional controls for AI agents: actor context, a `reason` on changes, rate and value limits, and point-write proposals a person approves. Setup and full details: [AI_AGENTS.md](AI_AGENTS.md).
 
-- `declare_actor` says who is behind the session (agent or person, name, model, on behalf of). Reply `actor_declared` with the rules that apply; `capabilities.agents` carries the same block.
+- `declare_actor` says who is behind the session (agent or person, name, model, on behalf of). Reply `actor_declared` with the rules that apply; `capabilities.agents` carries the same block. Declaring is one-way: once a session has declared itself an agent, declaring `kind: "person"` is refused with `agent_cannot_undeclare`.
+- `dryRun: true` is accepted only by the operations that honour it (`ack_alarm(s)`, `clear_alarm(s)`, `write_schedule`, `write_file`, `delete_file`). On any other changing operation it is refused with `bad_request`, so it can never make a real change that looks like a dry run.
 - `list_proposals` lists proposals the session may see.
 - `approve_proposal` runs a proposed write with the approver's permissions; `reject_proposal` declines it. People only.
 - `read_agent_log` returns the `Agent` records baskStream adds to the station's audit history.
@@ -1453,6 +1454,6 @@ Clients should tolerate `redacted` entries anywhere they read related-object sum
 `apiVersion` advanced from `1.3` to `1.4`. The protocol changes are additive and the existing path, authentication, origin, and write-settle defaults remain compatible:
 
 - New server→client notices `subscriptions_revoked` and `session_revoked` (additive; ignore if unhandled).
-- New service properties: `requireAuthorizationHeader` (default `false`), `rejectMissingOrigin` (default `false`), `revalidateIntervalSec` (default `0` = disabled), `maxConnectionsPerUser` (default `0` = unlimited), `maxMessageBytes` (default `1048576`).
+- New service properties: `requireAuthorizationHeader` (default `false`), `rejectMissingOrigin` (default `false`), `revalidateIntervalSec` (default `0` = disabled; `60` since 2026-11-16), `maxConnectionsPerUser` (default `0` = unlimited), `maxMessageBytes` (default `1048576`).
 - `allowedPathPatterns` remains `slot:/*` by default, and an empty value retains the legacy wide-open fallback. Narrow it explicitly when a deployment needs an additional scope boundary beyond Niagara user permissions.
 - Resource limits: inbound frames larger than `maxMessageBytes` cause the station to drop the connection (standard WebSocket message-too-big close). Keep batch requests within this size; it comfortably fits the documented per-request maximums at default. When `maxConnectionsPerUser > 0`, an upgrade beyond a single user's allowance is rejected (HTTP 503 pre-upgrade, or close `1013` if the limit is hit during the open handshake). The `capabilities` response advertises `maxConnectionsPerUser` and `maxMessageBytes` under `limits`.

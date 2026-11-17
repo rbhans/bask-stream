@@ -485,6 +485,17 @@ final class BaskStreamClientSession
         teardown("Authenticated user is no longer present in the station.");
         return;
       }
+      if (!user.getEnabled())
+      {
+        teardown("Authenticated user has been disabled.");
+        return;
+      }
+      javax.baja.sys.BAbsTime expiration = user.getExpiration();
+      if (expiration != null && !expiration.isNull() && expiration.getMillis() <= System.currentTimeMillis())
+      {
+        teardown("Authenticated user's account has expired.");
+        return;
+      }
 
       List<String> revoked = points.revalidate();
       List<String> revokedAlarms = alarms.revalidate();

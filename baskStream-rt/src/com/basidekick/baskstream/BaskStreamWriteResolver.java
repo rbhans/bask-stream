@@ -224,6 +224,11 @@ final class BaskStreamWriteResolver
     if (component instanceof BNumericWritable && value != null)
     {
       double number = requireDouble(value);
+      if (Double.isNaN(number) || Double.isInfinite(number))
+      {
+        // NaN compares false against every limit, so it would pass both checks below.
+        throw new BaskStreamProtocolException("agent_value_out_of_bounds", "Agents can only write finite numbers.");
+      }
       BFacets facets = ((BNumericWritable) component).getFacets();
       double min = facetNumber(facets, BFacets.MIN, Double.NEGATIVE_INFINITY);
       double max = facetNumber(facets, BFacets.MAX, Double.POSITIVE_INFINITY);
@@ -232,7 +237,8 @@ final class BaskStreamWriteResolver
         throw new BaskStreamProtocolException("agent_value_out_of_bounds",
             "Value " + number + " is outside the point's limits (" + min + " to " + max + ").");
       }
-      BaskStreamAgents.Bound bound = limits.boundFor(pointOrd);
+      BaskStreamAgents.Bound bound = limits.boundFor(pointOrd,
+          component.getSlotPath() == null ? null : component.getSlotPath().toString());
       if (bound != null && (number < bound.min || number > bound.max))
       {
         throw new BaskStreamProtocolException("agent_value_out_of_bounds",

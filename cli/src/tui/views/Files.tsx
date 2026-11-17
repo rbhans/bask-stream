@@ -74,9 +74,9 @@ export function FilesView(props: { client: BaskStreamClient; active: boolean; re
   const save = (entry: FileEntry) =>
     void ui.attempt("read", () => client.readFile(entry.path)).then((file) => {
       if (!file) return;
-      const local = path.resolve(entry.name);
+      const data = file.encoding === "text" ? Buffer.from(file.text ?? "", "utf8") : Buffer.from(file.base64 ?? "", "base64");
       try {
-        writeFileSync(local, file.encoding === "text" ? Buffer.from(file.text ?? "", "utf8") : Buffer.from(file.base64 ?? "", "base64"));
+        const local = saveCopy(entry.name, data);
         ui.toast(`Saved a copy to ${local}`, "good");
       } catch (e) {
         ui.toast(`Could not save: ${(e as Error).message}`, "bad");
@@ -86,7 +86,7 @@ export function FilesView(props: { client: BaskStreamClient; active: boolean; re
   /** Opens the text in $VISUAL / $EDITOR and offers to write it back when it changed. */
   const edit = (target: string, original: string, isNew: boolean) => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "bask-edit-"));
-    const temp = path.join(dir, target.split("/").pop() ?? "file.txt");
+    const temp = path.join(dir, localName(target.split("/").pop() ?? ""));
     let after = original;
     try {
       writeFileSync(temp, original);
@@ -218,4 +218,31 @@ export function FilesView(props: { client: BaskStreamClient; active: boolean; re
       </Panel>
     </Box>
   );
+}
+
+/**
+ * A file name from the station that is safe to create locally: the last part only, with no path
+ * separators, control characters or dot names, so a station cannot steer the write elsewhere.
+ */
+export function localName(name: string): string {
+  const base = name.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "";
+  const clean = base.replace(/[\u0000-\u001f\u007f:*?"<>|]/g, "_").trim();
+  return clean === "" || /^\.+$/.test(clean) ? "file.txt" : clean.slice(0, 200);
+}
+
+/** Writes a copy into the current folder without replacing anything there; returns its path. */
+function saveCopy(name: string, data: Buffer): string {
+  const safe = localName(name);
+  const ext = path.extname(safe);
+  const stem = ext ? safe.slice(0, -ext.length) : safe;
+  for (let n = 0; n < 100; n += 1) {
+    const local = path.resolve(n === 0 ? safe : `${stem}-${n}${ext}`);
+    try {
+      writeFileSync(local, data, { flag: "wx" });
+      return local;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+  }
+  throw new Error(`${safe} and 99 numbered copies already exist here.`);
 }
