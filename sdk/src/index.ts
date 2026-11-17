@@ -3,4 +3,5 @@ export { BaskStreamError, CLIENT_ERRORS } from "./errors.js";
 export { toSlotOrd } from "./ords.js";
 export { StationHttp, type StationHttpOptions } from "./http.js";
 export { API_VERSION, ERROR_CODES, OPERATIONS, type ErrorCode, type Gate, type OperationName } from "./operations.js";
-export type { Actor, AgentLog, AgentLogRecord, AlarmFilter, AlarmRecord, BrowseNode, DiscoveredItem, Discovery, FileContent, FileEntry, JobDetail, JobSummary, Json, PointSnapshot, Proposal, QueryResult, ScheduleEntry, Weekday } from "./types.js";
+export type { Actor, AgentLog, AgentLogRecord, AlarmFilter, AlarmRecord, BrowseNode, DiscoveredItem, Discovery, FileContent, FileEntry, JobDetail, JobSummary, Json, PointSnapshot, Proposal, QueryResult, ScheduleEntry, Weekday,
+  GraphicsInventory, NavCheck, PunchItem, PxBindingCheck, PxInfo, PxNode, PxProblem, PxReference, PxSuggestion, PxTargets, PxViewsResult } from "./types.js";

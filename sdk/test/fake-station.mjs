@@ -234,6 +234,23 @@ export async function startFakeStation() {
       }
       case "subscription_status":
         return send(ws, { op: "subscription_status_result", id, session: { pointSubscriptions: 2, subscriptionGroups: state.groups.size }, limits: {}, groups: [] });
+      // Graphics (API 1.12): each reply echoes what it was asked, which is what the client tests check.
+      case "read_px":
+        return send(ws, { op: "px_result", id, px: { path: request.path, imports: ["bajaui"], references: [], problems: [], errors: 0, warnings: 0, ...(request.tree ? { tree: { element: "px", attributes: {}, children: [] } } : {}) } });
+      case "validate_px":
+        return send(ws, { op: "px_validation", id, validation: { path: request.path, valid: !String(request.text ?? "").includes("Bogus"), errors: String(request.text ?? "").includes("Bogus") ? 1 : 0, problems: [], references: [] } });
+      case "write_px":
+        if (String(request.text ?? "").includes("Bogus")) return send(ws, { op: "error", id, code: "px_invalid", message: `${request.path} was not written: 1 error.` });
+        state.files.set(request.path, request.text);
+        return send(ws, { op: "px_written", id, file: { path: request.path, created: true, ...(request.overwrite ? { backup: "^bask/backups/x" + request.path.slice(1) } : {}) }, validation: { valid: true, problems: [] } });
+      case "check_px_bindings":
+        return send(ws, { op: "px_bindings_result", id, check: { path: request.path, echo: Object.fromEntries(["targets", "match", "views", "relativeTo", "suggest"].filter((key) => request[key] !== undefined).map((key) => [key, request[key]])) } });
+      case "attach_px_view":
+        return send(ws, { op: "px_views_result", id, views: { path: request.path, view: request.view ?? null, dryRun: request.dryRun, results: (request.targets ?? []).map((ord) => ({ ord, action: request.dryRun ? "added" : "added" })), summary: { added: (request.targets ?? []).length } } });
+      case "check_nav":
+        return send(ws, { op: "nav_result", id, nav: { path: request.path, text: request.text, nodes: [], dead: 0, problems: [], valid: true } });
+      case "graphics_inventory":
+        return send(ws, { op: "graphics_inventory_result", id, inventory: { under: request.under ?? "slot:/", checkBindings: request.checkBindings, summary: {}, punchList: [] } });
       case "slow":
         return; // never replies
       default:

@@ -25,6 +25,7 @@ final class BaskStreamWebSocketRuntime
   private final BaskStreamModelResolver modelResolver;
   private final BaskStreamQueryResolver queryResolver;
   private final BaskStreamFileResolver fileResolver;
+  private final BaskStreamGraphicsResolver graphicsResolver;
   private final BaskStreamJobResolver jobResolver;
   private final BaskStreamSubscriptionManager subscriptions;
   private final BaskStreamMetrics metrics = new BaskStreamMetrics();
@@ -50,6 +51,7 @@ final class BaskStreamWebSocketRuntime
     this.modelResolver = new BaskStreamModelResolver(service);
     this.queryResolver = new BaskStreamQueryResolver(service);
     this.fileResolver = new BaskStreamFileResolver(service);
+    this.graphicsResolver = new BaskStreamGraphicsResolver(service, fileResolver);
     this.jobResolver = new BaskStreamJobResolver(service);
     this.subscriptions = new BaskStreamSubscriptionManager(service);
     this.agents = new BaskStreamAgents(this);
@@ -126,6 +128,11 @@ final class BaskStreamWebSocketRuntime
   BaskStreamFileResolver getFileResolver()
   {
     return fileResolver;
+  }
+
+  BaskStreamGraphicsResolver getGraphicsResolver()
+  {
+    return graphicsResolver;
   }
 
   BaskStreamJobResolver getJobResolver()

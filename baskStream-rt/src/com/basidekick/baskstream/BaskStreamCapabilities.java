@@ -12,7 +12,7 @@ import javax.baja.sys.Context;
 final class BaskStreamCapabilities
 {
   /** The protocol version reported by capabilities and /stream/health. Keep in step with spec/baskstream-protocol.json. */
-  static final String API_VERSION = "1.11";
+  static final String API_VERSION = "1.12";
 
   private final BaskStreamClientSession session;
   private final BaskStreamWebSocketRuntime runtime;
@@ -147,6 +147,13 @@ final class BaskStreamCapabilities
     graphics.put("plainGraphic", Boolean.FALSE);
     graphics.put("note", "Plain Px/WebOp embedding is not implemented in this API version.");
     capabilities.put("graphics", graphics);
+
+    // Graphics work on Px files (API 1.12): read, check, write, attach as views, nav, inventory.
+    capabilities.put("px", BaskStreamModelPlans.map(
+        "read", Boolean.TRUE, "validate", Boolean.TRUE, "write", runtime.getService().writesAllowed(),
+        "checkBindings", Boolean.TRUE, "suggestions", Boolean.TRUE, "attachViews", runtime.getService().writesAllowed(),
+        "nav", Boolean.TRUE, "inventory", Boolean.TRUE, "maxTargets", Long.valueOf(BaskStreamGraphicsResolver.MAX_TARGETS),
+        "backups", BaskStreamFileResolver.BACKUP_ROOT));
 
     Map<String, Object> policy = new LinkedHashMap<String, Object>();
     policy.put("allowedPathPatterns", runtime.getService().getAllowedPathPatterns());

@@ -10,6 +10,7 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import javax.baja.file.BFileSystem;
 import javax.baja.file.BIFile;
@@ -170,14 +171,41 @@ final class BaskStreamFileResolver
         throw new BaskStreamProtocolException("forbidden_file", body + " is read-only.");
       }
     }
+    Object backupValue = request.get("backup");
+    if (backupValue != null && !(backupValue instanceof Boolean))
+    {
+      throw new BaskStreamProtocolException("bad_request", "Field 'backup' must be a boolean.");
+    }
+    String backup = existing != null && (backupValue == null ? backsUpByDefault(body) : ((Boolean) backupValue).booleanValue())
+        && !body.startsWith(BACKUP_ROOT + "/") ? backupPath(body) : null;
     Map<String, Object> result = new LinkedHashMap<String, Object>();
     result.put("path", body);
     result.put("size", Long.valueOf(bytes.length));
     result.put("created", Boolean.valueOf(existing == null));
+    if (backup != null) result.put("backup", backup);
     if (dryRun)
     {
       result.put("dryRun", Boolean.TRUE);
       return result;
+    }
+    if (backup != null)
+    {
+      // The old content is kept before anything is replaced; when it cannot be kept, nothing is replaced.
+      FilePath backupFile = path(backup);
+      try
+      {
+        byte[] old = existing.read();
+        service.requireWritesEnabled();
+        requireWrite(backupFile, context);
+        makeParents(backupFile, true, context);
+        BFileSystem.INSTANCE.makeFile(backupFile, context).write(old);
+      }
+      catch (IOException | RuntimeException e)
+      {
+        throw new BaskStreamProtocolException("file_failed", "Could not back up " + body + " to " + backup
+            + " before replacing it, so it was not replaced: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage())
+            + ". Send backup: false to replace it without a copy.");
+      }
     }
     try
     {
@@ -193,8 +221,132 @@ final class BaskStreamFileResolver
     {
       throw failed("write", body, e);
     }
-    audit("file_write", body, bytes.length + " bytes", context);
+    audit("file_write", body, bytes.length + " bytes" + (backup == null ? "" : ", old content kept at " + backup), context);
     return result;
+  }
+
+  /** Where replaced files are kept: one folder per write, named by the station's local time. */
+  static final String BACKUP_ROOT = "^bask/backups";
+
+  /** Graphics files (Px, nav, images) are copied before they are replaced unless the request says not to. */
+  static boolean backsUpByDefault(String body)
+  {
+    String lower = body.toLowerCase(java.util.Locale.ROOT);
+    for (String ext : new String[] { ".px", ".nav", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".bmp" })
+    {
+      if (lower.endsWith(ext)) return true;
+    }
+    return false;
+  }
+
+  private static String backupPath(String body) throws BaskStreamProtocolException
+  {
+    String stamp = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS")
+        .format(java.time.LocalDateTime.now());
+    String candidate = BACKUP_ROOT + "/" + stamp + "/" + body.substring(1);
+    for (int n = 2; find(path(candidate)) != null && n < 100; n++)
+    {
+      candidate = BACKUP_ROOT + "/" + stamp + "-" + n + "/" + body.substring(1);
+    }
+    return candidate;
+  }
+
+  // ---- For the graphics operations ---------------------------------------------------------------
+
+  /** A file's bytes, checked as read_file checks them. */
+  byte[] readBytes(Object rawPath, Context context) throws BaskStreamProtocolException
+  {
+    String body = body(rawPath);
+    FilePath path = path(body);
+    requireRead(path, context);
+    BIFile file = find(path);
+    if (file == null) throw new BaskStreamProtocolException("file_not_found", "No such file: " + body);
+    if (file.isDirectory()) throw new BaskStreamProtocolException("bad_request", body + " is a folder.");
+    if (file.getSize() > MAX_READ_BYTES)
+    {
+      throw new BaskStreamProtocolException("file_too_large", body + " is " + file.getSize() + " bytes; the limit is " + MAX_READ_BYTES + ".");
+    }
+    try
+    {
+      return file.read();
+    }
+    catch (IOException | RuntimeException e)
+    {
+      throw failed("read", body, e);
+    }
+  }
+
+  /**
+   * Whether a file ORD such as {@code file:^px/Home.px} names a file the user can read: "ok",
+   * "missing", "forbidden", or "not_checked" for anything outside the station file space.
+   */
+  String status(String fileOrd, Context context)
+  {
+    String body;
+    FilePath path;
+    try
+    {
+      body = body(fileOrd);
+      path = path(body);
+    }
+    catch (BaskStreamProtocolException e)
+    {
+      return "not_checked";
+    }
+    try
+    {
+      BFileSystem.INSTANCE.checkReadPermission(path, context);
+    }
+    catch (RuntimeException e)
+    {
+      return "forbidden";
+    }
+    BIFile file = find(path);
+    return file == null || file.isDirectory() ? "missing" : "ok";
+  }
+
+  /** Station files under a folder whose names end with one of the extensions, depth first, readable only. */
+  List<Map<String, Object>> scan(String rootBody, Set<String> extensions, int max, Set<String> skip, Context context, boolean[] truncated)
+      throws BaskStreamProtocolException
+  {
+    List<Map<String, Object>> found = new ArrayList<Map<String, Object>>();
+    String start = body(rootBody);
+    BIFile root = find(path(start));
+    if (root == null || !root.isDirectory()) return found;
+    scan(root, start, extensions, max, skip, context, found, truncated, 0);
+    return found;
+  }
+
+  private void scan(BIFile folder, String body, Set<String> extensions, int max, Set<String> skip, Context context,
+      List<Map<String, Object>> found, boolean[] truncated, int depth) throws BaskStreamProtocolException
+  {
+    if (depth > 16) return;
+    for (BIFile child : children(folder))
+    {
+      if (found.size() >= max)
+      {
+        truncated[0] = true;
+        return;
+      }
+      String childBody = child(body, child.getFileName());
+      if (skip.contains(childBody)) continue;
+      try
+      {
+        BFileSystem.INSTANCE.checkReadPermission(path(childBody), context);
+      }
+      catch (BaskStreamProtocolException | RuntimeException e)
+      {
+        continue;
+      }
+      if (child.isDirectory())
+      {
+        scan(child, childBody, extensions, max, skip, context, found, truncated, depth + 1);
+        continue;
+      }
+      String lower = child.getFileName().toLowerCase(java.util.Locale.ROOT);
+      int dot = lower.lastIndexOf('.');
+      if (dot >= 0 && extensions.contains(lower.substring(dot + 1))) found.add(entry(child, childBody));
+    }
   }
 
   Map<String, Object> delete(Map<String, Object> request, Context context) throws BaskStreamProtocolException

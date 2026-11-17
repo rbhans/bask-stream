@@ -140,6 +140,8 @@ bask graphic list                   # also: get <name>, show <name>, rm <name>
 
 **Where they live.** Graphics are saved on the station, in its file space under `^bask/graphics/`, one JSON file each. So they stay with the station (its backups and copies carry them), every bask on that station shows the same ones in the Graphics view, and each save is in the station's audit history. Nothing is kept on your computer.
 
+**Niagara Px pages** are a separate thing: `bask px` works on the station's own Px files (baskStream API 1.12). `bask px check ^px/VAV.px --under slot:/Drivers --name 'VAV*' --suggest` shows which VAVs a template's bindings do not resolve on and which points might be the missing ones; `bask px attach` puts a Px on those VAVs as their default view; `bask px qa` is a punch list of broken bindings, missing views, dead nav nodes and unused files. See [docs/GRAPHICS.md](../docs/GRAPHICS.md).
+
 **For an AI agent** this is the whole job: read `bask graphic guide`, write the file, `print` it to see the result as text and fix what it reports (a misspelt symbol comes back with the one that was meant; a point that does not exist is named), then `save`, which opens it in your Graphics pane. The workspace briefing tells the agent this. The demo buildings each start with two graphics drawn this way.
 
 ## Logic
@@ -239,6 +241,12 @@ A saved login lapses when nothing uses it for a while, and an agent cannot type 
 | `bask query "<bql>"` · `bask query --neql "<tags>" [--base ord] [--limit n]` | A BQL select or a NEQL tag query |
 | `bask files [path]` · `bask cat <path> [--out file]` | List and read the station's files (`^px/Home.px`) |
 | `bask put <file> <path> [--overwrite]` · `bask rm <path> [--recursive]` | Upload or delete station files; needs `--allow-writes`; confirms |
+| `bask px read <path> [--refs]` · `bask px validate <path> [--local]` | What a Px imports, binds to and links to; check it against this station's modules and types (exit code 1 on errors) |
+| `bask px put <file> <path> [--overwrite] [--no-backup]` | Validate a local Px and write it; a replaced file is kept under `^bask/backups`. Needs `--allow-writes` |
+| `bask px check <path> [ords...] [--under ord --name 'VAV*' --type t] [--views] [--relative-to ord] [--suggest] [--matrix]` | Resolve a Px's bindings on many components: which deviate from the template, and the likeliest points for missing ones |
+| `bask px attach <path> [ords...] [--under ... --name ...] [--view name] [--no-default] [--remove]` | Add a Px as the default view on components, or take it off; previews, then confirms. Needs `--allow-writes` |
+| `bask px inventory [--under ord] [--check-bindings] [--all]` · `bask px qa` | Every Px, nav file and view and what links them, with a punch list; `qa` checks every view's bindings too (exit code 1 on errors) |
+| `bask nav check <path> [--local]` | Check that every node of a nav file resolves, and who uses it |
 | `bask jobs` · `bask job <ord> [--cancel]` | Station jobs; one job's state, log and results |
 | `bask discover <network\|device...> [--add] [--points] [--no-wait]` | BACnet discovery: the devices on a network, or the points of devices. `--add` adds everything found that is not there yet; `--points` on a network does every device under it. Needs `--allow-writes` |
 | `bask add <job> <slots...\|all> [--parent ord] [--apply]` | Plan for adding chosen discovery results; `--apply` adds them, a hundred at a time (needs `--allow-writes`) |

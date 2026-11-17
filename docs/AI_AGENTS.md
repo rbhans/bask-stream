@@ -54,9 +54,9 @@ While `agentApprovalRequired` is on, every change an agent can ask for is one of
 | Kind of work | Operations | Allowed directly when |
 | --- | --- | --- |
 | Commanding a point | `write` | never: it becomes a proposal |
-| Station files, such as graphics | `write_file`, `delete_file` | the path is under one listed in `agentDirectFiles` |
+| Station files, such as graphics | `write_file`, `delete_file`, `write_px` | the path is under one listed in `agentDirectFiles` |
 | Discovery | `discover`, `cancel_job`, applying a plan that `add_discovered` built | `agentDirectDiscovery` |
-| Building and changing the station (programming) | `apply_model_changes` for any plan | `agentDirectModelEdits` |
+| Building and changing the station (programming) | `apply_model_changes` for any plan, and `attach_px_view` | `agentDirectModelEdits` |
 | Tags and relations | `write_tags`, `write_relations` | `agentDirectTags` |
 | Schedules | `write_schedule` | `agentDirectSchedules` |
 | Alarms | `ack_alarm(s)`, `clear_alarm(s)` | `agentDirectAlarms` |

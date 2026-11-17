@@ -109,6 +109,15 @@ final class BaskStreamOperations
     add("discover", Gate.WRITES);
     // Like the other convenience names, this only stores a plan for apply_model_changes.
     add("add_discovered", Gate.MODEL_EDITS);
+    // Graphics (API 1.12): Px files, their bindings and views, nav files, and an inventory.
+    add("read_px", Gate.NONE);
+    add("validate_px", Gate.NONE);
+    add("write_px", Gate.WRITES);
+    add("check_px_bindings", Gate.NONE);
+    // Adds or removes a Px view slot on components; it needs admin write on each, as in Workbench.
+    add("attach_px_view", Gate.WRITES);
+    add("check_nav", Gate.NONE);
+    add("graphics_inventory", Gate.NONE);
   }
 
   private static void add(String name, Gate gate)

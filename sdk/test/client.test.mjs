@@ -264,3 +264,38 @@ test("queries, station files, jobs and discovery (API 1.10)", async () => {
     client.close();
   }
 });
+
+test("graphics: Px, bindings, views, nav and inventory (API 1.12)", async () => {
+  const client = await connect();
+  try {
+    assert.equal((await client.readPx("^px/VAV.px", { tree: true })).tree.element, "px");
+    assert.equal(station.state.requests.at(-1).tree, true);
+    assert.equal((await client.validatePx("^px/VAV.px")).valid, true);
+    assert.equal((await client.validatePx({ text: "<px><Bogus/></px>" })).valid, false);
+    assert.equal(station.state.requests.at(-1).path, undefined);
+
+    await assert.rejects(client.writePx("^px/Bad.px", { text: "<px><Bogus/></px>" }), (error) => error.code === "px_invalid");
+    const written = await client.writePx("^px/VAV.px", { text: "<px/>" }, { overwrite: true, reason: "template" });
+    assert.equal(written.file.backup, "^bask/backups/xpx/VAV.px");
+    assert.equal(written.validation.valid, true);
+    assert.equal(station.state.requests.at(-1).reason, "template");
+
+    // Targets go out in slot form, whichever way they were written.
+    const check = await client.checkPxBindings("^px/VAV.px", { targets: ["station:|slot:/Drivers/Net/VAV_01"], match: { under: "local:|station:|slot:/Drivers", name: "VAV*" } }, { relativeTo: "station:|slot:/Drivers/Net/VAV_01", suggest: true });
+    assert.deepEqual(check.echo, { targets: ["slot:/Drivers/Net/VAV_01"], match: { under: "slot:/Drivers", name: "VAV*" }, relativeTo: "slot:/Drivers/Net/VAV_01", suggest: true });
+    assert.equal((await client.checkPxBindings("^px/VAV.px", { views: true })).echo.views, true);
+
+    const preview = await client.attachPxView("^px/VAV.px", { targets: ["slot:/Drivers/Net/VAV_01"] }, { view: "Graphic", dryRun: true });
+    assert.equal(preview.dryRun, true);
+    assert.equal(preview.results[0].ord, "slot:/Drivers/Net/VAV_01");
+    assert.equal(station.state.requests.at(-1).view, "Graphic");
+
+    assert.equal((await client.checkNav("^nav/Main.nav")).path, "^nav/Main.nav");
+    assert.equal((await client.checkNav({ text: "<nav/>" })).text, "<nav/>");
+    const inventory = await client.graphicsInventory({ under: "station:|slot:/Drivers", checkBindings: true });
+    assert.equal(inventory.under, "slot:/Drivers");
+    assert.equal(inventory.checkBindings, true);
+  } finally {
+    client.close();
+  }
+});

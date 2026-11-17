@@ -54,6 +54,9 @@ final class BaskStreamAgents
   {
     DIRECT_SETTINGS.put("write_file", "agentDirectFiles");
     DIRECT_SETTINGS.put("delete_file", "agentDirectFiles");
+    DIRECT_SETTINGS.put("write_px", "agentDirectFiles");
+    // A Px view is a slot on the component, so attaching one is a model edit.
+    DIRECT_SETTINGS.put("attach_px_view", "agentDirectModelEdits");
     DIRECT_SETTINGS.put("discover", "agentDirectDiscovery");
     DIRECT_SETTINGS.put("cancel_job", "agentDirectDiscovery");
     DIRECT_SETTINGS.put("apply_model_changes", "agentDirectModelEdits");
@@ -420,7 +423,8 @@ final class BaskStreamAgents
 
   /** The changing operations whose handlers honour {@code dryRun} and change nothing with it. */
   static final Set<String> DRY_RUN_OPS = new LinkedHashSet<String>(java.util.Arrays.asList(
-      "ack_alarm", "ack_alarms", "clear_alarm", "clear_alarms", "write_schedule", "write_file", "delete_file"));
+      "ack_alarm", "ack_alarms", "clear_alarm", "clear_alarms", "write_schedule", "write_file", "delete_file",
+      "write_px", "attach_px_view"));
 
   /** True for requests that change the station (not previews, reads or dry runs). */
   static boolean changesStation(String op, BaskStreamOperations.Gate gate, Map<String, Object> request)

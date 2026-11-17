@@ -197,3 +197,130 @@ export interface DiscoveredItem {
 }
 
 export type Weekday = "sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday";
+
+// ---- Graphics (API 1.12) ----------------------------------------------------------------------
+
+/** Something a Px refers to. `binding` and `ordProperty` are data; the others are files and pages. */
+export interface PxReference {
+  kind: "binding" | "ordProperty" | "link" | "file" | "include" | "view";
+  ord: string;
+  /** The widget, as a path of element names: Type[name] or Type#n. */
+  widget: string;
+  property?: string;
+  element: string;
+  line: number;
+}
+
+export interface PxProblem {
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+  line?: number;
+}
+
+/** A Px element and everything under it, as read_px returns it and write_px accepts it. */
+export interface PxNode {
+  element: string;
+  typeSpec?: string;
+  attributes: Record<string, string>;
+  line?: number;
+  text?: string;
+  children: PxNode[];
+}
+
+export interface PxInfo {
+  path?: string;
+  version: string | null;
+  media: string | null;
+  imports: string[];
+  elements: number;
+  types: Record<string, number>;
+  references: PxReference[];
+  errors: number;
+  warnings: number;
+  problems: PxProblem[];
+  truncated: boolean;
+  /** validate_px and write_px: no errors. */
+  valid?: boolean;
+  /** read_px with tree: true. */
+  tree?: PxNode;
+}
+
+/** Which components: slot ORDs, a pattern, or every component with a view of the Px. */
+export interface PxTargets {
+  targets?: string[];
+  match?: { under?: string; name?: string; type?: string; depth?: number };
+  views?: boolean;
+}
+
+export interface PxSuggestion {
+  ord: string;
+  /** The ORD to put in the Px, relative to the target. */
+  relative: string;
+  name: string;
+  typeSpec: string;
+  units?: string;
+  score: number;
+  why: string[];
+}
+
+export interface PxBindingCheck {
+  path: string;
+  relativeTo?: string;
+  summary: { targets: number; bindings: number; relativeBindings: number; absoluteBindings: number; brokenAbsolute: number; okTargets: number; deviatingTargets: number };
+  bindings: {
+    index: number; ord: string; checked?: string; kind: string; relative: boolean; widgets: string[]; widgetCount: number;
+    resolvedOn?: number; missingOn?: number; forbiddenOn?: number; types?: Record<string, number>;
+    status?: string; reason?: string; typeSpec?: string;
+  }[];
+  targets: {
+    ord: string; name: string; resolved: number; ok: boolean; cells?: string[];
+    missing: { binding: number; ord: string; status: string; reason?: string; suggestions?: PxSuggestion[] }[];
+    mismatched: { binding: number; ord: string; typeSpec: string; expected: string }[];
+  }[];
+  deviating: string[];
+  targetErrors: { ord: string; code: string; message: string }[];
+  truncated: boolean;
+  pxErrors: number;
+  note?: string;
+}
+
+export interface PxViewsResult {
+  path: string;
+  view: string | null;
+  remove: boolean;
+  default: boolean;
+  dryRun?: boolean;
+  summary: Record<string, number>;
+  results: { ord: string; action: "added" | "updated" | "unchanged" | "removed" | "conflict" | "failed"; view?: string; views?: string[]; default?: boolean; defaultSet?: boolean; code?: string; message?: string }[];
+  truncated: boolean;
+}
+
+export interface NavCheck {
+  path?: string;
+  nodes: { path: string; name: string; ord: string | null; icon?: string; depth: number; line: number; status: string; reason?: string }[];
+  dead: number;
+  problems: PxProblem[];
+  valid: boolean;
+  users?: string[];
+}
+
+export interface PunchItem {
+  severity: "error" | "warning" | "info";
+  kind: string;
+  where: string;
+  target?: string;
+  message: string;
+}
+
+export interface GraphicsInventory {
+  under: string;
+  summary: Record<string, number>;
+  punchList: PunchItem[];
+  pxFiles: { path: string; size?: number; modified?: number | null; attachedTo: { ord: string; view: string; default: boolean }[]; includes: string[]; includedBy: string[]; linkedFrom: string[]; bindings?: number; relativeBindings?: number; errors?: number; imports?: string[] }[];
+  navFiles: { path: string; nodes: number; dead: number; users: string[] }[];
+  views: { ord: string; view: string; pxFile: string | null; default: boolean; file: string }[];
+  users: { user: string; navFile: string | null }[];
+  unusedFiles: string[];
+  truncated: boolean;
+}

@@ -232,6 +232,13 @@ final class BaskStreamClientSession
     bound.put("cancel_job", (id, op, request) -> requests.handleCancelJob(id, request));
     bound.put("discover", (id, op, request) -> requests.handleDiscover(id, request));
     bound.put("add_discovered", (id, op, request) -> requests.handleAddDiscovered(id, request));
+    bound.put("read_px", (id, op, request) -> requests.handleGraphics(id, op, request));
+    bound.put("validate_px", (id, op, request) -> requests.handleGraphics(id, op, request));
+    bound.put("write_px", (id, op, request) -> requests.handleGraphics(id, op, request));
+    bound.put("check_px_bindings", (id, op, request) -> requests.handleGraphics(id, op, request));
+    bound.put("attach_px_view", (id, op, request) -> requests.handleGraphics(id, op, request));
+    bound.put("check_nav", (id, op, request) -> requests.handleGraphics(id, op, request));
+    bound.put("graphics_inventory", (id, op, request) -> requests.handleGraphics(id, op, request));
     for (String model : new String[] {
         "describe_component_types", "describe_component", "preview_model_changes", "apply_model_changes",
         "model_plan_status", "cancel_model_plan", "create_components", "update_component_properties",

@@ -21,6 +21,7 @@ The repository's own code and documentation are open source under the [Apache Li
 - The current source advertises API version `1.11`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
 - The signed `baskStream-rt.jar` at the repository root is built from this source and reports API `1.11` (see [Station setup](#station-setup)).
 - API 1.11 adds the `agentDirect…` settings: while an agent's point writes wait for approval, a station can let it do chosen kinds of work by itself (station files, discovery, model edits, tags, schedules, alarms). `describe_component` also returns a component's `links`, which bask's Logic view draws. See the [compatibility notes](docs/THIRD_PARTY_API.md#api-111-changes).
+- API 1.12 adds [graphics](docs/GRAPHICS.md) operations: read a Px as data and validate it against the station's modules, write it with a backup, resolve one Px's bindings on many components with suggestions for the missing ones, attach it as a view in bulk, check nav files, and take an inventory of the station's graphics with a punch list.
 - API 1.10 adds the [headless Workbench](docs/HEADLESS_WORKBENCH.md) operations: BQL and NEQL queries, the station's files (Px, nav and so on), jobs, and BACnet discovery that adds devices and points with their facets learned. With model editing (create, wire, set any property, invoke any action), a client can engineer a station without Workbench. An opt-in `securityEditsEnabled` lets model plans edit users, roles and categories.
 - API 1.9 fixes relation endpoints, alarm messages, facet-formatted display text, hierarchy browsing and model move/rename/delete, and slims large replies (tag writes, model plans). Point snapshots now separate `ok` (the read worked) from `state`; see the [compatibility notes](docs/THIRD_PARTY_API.md#api-19-changes).
 - API 1.8 added optional [AI agent controls](docs/AI_AGENTS.md): actor context, a reason on every change, rate and value limits, point-write proposals a person approves, and `Agent` records in the station's audit history. Nothing changes until an agent user is listed or a session declares itself an agent.
@@ -191,6 +192,7 @@ LICENSE                          Apache License 2.0 for this repository's code
 docs/THIRD_PARTY_API.md          Detailed WebSocket protocol guide
 docs/AI_AGENTS.md                AI agent rules: agent users, proposals, agentDirect settings
 docs/HEADLESS_WORKBENCH.md       Queries, station files, jobs and discovery
+docs/GRAPHICS.md                 Px files, bindings, views, nav files and the graphics inventory
 docs/MODEL_EDITING_API.md        Station model editing (preview and apply)
 docs/INTEGRATIONS.md             Integration adapter direction and compatibility rules
 docs/LEGAL_AND_SAFETY.md         EULA, AI-tool, and distribution checklist
@@ -355,6 +357,7 @@ Recommended external app flow:
 | Model changes | `subscribe_model`, `unsubscribe_model` | Receive branch-scoped structure-change hints, then refresh affected nodes. |
 | Model editing | `describe_component_types`, `describe_component`, `preview_model_changes`, `apply_model_changes`, and convenience previews | Preview, then apply, station model changes. See [docs/MODEL_EDITING_API.md](docs/MODEL_EDITING_API.md). |
 | Headless Workbench | `query`, `list_files`, `read_file`, `write_file`, `delete_file`, `list_jobs`, `read_job`, `cancel_job`, `discover`, `add_discovered` | BQL and NEQL queries, station files, jobs, and BACnet discovery. See [docs/HEADLESS_WORKBENCH.md](docs/HEADLESS_WORKBENCH.md). |
+| Graphics | `read_px`, `validate_px`, `write_px`, `check_px_bindings`, `attach_px_view`, `check_nav`, `graphics_inventory` | Read, check and write Px files, check a Px's bindings on many components, attach views, check nav files, and a punch list of the station's graphics. See [docs/GRAPHICS.md](docs/GRAPHICS.md). |
 | AI agents | `declare_actor`, `list_proposals`, `approve_proposal`, `reject_proposal`, `read_agent_log` | Declare an agent session, decide its point-write proposals, read the `Agent` audit records. See [docs/AI_AGENTS.md](docs/AI_AGENTS.md). |
 | Diagnostics | `subscription_status`, `GET /stream/metrics` | Inspect subscriptions, groups and leases; scrape request, error, resync and connection counters. |
 

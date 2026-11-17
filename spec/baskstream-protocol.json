@@ -1,6 +1,6 @@
 {
   "protocol": "baskStream",
-  "apiVersion": "1.11",
+  "apiVersion": "1.12",
   "encoding": "msgpack",
   "transport": {
     "path": "/stream",
@@ -3320,7 +3320,7 @@
       }
     },
     "write_file": {
-      "summary": "Create or replace a file in the station file space. Replacing needs overwrite: true. Recorded in the audit history.",
+      "summary": "Create or replace a file in the station file space. Replacing needs overwrite: true. A replaced Px, nav or image file is first copied under ^bask/backups. Recorded in the audit history.",
       "gate": "writes",
       "agentDirect": "agentDirectFiles",
       "reply": "file_written",
@@ -3348,6 +3348,10 @@
             "type": "boolean",
             "description": "Create missing parent folders.",
             "default": true
+          },
+          "backup": {
+            "type": "boolean",
+            "description": "Copy the old file under ^bask/backups before replacing it. Default true for .px, .nav and image files, false otherwise."
           },
           "dryRun": {
             "type": "boolean",
@@ -3597,6 +3601,298 @@
           "result"
         ]
       }
+    },
+    "read_px": {
+      "summary": "Read a Px file as data: its imports, widget types, every reference (bindings, ORD properties, hyperlinks, images, includes, widget views) with the widget and line it is on, and its problems. tree: true adds the whole element tree, which write_px accepts back.",
+      "gate": "none",
+      "reply": "px_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Px file in the station file space, e.g. ^px/VAV.px. A leading file: is accepted."
+          },
+          "tree": {
+            "type": "boolean",
+            "description": "Include the element tree.",
+            "default": false
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "response": {
+        "keys": [
+          "px"
+        ]
+      }
+    },
+    "validate_px": {
+      "summary": "Check a Px without writing it: well-formed XML, every element a type in an imported module, imported and widget-view modules installed on this station, files and includes present, absolute ORDs resolving. Relative bindings are left to check_px_bindings.",
+      "gate": "none",
+      "reply": "px_validation",
+      "request": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "A Px on the station, when neither text nor tree is sent."
+          },
+          "text": {
+            "type": "string",
+            "description": "Px XML."
+          },
+          "tree": {
+            "type": "object",
+            "description": "A tree as read_px returns it."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "validation"
+        ]
+      }
+    },
+    "write_px": {
+      "summary": "Validate a Px and write it to the station file space; refused with px_invalid when it has errors. A replaced file is first copied under ^bask/backups. Recorded in the audit history.",
+      "gate": "writes",
+      "agentDirect": "agentDirectFiles",
+      "reply": "px_written",
+      "request": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Destination .px file, e.g. ^px/VAV.px."
+          },
+          "text": {
+            "type": "string",
+            "description": "Px XML. Exactly one of text or tree."
+          },
+          "tree": {
+            "type": "object",
+            "description": "A tree as read_px returns it."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Replace an existing file; otherwise file_exists.",
+            "default": false
+          },
+          "backup": {
+            "type": "boolean",
+            "description": "Copy the old file under ^bask/backups before replacing it.",
+            "default": true
+          },
+          "createDirs": {
+            "type": "boolean",
+            "description": "Create missing parent folders.",
+            "default": true
+          },
+          "dryRun": {
+            "type": "boolean",
+            "description": "Check and report without changing anything.",
+            "default": false
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why; required for agent sessions when agentRequireReason is on."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "response": {
+        "keys": [
+          "file",
+          "validation"
+        ]
+      }
+    },
+    "check_px_bindings": {
+      "summary": "Resolve a Px's bindings and ORD properties on many components at once: which relative bindings resolve on which targets, which targets deviate, types that differ from the rest, and absolute bindings that are broken. suggest: true adds, for each missing binding, the points under that target most like the one wanted.",
+      "gate": "none",
+      "reply": "px_bindings_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Px file in the station file space, e.g. ^px/VAV.px. A leading file: is accepted."
+          },
+          "targets": {
+            "type": "array",
+            "description": "Slot ORDs of the components to check or change; at most 500.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "match": {
+            "type": "object",
+            "description": "Instead of targets: every component under match.under (default slot:/) whose name matches match.name (* wildcard, any case) and whose type is match.type (or a subtype), down to match.depth (default 12)."
+          },
+          "views": {
+            "type": "boolean",
+            "description": "Instead of targets: every component that has a view of this Px.",
+            "default": false
+          },
+          "relativeTo": {
+            "type": "string",
+            "description": "Slot ORD of the component an absolute-bound Px was drawn for; ORDs under it are checked as relative to each target."
+          },
+          "suggest": {
+            "type": "boolean",
+            "description": "Suggest points for missing bindings.",
+            "default": false
+          },
+          "cells": {
+            "type": "boolean",
+            "description": "Add each target's status per binding.",
+            "default": false
+          },
+          "timeoutMillis": {
+            "type": "number",
+            "description": "Time limit.",
+            "default": 30000,
+            "maximum": 60000
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "response": {
+        "keys": [
+          "check"
+        ]
+      }
+    },
+    "attach_px_view": {
+      "summary": "Add a Px view to components (or repoint the view of that name), make it their default view, or remove it with remove: true. Needs admin write on each component; each change is in the audit history.",
+      "gate": "writes",
+      "agentDirect": "agentDirectModelEdits",
+      "reply": "px_views_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Px file in the station file space, e.g. ^px/VAV.px. A leading file: is accepted."
+          },
+          "targets": {
+            "type": "array",
+            "description": "Slot ORDs of the components to check or change; at most 500.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "match": {
+            "type": "object",
+            "description": "Instead of targets: every component under match.under (default slot:/) whose name matches match.name (* wildcard, any case) and whose type is match.type (or a subtype), down to match.depth (default 12)."
+          },
+          "views": {
+            "type": "boolean",
+            "description": "Instead of targets: every component that has a view of this Px.",
+            "default": false
+          },
+          "view": {
+            "type": "string",
+            "description": "View (slot) name; default the file name without .px."
+          },
+          "default": {
+            "type": "boolean",
+            "description": "Make it the default view: the first Px view on the component.",
+            "default": true
+          },
+          "remove": {
+            "type": "boolean",
+            "description": "Remove views of this Px (only the one named view when given).",
+            "default": false
+          },
+          "dryRun": {
+            "type": "boolean",
+            "description": "Check and report without changing anything.",
+            "default": false
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why; required for agent sessions when agentRequireReason is on."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "response": {
+        "keys": [
+          "views"
+        ]
+      }
+    },
+    "check_nav": {
+      "summary": "Read a nav file (on the station, or text before writing it) and check that every node's ORD resolves; lists the users whose nav file it is.",
+      "gate": "none",
+      "reply": "nav_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Nav file, e.g. ^nav/Main.nav."
+          },
+          "text": {
+            "type": "string",
+            "description": "Nav XML to check instead of a file."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "nav"
+        ]
+      }
+    },
+    "graphics_inventory": {
+      "summary": "Every Px and nav file in the station file space, every Px view on a component, and what links them, with a punch list: views and links to files that are not there, dead nav nodes, unused Px and image files, Px errors, components missing a view their siblings have, and with checkBindings broken bindings on the components views are on.",
+      "gate": "none",
+      "reply": "graphics_inventory_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "under": {
+            "type": "string",
+            "description": "Slot ORD to look for views under; default slot:/."
+          },
+          "checkBindings": {
+            "type": "boolean",
+            "description": "Resolve each view's bindings on its component.",
+            "default": false
+          },
+          "maxComponents": {
+            "type": "number",
+            "description": "Components to visit.",
+            "default": 100000,
+            "maximum": 200000
+          },
+          "timeoutMillis": {
+            "type": "number",
+            "description": "Time limit.",
+            "default": 30000,
+            "maximum": 60000
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "inventory"
+        ]
+      }
     }
   },
   "notices": {
@@ -3689,6 +3985,10 @@
   "errors": {
     "agent_cannot_approve": {
       "meaning": "Agent sessions and agent users cannot approve or reject proposals.",
+      "scope": "request"
+    },
+    "agent_cannot_undeclare": {
+      "meaning": "A session that declared itself an agent cannot declare itself a person; open a new session.",
       "scope": "request"
     },
     "agent_priority_blocked": {
@@ -3923,6 +4223,10 @@
       "meaning": "The baskStream service and its descendants cannot be edited remotely; protected services too, except users, roles and categories for people while securityEditsEnabled is on.",
       "scope": "request"
     },
+    "px_invalid": {
+      "meaning": "The Px has errors (unknown types, missing modules or includes, malformed XML), so it was not written or used; validate_px lists them.",
+      "scope": "request"
+    },
     "query_not_allowed": {
       "meaning": "BQL is unavailable while allowedPathPatterns is narrowed; use neql, search or browse.",
       "scope": "request"
@@ -3990,6 +4294,10 @@
     "unsupported_op": {
       "meaning": "Operation name is not in the protocol.",
       "scope": "request"
+    },
+    "view_conflict": {
+      "meaning": "The component already has a slot of that name that is not a Px view.",
+      "scope": "entry"
     },
     "write_cancelled": {
       "meaning": "Session closed or thread interrupted before the write invocation.",

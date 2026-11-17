@@ -179,6 +179,49 @@ final class BaskStreamRequests
     session.send(response);
   }
 
+  /** The graphics operations (API 1.12): each has its own reply and one result key. */
+  void handleGraphics(String id, String op, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    BaskStreamGraphicsResolver graphics = runtime.getGraphicsResolver();
+    Map<String, Object> response;
+    if ("read_px".equals(op))
+    {
+      response = session.baseMessage("px_result", id);
+      response.put("px", graphics.readPx(request, context));
+    }
+    else if ("validate_px".equals(op))
+    {
+      response = session.baseMessage("px_validation", id);
+      response.put("validation", graphics.validatePx(request, context));
+    }
+    else if ("write_px".equals(op))
+    {
+      response = session.baseMessage("px_written", id);
+      response.putAll(graphics.writePx(request, context));
+    }
+    else if ("check_px_bindings".equals(op))
+    {
+      response = session.baseMessage("px_bindings_result", id);
+      response.put("check", graphics.checkBindings(request, context));
+    }
+    else if ("attach_px_view".equals(op))
+    {
+      response = session.baseMessage("px_views_result", id);
+      response.put("views", graphics.attachViews(request, context));
+    }
+    else if ("check_nav".equals(op))
+    {
+      response = session.baseMessage("nav_result", id);
+      response.put("nav", graphics.checkNav(request, context));
+    }
+    else
+    {
+      response = session.baseMessage("graphics_inventory_result", id);
+      response.put("inventory", graphics.inventory(request, context));
+    }
+    session.send(response);
+  }
+
   void handleListFiles(String id, Map<String, Object> request) throws BaskStreamProtocolException
   {
     Map<String, Object> response = session.baseMessage("files_result", id);

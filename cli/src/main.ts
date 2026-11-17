@@ -19,6 +19,7 @@ import { Link } from "./link.js";
 import { agentBrief, buildLayout, detectMux, launch, selfArgv, sessionExists, shq, writeShim, type LayoutName } from "./workspace.js";
 import { chooseAgentLogin, describeChoice, openAgentLogin, type AgentChoice, type AgentLogin } from "./agent-login.js";
 import { directWork, mayWriteFile, type AgentRules } from "./agent-rules.js";
+import type { TargetOptions } from "./px.js";
 
 const VIEW_NAMES = ["home", "explorer", "watch", "alarms", "trends", "schedules", "query", "files", "jobs", "activity", "graphics", "logic"] as const;
 type ViewName = (typeof VIEW_NAMES)[number];
@@ -1351,6 +1352,176 @@ graphic
       await deleteGraphic(client, name, reasonOf(g));
       if (g.output === "json") return console.log(JSON.stringify({ name: graphicName(name), deleted: true }, null, 2));
       console.log(`${chalk.green("✓")} Deleted ${graphicName(name)}.`);
+    })
+  );
+
+// ---- Px: Niagara graphics on the station (baskStream API 1.12) -------------------------------------
+
+const px = program
+  .command("px")
+  .description("Niagara Px graphics: read, validate and write Px files, check their bindings on many components, attach them as views, and check the station's graphics");
+
+const targetOptions = (command: Command) =>
+  command
+    .option("--under <ord>", "components under this one (with --name and --type)")
+    .option("--name <pattern>", "component name, * as a wildcard, e.g. 'VAV*'")
+    .option("--type <typeSpec>", "component type, e.g. control:NumericPoint")
+    .option("--depth <n>", "levels below --under to look (default 12)")
+    .option("--views", "every component that already has a view of this Px");
+
+px
+  .command("read")
+  .description("what a Px imports, binds to and links to, and what is wrong with it")
+  .argument("<path>", "Px file in the station file space, e.g. ^px/VAV.px")
+  .option("--refs", "list every reference with its widget and line")
+  .option("--tree", "with -o json, include the whole element tree (write_px accepts it back)")
+  .action((path: string, opts: { refs?: boolean; tree?: boolean }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { printPxInfo, pxPath } = await import("./px.js");
+      const info = await client.readPx(pxPath(path), { tree: Boolean(opts.tree) });
+      if (g.output === "json") return console.log(JSON.stringify(info, null, 2));
+      printPxInfo(info, Boolean(opts.refs));
+    })
+  );
+
+px
+  .command("validate")
+  .description("check a Px against this station: XML, widget types, modules, files and absolute ORDs (exit code 1 when it has errors)")
+  .argument("<path>", "Px file on the station, or a local file with --local")
+  .option("--local", "the path is a local file to check before writing it")
+  .action((path: string, opts: { local?: boolean }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { printPxInfo, pxPath } = await import("./px.js");
+      const info = await client.validatePx(opts.local ? { text: readFileSync(path, "utf8") } : pxPath(path));
+      if (opts.local) info.path = path;
+      if (!info.valid) process.exitCode = 1;
+      if (g.output === "json") return console.log(JSON.stringify(info, null, 2));
+      printPxInfo(info, false);
+    })
+  );
+
+px
+  .command("put")
+  .description("validate a local Px and write it to the station; a replaced file is backed up under ^bask/backups")
+  .argument("<file>", "local .px file")
+  .argument("<path>", "destination, e.g. ^px/VAV.px")
+  .option("--overwrite", "replace the file if it exists")
+  .option("--no-backup", "replace it without keeping a copy")
+  .action((local: string, path: string, opts: { overwrite?: boolean; backup?: boolean }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { problemLines, pxPath } = await import("./px.js");
+      const text = readFileSync(local, "utf8");
+      const check = await client.validatePx({ text });
+      if (!check.valid) {
+        for (const line of problemLines(check.problems)) console.error(line);
+        throw new Error(`${local} has ${check.errors} error${check.errors === 1 ? "" : "s"}; nothing was written.`);
+      }
+      await requireWrite(g, `Write ${local} to ${pxPath(path)}${opts.overwrite ? " (replacing it if it is there)" : ""}?`);
+      const written = await client.writePx(pxPath(path), { text }, { overwrite: Boolean(opts.overwrite), backup: opts.backup, ...reasonOf(g) });
+      if (g.output === "json") return console.log(JSON.stringify(written, null, 2));
+      console.log(`${chalk.green("✓")} ${written.file.created ? "Created" : "Replaced"} ${pxPath(path)}${written.file.backup ? chalk.dim(`; the old file is at ${written.file.backup}`) : ""}.`);
+      for (const line of problemLines(written.validation.problems)) console.log(line);
+    })
+  );
+
+targetOptions(
+  px
+    .command("check")
+    .description("resolve a Px's bindings on many components: which deviate from the template, and (with --suggest) which points might be the missing ones")
+    .argument("<path>", "Px file, e.g. ^px/VAV.px")
+    .argument("[targets...]", "component ORDs; or use --under/--name/--type or --views")
+    .option("--relative-to <ord>", "the component an absolute-bound Px was drawn for: check it as a template")
+    .option("--suggest", "rank candidate points for each missing binding")
+    .option("--matrix", "show every binding on every target")
+).action((path: string, ords: string[], opts: { relativeTo?: string; suggest?: boolean; matrix?: boolean } & TargetOptions, cmd: Command) =>
+  withClient(cmd, async ({ client }, g) => {
+    const { printBindingCheck, pxPath, targetsOf } = await import("./px.js");
+    const check = await client.checkPxBindings(pxPath(path), targetsOf(ords, opts), { relativeTo: opts.relativeTo, suggest: Boolean(opts.suggest), cells: Boolean(opts.matrix) });
+    if (g.output === "json") return console.log(JSON.stringify(check, null, 2));
+    if (g.output === "csv") {
+      return console.log(csv(["target", "ok", "resolved", "missing"], check.targets.map((t) => [t.ord, t.ok, t.resolved, t.missing.map((m) => m.ord).join(" ")])));
+    }
+    printBindingCheck(check, Boolean(opts.matrix));
+  })
+);
+
+targetOptions(
+  px
+    .command("attach")
+    .description("add a Px as a view on components and make it their default view; --remove takes it off")
+    .argument("<path>", "Px file, e.g. ^px/VAV.px")
+    .argument("[targets...]", "component ORDs; or use --under/--name/--type")
+    .option("--view <name>", "view name (default the file name)")
+    .option("--no-default", "add it without making it the default view")
+    .option("--remove", "remove views of this Px instead")
+).action((path: string, ords: string[], opts: { view?: string; default?: boolean; remove?: boolean } & TargetOptions, cmd: Command) =>
+  withClient(cmd, async ({ client }, g) => {
+    const { printViews, pxPath, targetsOf } = await import("./px.js");
+    const targets = targetsOf(ords, opts);
+    const options = { view: opts.view, default: opts.default !== false, remove: Boolean(opts.remove) };
+    const preview = await client.attachPxView(pxPath(path), targets, { ...options, dryRun: true });
+    const changes = preview.results.filter((r) => r.action === "added" || r.action === "updated" || r.action === "removed" || r.defaultSet).length;
+    if (changes === 0) {
+      if (g.output === "json") return console.log(JSON.stringify(preview, null, 2));
+      return printViews(preview);
+    }
+    if (g.output !== "json") printViews(preview);
+    await requireWrite(g, `${opts.remove ? "Remove" : "Change"} views on ${changes} component${changes === 1 ? "" : "s"}?`);
+    const result = await client.attachPxView(pxPath(path), targets, { ...options, ...reasonOf(g) });
+    if (g.output === "json") return console.log(JSON.stringify(result, null, 2));
+    printViews(result);
+  })
+);
+
+px
+  .command("inventory")
+  .description("every Px and nav file, every view and what links them, with a punch list of what is broken or unused")
+  .option("--under <ord>", "look for views under this component (default the whole station)")
+  .option("--check-bindings", "also resolve each view's bindings on its component")
+  .option("--all", "include the info items (unused Px and image files)")
+  .action((opts: { under?: string; checkBindings?: boolean; all?: boolean }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { printPunchList } = await import("./px.js");
+      const inv = await client.graphicsInventory({ under: opts.under, checkBindings: Boolean(opts.checkBindings) });
+      if (g.output === "json") return console.log(JSON.stringify(inv, null, 2));
+      if (g.output === "csv") return console.log(csv(["severity", "kind", "where", "target", "message"], inv.punchList.map((p) => [p.severity, p.kind, p.where, p.target ?? "", p.message])));
+      printPunchList(inv, Boolean(opts.all));
+    })
+  );
+
+px
+  .command("qa")
+  .description("the graphics punch list with every view's bindings checked (exit code 1 when there are errors)")
+  .option("--under <ord>", "look for views under this component (default the whole station)")
+  .option("--all", "include the info items (unused Px and image files)")
+  .action((opts: { under?: string; all?: boolean }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { printPunchList } = await import("./px.js");
+      const inv = await client.graphicsInventory({ under: opts.under, checkBindings: true });
+      if ((inv.summary.errors ?? 0) > 0) process.exitCode = 1;
+      if (g.output === "json") return console.log(JSON.stringify(inv, null, 2));
+      if (g.output === "csv") return console.log(csv(["severity", "kind", "where", "target", "message"], inv.punchList.map((p) => [p.severity, p.kind, p.where, p.target ?? "", p.message])));
+      printPunchList(inv, Boolean(opts.all));
+    })
+  );
+
+const nav = program
+  .command("nav")
+  .description("nav files: check that every node resolves and who uses it");
+
+nav
+  .command("check")
+  .description("check a nav file's nodes (exit code 1 when any are dead)")
+  .argument("<path>", "nav file on the station, e.g. ^nav/Main.nav, or a local file with --local")
+  .option("--local", "the path is a local file to check before writing it")
+  .action((path: string, opts: { local?: boolean }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { printNav, pxPath } = await import("./px.js");
+      const result = await client.checkNav(opts.local ? { text: readFileSync(path, "utf8") } : pxPath(path));
+      if (opts.local) result.path = path;
+      if (result.dead > 0 || !result.valid) process.exitCode = 1;
+      if (g.output === "json") return console.log(JSON.stringify(result, null, 2));
+      printNav(result);
     })
   );
 

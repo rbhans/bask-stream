@@ -41,16 +41,17 @@ The station file space, `^`: Px pages, nav files, images, HTML and so on. Paths 
 | --- | --- | --- |
 | `list_files` | `path` (default `^`) | `files_result`: `folder` with `entries` (`path`, `name`, `directory`, `size`, `modified`, `readonly`) |
 | `read_file` | `path`; optional `encoding` (`text` or `base64`), `maxBytes` | `file_result`: `file` with `encoding` and `text` or `base64`. Without `encoding`, UTF-8 files come as text and anything else as base64. Up to 4 MiB. |
-| `write_file` | `path`, and `text` or `base64`; optional `overwrite`, `createDirs` (default true), `dryRun` | `file_written`: `file` with `path`, `size`, `created` |
+| `write_file` | `path`, and `text` or `base64`; optional `overwrite`, `createDirs` (default true), `backup`, `dryRun` | `file_written`: `file` with `path`, `size`, `created`, and `backup` when the old file was kept |
 | `delete_file` | `path`; optional `recursive`, `dryRun` | `file_deleted`: `file` with `path` and the `deleted` paths |
 
 - `write_file` refuses to replace an existing file (`file_exists`) unless `overwrite: true`.
+- Replacing a `.px`, `.nav` or image file first copies the old one to `^bask/backups/<time>/<path>` (API 1.12); `backup: false` skips the copy and `backup: true` keeps one for any other file. If the copy cannot be made, nothing is replaced.
 - `delete_file` refuses a folder with contents unless `recursive: true`, and never deletes more than 500 entries in one request.
 - A written file is limited by the service's `maxMessageBytes` (1 MiB by default), since it travels in one request.
 - Writes and deletes are recorded in the station log and the audit history (`file_write`, `file_delete`).
 - Errors: `forbidden_file`, `file_not_found`, `file_exists`, `file_too_large`, `file_failed`.
 
-A Px page written this way is a file like any other; baskStream does not validate Px XML.
+A Px page written with `write_file` is a file like any other and is not checked. `write_px` checks it first, and the other graphics operations read, check and attach Px files: see [GRAPHICS.md](GRAPHICS.md).
 
 ## Jobs: `list_jobs`, `read_job`, `cancel_job`
 

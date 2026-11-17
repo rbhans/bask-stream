@@ -6,7 +6,8 @@ import { BaskStreamError, CLIENT_ERRORS } from "./errors.js";
 import { StationHttp, type StationHttpOptions } from "./http.js";
 import { OPERATIONS, type OperationName } from "./operations.js";
 import { toSlotOrd } from "./ords.js";
-import type { Actor, AgentLog, AlarmFilter, BrowseNode, DiscoveredItem, Discovery, FileContent, FileEntry, JobDetail, JobSummary, Json, PointSnapshot, Proposal, QueryResult, ScheduleEntry, Weekday } from "./types.js";
+import type { Actor, AgentLog, AlarmFilter, BrowseNode, DiscoveredItem, Discovery, FileContent, FileEntry, JobDetail, JobSummary, Json, PointSnapshot, Proposal, QueryResult, ScheduleEntry, Weekday,
+  GraphicsInventory, NavCheck, PxBindingCheck, PxInfo, PxNode, PxTargets, PxViewsResult } from "./types.js";
 
 export interface ClientOptions extends StationHttpOptions {
   username?: string;
@@ -261,14 +262,58 @@ export class BaskStreamClient extends EventEmitter {
     return (await this.call("read_file", { path, ...options })).file as FileContent;
   }
 
-  /** Creates a station file, or replaces one with `overwrite: true`. */
-  async writeFile(path: string, content: { text: string } | { base64: string }, options: { overwrite?: boolean; createDirs?: boolean; dryRun?: boolean; reason?: string } = {}): Promise<Json> {
+  /** Creates a station file, or replaces one with `overwrite: true`. A replaced Px, nav or image file is backed up first unless `backup: false`. */
+  async writeFile(path: string, content: { text: string } | { base64: string }, options: { overwrite?: boolean; createDirs?: boolean; backup?: boolean; dryRun?: boolean; reason?: string } = {}): Promise<Json> {
     return (await this.call("write_file", { path, ...content, ...options })).file as Json;
   }
 
   /** Deletes a station file, or a folder and its contents with `recursive: true`. */
   async deleteFile(path: string, options: { recursive?: boolean; dryRun?: boolean; reason?: string } = {}): Promise<Json> {
     return (await this.call("delete_file", { path, ...options })).file as Json;
+  }
+
+  // ---- Graphics (API 1.12) ----
+
+  /** A Px file as data: imports, types, references and problems; with `tree: true` the element tree too. */
+  async readPx(path: string, options: { tree?: boolean } = {}): Promise<PxInfo> {
+    return (await this.call("read_px", { path, ...options })).px as PxInfo;
+  }
+
+  /** Checks a Px on the station (a path), or Px XML or a tree before it is written. */
+  async validatePx(px: string | { text: string } | { tree: PxNode }): Promise<PxInfo> {
+    const fields: Json = typeof px === "string" ? { path: px } : { ...px };
+    return (await this.call("validate_px", fields)).validation as PxInfo;
+  }
+
+  /** Validates and writes a Px; refused with px_invalid when it has errors. A replaced file is backed up first. */
+  async writePx(path: string, px: { text: string } | { tree: PxNode }, options: { overwrite?: boolean; backup?: boolean; createDirs?: boolean; dryRun?: boolean; reason?: string } = {}): Promise<{ file: Json; validation: PxInfo }> {
+    const reply = await this.call("write_px", { path, ...px, ...options });
+    return { file: reply.file as Json, validation: reply.validation as PxInfo };
+  }
+
+  /** Resolves a Px's bindings on many components at once; `suggest: true` ranks candidates for missing ones. */
+  async checkPxBindings(path: string, targets: PxTargets, options: { relativeTo?: string; suggest?: boolean; cells?: boolean; timeoutMillis?: number } = {}): Promise<PxBindingCheck> {
+    const fields: Json = { path, ...pxTargets(targets), ...options };
+    if (options.relativeTo) fields.relativeTo = toSlotOrd(options.relativeTo);
+    return (await this.call("check_px_bindings", fields, { timeoutMs: (options.timeoutMillis ?? 30000) + 20000 })).check as PxBindingCheck;
+  }
+
+  /** Adds (or with `remove: true` removes) a Px view on components, and makes it their default view. */
+  async attachPxView(path: string, targets: PxTargets, options: { view?: string; default?: boolean; remove?: boolean; dryRun?: boolean; reason?: string } = {}): Promise<PxViewsResult> {
+    return (await this.call("attach_px_view", { path, ...pxTargets(targets), ...options }, { timeoutMs: 60000 })).views as PxViewsResult;
+  }
+
+  /** Checks a nav file on the station (a path), or nav XML before it is written. */
+  async checkNav(nav: string | { text: string }): Promise<NavCheck> {
+    const fields: Json = typeof nav === "string" ? { path: nav } : { ...nav };
+    return (await this.call("check_nav", fields)).nav as NavCheck;
+  }
+
+  /** Every Px and nav file, every view and what links them, with a punch list. */
+  async graphicsInventory(options: { under?: string; checkBindings?: boolean; maxComponents?: number; timeoutMillis?: number } = {}): Promise<GraphicsInventory> {
+    const fields: Json = { ...options };
+    if (options.under) fields.under = toSlotOrd(options.under);
+    return (await this.call("graphics_inventory", fields, { timeoutMs: (options.timeoutMillis ?? 30000) + 30000 })).inventory as GraphicsInventory;
   }
 
   async jobs(): Promise<JobSummary[]> {
@@ -564,4 +609,13 @@ export class Watch extends EventEmitter {
     }, Math.max(1000, (this.leaseSec * 1000) / 2));
     this.renewTimer.unref();
   }
+}
+
+/** The target fields of a graphics request, with ORDs in slot form. */
+function pxTargets(targets: PxTargets): Json {
+  const fields: Json = {};
+  if (targets.targets) fields.targets = targets.targets.map((ord) => toSlotOrd(ord));
+  if (targets.match) fields.match = { ...targets.match, ...(targets.match.under ? { under: toSlotOrd(targets.match.under) } : {}) };
+  if (targets.views) fields.views = true;
+  return fields;
 }

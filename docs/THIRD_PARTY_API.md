@@ -1040,7 +1040,7 @@ Tag and relation writes on subscribed model branches surface to other clients as
 Optional controls for AI agents: actor context, a `reason` on changes, rate and value limits, and point-write proposals a person approves. Setup and full details: [AI_AGENTS.md](AI_AGENTS.md).
 
 - `declare_actor` says who is behind the session (agent or person, name, model, on behalf of). Reply `actor_declared` with the rules that apply; `capabilities.agents` carries the same block. Declaring is one-way: once a session has declared itself an agent, declaring `kind: "person"` is refused with `agent_cannot_undeclare`.
-- `dryRun: true` is accepted only by the operations that honour it (`ack_alarm(s)`, `clear_alarm(s)`, `write_schedule`, `write_file`, `delete_file`). On any other changing operation it is refused with `bad_request`, so it can never make a real change that looks like a dry run.
+- `dryRun: true` is accepted only by the operations that honour it (`ack_alarm(s)`, `clear_alarm(s)`, `write_schedule`, `write_file`, `delete_file`, `write_px`, `attach_px_view`). On any other changing operation it is refused with `bad_request`, so it can never make a real change that looks like a dry run.
 - `list_proposals` lists proposals the session may see.
 - `approve_proposal` runs a proposed write with the approver's permissions; `reject_proposal` declines it. People only.
 - `read_agent_log` returns the `Agent` records baskStream adds to the station's audit history.
@@ -1058,6 +1058,19 @@ Queries, station files, jobs and driver discovery, for clients that engineer a s
 - `add_discovered` turns chosen discovery results into a model plan preview, with facets learned from the device.
 - `capabilities.workbench` reports what is available. `securityEditsEnabled` (default off) lets model plans edit users, roles and categories.
 
+### Graphics
+
+Px files, their bindings and views, and nav files, for clients that build or check a station's graphics (API 1.12). Full details: [GRAPHICS.md](GRAPHICS.md).
+
+- `read_px` reads a Px file as data: imports, widget types, and every reference (bindings, ORD properties, hyperlinks, images, includes, widget views) with the widget and line it is on. `tree: true` adds the element tree.
+- `validate_px` checks a Px (on the station, or text or a tree before writing it): XML, element types, modules installed on this station, files and includes present, absolute ORDs resolving.
+- `write_px` validates and writes a Px; a Px with errors is refused with `px_invalid`. A replaced file is first copied under `^bask/backups`.
+- `check_px_bindings` resolves one Px's bindings on many components at once and reports which targets deviate, with ranked suggestions for missing bindings when asked (`suggest: true`).
+- `attach_px_view` adds, repoints or removes a Px view on components, and sets the default view. It needs admin write on each component.
+- `check_nav` checks a nav file's nodes and lists the users it is assigned to.
+- `graphics_inventory` lists every Px and nav file, every view and what links them, with a punch list of what is broken or unused; `checkBindings: true` also resolves each view's bindings on its component.
+- `capabilities.px` reports what is available.
+
 ## Error Codes
 
 Failures arrive in two ways. A **request** error fails the whole request with an `error` message carrying `code` and `message`. An **entry** error appears inside a batch result (per point, alarm, tag target and so on) with `ok: false`, while the other entries still succeed. Clients should branch on `code`, never on `message`. This table is generated from `spec/baskstream-protocol.json`.
@@ -1065,6 +1078,7 @@ Failures arrive in two ways. A **request** error fails the whole request with an
 | Code | Scope | Meaning |
 | --- | --- | --- |
 | `agent_cannot_approve` | request | Agent sessions and agent users cannot approve or reject proposals. |
+| `agent_cannot_undeclare` | request | A session that declared itself an agent cannot declare itself a person; open a new session. |
 | `agent_priority_blocked` | entry | Agent used an emergency (level 1) action while agentAllowEmergency is off. |
 | `agent_rate_limited` | entry | Agent user exceeded agentMaxChangesPerMinute, or has too many pending proposals; request or entry. |
 | `agent_use_write` | request | An agent's model plan tried to command a writable point (invoke set, override or auto, or set a priority input or the fallback). Agents command points with write, where approval and value limits apply. |
@@ -1123,6 +1137,7 @@ Failures arrive in two ways. A **request** error fails the whole request with an
 | `proposal_closed` | request | Proposal is no longer pending: already decided or expired. |
 | `proposal_not_found` | request | No such proposal (ids do not survive a station restart). |
 | `protected_component` | request | The baskStream service and its descendants cannot be edited remotely; protected services too, except users, roles and categories for people while securityEditsEnabled is on. |
+| `px_invalid` | request | The Px has errors (unknown types, missing modules or includes, malformed XML), so it was not written or used; validate_px lists them. |
 | `query_not_allowed` | request | BQL is unavailable while allowedPathPatterns is narrowed; use neql, search or browse. |
 | `read_failed` | entry | Point snapshot could not be produced or the target is no longer available. |
 | `readonly` | request | Property is read-only. |
@@ -1140,6 +1155,7 @@ Failures arrive in two ways. A **request** error fails the whole request with an
 | `unknown_type` | request | describe_component_types baseType not found. |
 | `unsupported_action` | entry | Write action unsupported by the point; also request-level for an unknown model action. |
 | `unsupported_op` | request | Operation name is not in the protocol. |
+| `view_conflict` | entry | The component already has a slot of that name that is not a Px view. |
 | `write_cancelled` | entry | Session closed or thread interrupted before the write invocation. |
 | `write_failed` | entry | Unexpected runtime failure writing a point, or enum point without an enum range. |
 | `writes_disabled` | request | Service disabled or writesEnabled is false; also per-item if flipped mid-batch. |
@@ -1344,6 +1360,18 @@ Recommended client approach:
 The `metadata` block is additive and request-controlled. Clients can ignore it or omit it and continue using `ord`, `slotPath`, `name`, `typeSpec`, `features`, `operations`, and point read/write payloads.
 
 Third-party clients should not require every metadata subfield to be populated. Different protocols and station models expose different evidence.
+
+### API 1.12 changes
+
+`apiVersion` advanced from `1.11` to `1.12`.
+
+- New operations `read_px`, `validate_px`, `write_px`, `check_px_bindings`, `attach_px_view`, `check_nav` and `graphics_inventory`, and `capabilities.px`. See [GRAPHICS.md](GRAPHICS.md). `write_px` is covered by `agentDirectFiles` and `attach_px_view` by `agentDirectModelEdits`.
+- `write_file` takes `backup`. **Changed:** replacing a `.px`, `.nav` or image file now first copies the old file to `^bask/backups/<time>/<path>`, and the reply names it in `backup`; send `backup: false` to skip it. Other files are not copied unless `backup: true`.
+- **Changed:** `dryRun: true` on a changing operation that has no dry run (such as `write_tags`) is refused with `bad_request`. Before, it was ignored and the change was made.
+- **Changed:** `revalidateIntervalSec` defaults to 60 (was 0, off), and the sweep also closes the socket when the user is disabled or expired.
+- **Changed:** `declare_actor` is one-way; an agent session declaring `kind: "person"` gets `agent_cannot_undeclare`.
+- Agent value limits (`agentBoundN`) also match the component a property ORD resolves to (`.../ZoneSP/out` meets a rule for `.../ZoneSP`), and agents cannot write NaN or infinity.
+- New error codes `px_invalid`, `view_conflict` and `agent_cannot_undeclare`.
 
 ### API 1.11 changes
 
