@@ -39,11 +39,11 @@ import javax.baja.sys.Action;
   flags = Flags.SUMMARY
 )
 /**
- * Records graphics work (writing Px, nav and image files; adding and removing Px views) in the
- * audit history and the station log. Off by default.
+ * Records file and view changes made through baskStream (writing and deleting station files;
+ * adding, changing and removing Px views) in the audit history and the station log. Off by default.
  */
 @NiagaraProperty(
-  name = "auditGraphics",
+  name = "auditFilesAndViews",
   type = "boolean",
   defaultValue = "false",
   flags = Flags.SUMMARY
@@ -398,34 +398,34 @@ public final class BBaskStreamService extends BWebServlet
 
   //endregion Property "securityEditsEnabled"
 
-  //region Property "auditGraphics"
+  //region Property "auditFilesAndViews"
 
   /**
-   * Slot for the {@code auditGraphics} property.
-   * Records graphics work (writing Px, nav and image files; adding and removing Px views) in the
-   * audit history and the station log. Off by default.
-   * @see #getAuditGraphics
-   * @see #setAuditGraphics
+   * Slot for the {@code auditFilesAndViews} property.
+   * Records file and view changes made through baskStream (writing and deleting station files;
+   * adding, changing and removing Px views) in the audit history and the station log. Off by default.
+   * @see #getAuditFilesAndViews
+   * @see #setAuditFilesAndViews
    */
-  public static final Property auditGraphics = newProperty(Flags.SUMMARY, false, null);
+  public static final Property auditFilesAndViews = newProperty(Flags.SUMMARY, false, null);
 
   /**
-   * Get the {@code auditGraphics} property.
-   * Records graphics work (writing Px, nav and image files; adding and removing Px views) in the
-   * audit history and the station log. Off by default.
-   * @see #auditGraphics
+   * Get the {@code auditFilesAndViews} property.
+   * Records file and view changes made through baskStream (writing and deleting station files;
+   * adding, changing and removing Px views) in the audit history and the station log. Off by default.
+   * @see #auditFilesAndViews
    */
-  public boolean getAuditGraphics() { return getBoolean(auditGraphics); }
+  public boolean getAuditFilesAndViews() { return getBoolean(auditFilesAndViews); }
 
   /**
-   * Set the {@code auditGraphics} property.
-   * Records graphics work (writing Px, nav and image files; adding and removing Px views) in the
-   * audit history and the station log. Off by default.
-   * @see #auditGraphics
+   * Set the {@code auditFilesAndViews} property.
+   * Records file and view changes made through baskStream (writing and deleting station files;
+   * adding, changing and removing Px views) in the audit history and the station log. Off by default.
+   * @see #auditFilesAndViews
    */
-  public void setAuditGraphics(boolean v) { setBoolean(auditGraphics, v, null); }
+  public void setAuditFilesAndViews(boolean v) { setBoolean(auditFilesAndViews, v, null); }
 
-  //endregion Property "auditGraphics"
+  //endregion Property "auditFilesAndViews"
 
   //region Property "wsPath"
 
@@ -1433,10 +1433,10 @@ public final class BBaskStreamService extends BWebServlet
   }
 
   /** Users, roles and categories are editable through model plans only while this and model edits are on. */
-  /** Whether baskStream records graphics work; see the auditGraphics property. */
-  boolean auditsGraphics()
+  /** Whether baskStream records file and view changes; see the auditFilesAndViews property. */
+  boolean auditsFilesAndViews()
   {
-    Property p = getProperty("auditGraphics");
+    Property p = getProperty("auditFilesAndViews");
     return p != null && getBoolean(p);
   }
 

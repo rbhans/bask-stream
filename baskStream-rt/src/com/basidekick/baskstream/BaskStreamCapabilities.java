@@ -137,7 +137,7 @@ final class BaskStreamCapabilities
         "query", BaskStreamModelPlans.map("bql", BaskStreamAccessPolicy.isDefaultWideOpen(runtime.getService()), "neql", true,
             "maxRows", BaskStreamQueryResolver.MAX_LIMIT),
         "files", BaskStreamModelPlans.map("root", "^", "maxReadBytes", BaskStreamFileResolver.MAX_READ_BYTES,
-            "write", runtime.getService().writesAllowed()),
+            "write", runtime.getService().writesAllowed(), "audited", Boolean.valueOf(runtime.getService().auditsFilesAndViews())),
         "jobs", true,
         "discovery", BaskStreamModelPlans.map("drivers", session.listOf("bacnet"), "addNeedsModelEdits", true),
         "securityEdits", runtime.getService().securityEditsAllowed() && !runtime.getAgents().isAgent(session)));
@@ -153,7 +153,7 @@ final class BaskStreamCapabilities
         "read", Boolean.TRUE, "validate", Boolean.TRUE, "write", runtime.getService().writesAllowed(),
         "checkBindings", Boolean.TRUE, "suggestions", Boolean.TRUE, "attachViews", runtime.getService().writesAllowed(),
         "nav", Boolean.TRUE, "inventory", Boolean.TRUE, "maxTargets", Long.valueOf(BaskStreamGraphicsResolver.MAX_TARGETS),
-        "backups", BaskStreamFileResolver.BACKUP_ROOT, "audited", Boolean.valueOf(runtime.getService().auditsGraphics())));
+        "backups", BaskStreamFileResolver.BACKUP_ROOT, "audited", Boolean.valueOf(runtime.getService().auditsFilesAndViews())));
 
     Map<String, Object> policy = new LinkedHashMap<String, Object>();
     policy.put("allowedPathPatterns", runtime.getService().getAllowedPathPatterns());

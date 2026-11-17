@@ -314,7 +314,7 @@ GET https://<station>/stream/health
 | `writesEnabled` | true | Any change through the module. False keeps every client read-only. |
 | `modelEditsEnabled` | false | Model plans: editing components in bask's Explorer, `bask plan` (logic), and adding discovered devices and points. |
 | `securityEditsEnabled` | false | Model plans that edit users, roles and categories. Never applies to agents. |
-| `auditGraphics` | false | Record graphics work (writing Px, nav and image files; Px view log lines) in the audit history and station log. Off, so building a project's pages does not fill the audit history; deletes and AI agent changes are always recorded. |
+| `auditFilesAndViews` | false | Record file writes and deletes and Px view changes made through baskStream in the audit history and station log. Off, so building a project's graphics does not fill the audit history. AI agent changes are always recorded. |
 | `agentUsers` | blank | The Niagara logins that are AI agents, such as the user you give `bask workspace --agent-user`. |
 | `agentDirectFiles`, `agentDirectDiscovery`, `agentDirectModelEdits`, `agentDirectTags`, `agentDirectSchedules`, `agentDirectAlarms` | off | Kinds of work an agent may do by itself while its point writes wait for approval. For an agent that draws graphics and brings equipment in: `agentDirectFiles` = `^bask/*` and `agentDirectDiscovery` = true. |
 

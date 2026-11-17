@@ -1371,7 +1371,7 @@ Third-party clients should not require every metadata subfield to be populated. 
 - **Changed:** `revalidateIntervalSec` defaults to 60 (was 0, off), and the sweep also closes the socket when the user is disabled or expired.
 - **Changed:** `declare_actor` is one-way; an agent session declaring `kind: "person"` gets `agent_cannot_undeclare`.
 - Agent value limits (`agentBoundN`) also match the component a property ORD resolves to (`.../ZoneSP/out` meets a rule for `.../ZoneSP`), and agents cannot write NaN or infinity.
-- New service property `auditGraphics` (default off). **Changed:** writing `.px`, `.nav` and image files is no longer recorded in the audit history or the station log unless it is on; other file writes and every delete still are. See [GRAPHICS.md](GRAPHICS.md#records).
+- New service property `auditFilesAndViews` (default off). **Changed:** `write_file` and `delete_file` are no longer recorded in the audit history or the station log unless it is on, and neither are `write_px` and `attach_px_view`. An AI agent's changes still leave their `Agent` record. See [GRAPHICS.md](GRAPHICS.md#records).
 - New error codes `px_invalid`, `view_conflict` and `agent_cannot_undeclare`.
 
 ### API 1.11 changes

@@ -221,11 +221,7 @@ final class BaskStreamFileResolver
     {
       throw failed("write", body, e);
     }
-    // Graphics files are written often while a project is built; they are recorded only with auditGraphics on.
-    if (!isGraphicsFile(body) || service.auditsGraphics())
-    {
-      audit("file_write", body, bytes.length + " bytes" + (backup == null ? "" : ", old content kept at " + backup), context);
-    }
+    audit("file_write", body, bytes.length + " bytes" + (backup == null ? "" : ", old content kept at " + backup), context);
     return result;
   }
 
@@ -238,7 +234,7 @@ final class BaskStreamFileResolver
     return isGraphicsFile(body);
   }
 
-  /** Px, nav and image files. */
+  /** Px, nav and image files: the ones backed up by default. */
   static boolean isGraphicsFile(String body)
   {
     String lower = body.toLowerCase(java.util.Locale.ROOT);
@@ -572,8 +568,10 @@ final class BaskStreamFileResolver
         + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
   }
 
+  /** Records a file change in the station log and audit history, only while auditFilesAndViews is on. */
   private void audit(String event, String body, String detail, Context context)
   {
+    if (!service.auditsFilesAndViews()) return;
     String user = context == null || context.getUser() == null ? null : context.getUser().getUsername();
     service.audit(event, "user=" + user + " path=" + body + " " + detail);
     try

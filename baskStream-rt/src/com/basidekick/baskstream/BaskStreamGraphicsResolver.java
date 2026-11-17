@@ -1169,23 +1169,23 @@ final class BaskStreamGraphicsResolver
     if (dryRun || ("unchanged".equals(action) && !setDefault)) return;
 
     service.requireWritesEnabled();
+    Context change = changeContext(context);
     if ("added".equals(action))
     {
       BPxView view = new BPxView(BOrd.make(pxOrd));
       if (media != null && BaskStreamPx.typeInfo(media) != null) view.setMedia(BTypeSpec.make(media));
-      target = component.add(name, view, 0, context);
+      target = component.add(name, view, 0, change);
     }
     else if ("updated".equals(action))
     {
       BPxView view = (BPxView) component.get(target);
-      view.set(BPxView.pxFile, BOrd.make(pxOrd), context);
+      view.set(BPxView.pxFile, BOrd.make(pxOrd), change);
     }
     if (setDefault)
     {
-      component.reorderToTop(target, context);
+      component.reorderToTop(target, change);
     }
-    // Niagara records the slot change itself, in the user's name, as it does for Workbench.
-    if (service.auditsGraphics()) service.audit("px_view_" + action, "user=" + user(context) + " component=" + component.getSlotPath() + " view=" + target.getName()
+    if (service.auditsFilesAndViews()) service.audit("px_view_" + action, "user=" + user(context) + " component=" + component.getSlotPath() + " view=" + target.getName()
         + " px=" + pxOrd + (setDefault ? " default" : ""));
   }
 
@@ -1206,11 +1206,22 @@ final class BaskStreamGraphicsResolver
     result.put("views", names);
     if (dryRun || doomed.isEmpty()) return;
     service.requireWritesEnabled();
+    Context change = changeContext(context);
     for (Property property : doomed)
     {
-      component.remove(property, context);
+      component.remove(property, change);
     }
-    if (service.auditsGraphics()) service.audit("px_view_removed", "user=" + user(context) + " component=" + component.getSlotPath() + " views=" + names + " px=" + pxOrd);
+    if (service.auditsFilesAndViews()) service.audit("px_view_removed", "user=" + user(context) + " component=" + component.getSlotPath() + " views=" + names + " px=" + pxOrd);
+  }
+
+  /**
+   * The context a view change is made with. Niagara records a component change in the audit
+   * history when its context carries a user, so with auditFilesAndViews off the change is made
+   * without one. The user's admin write on the component was checked first (requireAdminWrite).
+   */
+  private Context changeContext(Context context)
+  {
+    return service.auditsFilesAndViews() ? context : null;
   }
 
   private static Property firstPxView(BComponent component)

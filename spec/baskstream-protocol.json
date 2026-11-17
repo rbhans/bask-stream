@@ -3320,7 +3320,7 @@
       }
     },
     "write_file": {
-      "summary": "Create or replace a file in the station file space. Replacing needs overwrite: true. A replaced Px, nav or image file is first copied under ^bask/backups. Recorded in the audit history, except Px, nav and image files while auditGraphics is off (the default).",
+      "summary": "Create or replace a file in the station file space. Replacing needs overwrite: true. A replaced Px, nav or image file is first copied under ^bask/backups. Recorded in the audit history and station log only while auditFilesAndViews is on (off by default).",
       "gate": "writes",
       "agentDirect": "agentDirectFiles",
       "reply": "file_written",
@@ -3374,7 +3374,7 @@
       }
     },
     "delete_file": {
-      "summary": "Delete a file or folder in the station file space. A folder with contents needs recursive: true; at most 500 entries per request.",
+      "summary": "Delete a file or folder in the station file space. A folder with contents needs recursive: true; at most 500 entries per request. Recorded in the audit history and station log only while auditFilesAndViews is on (off by default).",
       "gate": "writes",
       "agentDirect": "agentDirectFiles",
       "reply": "file_deleted",
@@ -3658,7 +3658,7 @@
       }
     },
     "write_px": {
-      "summary": "Validate a Px and write it to the station file space; refused with px_invalid when it has errors. A replaced file is first copied under ^bask/backups. Recorded in the audit history only while auditGraphics is on (off by default).",
+      "summary": "Validate a Px and write it to the station file space; refused with px_invalid when it has errors. A replaced file is first copied under ^bask/backups. Recorded in the audit history and station log only while auditFilesAndViews is on (off by default).",
       "gate": "writes",
       "agentDirect": "agentDirectFiles",
       "reply": "px_written",
@@ -3772,7 +3772,7 @@
       }
     },
     "attach_px_view": {
-      "summary": "Add a Px view to components (or repoint the view of that name), make it their default view, or remove it with remove: true. Needs admin write on each component; Niagara records each slot change in the audit history, as it does for Workbench.",
+      "summary": "Add a Px view to components (or repoint the view of that name), make it their default view, or remove it with remove: true. Needs admin write on each component. Recorded in the audit history and station log only while auditFilesAndViews is on (off by default).",
       "gate": "writes",
       "agentDirect": "agentDirectModelEdits",
       "reply": "px_views_result",
