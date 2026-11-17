@@ -104,6 +104,8 @@ Written and built on 2026-11-16 (`gradlew :baskStream-rt:jar`) and checked on th
 
 What was checked on Demo: all 15 of its Px files validate with no errors or warnings (no false `unknown_type`); a Px with an uninstalled module, an unknown widget and a missing include is refused by `write_px`; a replaced Px is copied under `^bask/backups`; `check_px_bindings` finds the deviating targets and its suggestions put the intended point first for `DAT`, `Occ_Clg_Sp` and `Zone_Temp`; `relativeTo` turns the absolute-bound `vavs.px` into a template that resolves on all 32 VAV components; `attach_px_view` adds a `baja:PxView` with `pxFile`, `media` and default icon and permissions as Workbench does, first in slot order, and removes it again (`views: true` finds them); `graphics_inventory` walked 21,522 components in about half a second; `check_nav` resolves file and component nodes and reports BQL as not checked; an agent's `write_px` and `attach_px_view` leave `completed` Agent records. Not checked: the views opening in a browser (the station's HTML5 view itself), and the approval-required path for the two new kinds (Demo has approval off; the mapping is in `DIRECT_SETTINGS` and the contract test).
 
+`auditGraphics` (default off, added the same night at the user's request) keeps graphics file writes out of the audit history and station log. `attach_px_view` does not call `auditChange`: Niagara records slot changes made with the user's Context itself, as for the model resolver, so baskStream's own records only duplicated them.
+
 The repository's root `baskStream-rt.jar` is still the signed 1.11 release build; sign and replace it when releasing 1.12.
 
 ## Agents: direct kinds of work (API 1.11)

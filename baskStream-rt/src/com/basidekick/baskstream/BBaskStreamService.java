@@ -38,6 +38,16 @@ import javax.baja.sys.Action;
   defaultValue = "false",
   flags = Flags.SUMMARY
 )
+/**
+ * Records graphics work (writing Px, nav and image files; adding and removing Px views) in the
+ * audit history and the station log. Off by default.
+ */
+@NiagaraProperty(
+  name = "auditGraphics",
+  type = "boolean",
+  defaultValue = "false",
+  flags = Flags.SUMMARY
+)
 @NiagaraProperty(
   name = "wsPath",
   type = "baja:String",
@@ -387,6 +397,35 @@ public final class BBaskStreamService extends BWebServlet
   public void setSecurityEditsEnabled(boolean v) { setBoolean(securityEditsEnabled, v, null); }
 
   //endregion Property "securityEditsEnabled"
+
+  //region Property "auditGraphics"
+
+  /**
+   * Slot for the {@code auditGraphics} property.
+   * Records graphics work (writing Px, nav and image files; adding and removing Px views) in the
+   * audit history and the station log. Off by default.
+   * @see #getAuditGraphics
+   * @see #setAuditGraphics
+   */
+  public static final Property auditGraphics = newProperty(Flags.SUMMARY, false, null);
+
+  /**
+   * Get the {@code auditGraphics} property.
+   * Records graphics work (writing Px, nav and image files; adding and removing Px views) in the
+   * audit history and the station log. Off by default.
+   * @see #auditGraphics
+   */
+  public boolean getAuditGraphics() { return getBoolean(auditGraphics); }
+
+  /**
+   * Set the {@code auditGraphics} property.
+   * Records graphics work (writing Px, nav and image files; adding and removing Px views) in the
+   * audit history and the station log. Off by default.
+   * @see #auditGraphics
+   */
+  public void setAuditGraphics(boolean v) { setBoolean(auditGraphics, v, null); }
+
+  //endregion Property "auditGraphics"
 
   //region Property "wsPath"
 
@@ -1394,6 +1433,13 @@ public final class BBaskStreamService extends BWebServlet
   }
 
   /** Users, roles and categories are editable through model plans only while this and model edits are on. */
+  /** Whether baskStream records graphics work; see the auditGraphics property. */
+  boolean auditsGraphics()
+  {
+    Property p = getProperty("auditGraphics");
+    return p != null && getBoolean(p);
+  }
+
   boolean securityEditsAllowed()
   {
     Property p = getProperty("securityEditsEnabled");

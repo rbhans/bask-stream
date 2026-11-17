@@ -221,7 +221,11 @@ final class BaskStreamFileResolver
     {
       throw failed("write", body, e);
     }
-    audit("file_write", body, bytes.length + " bytes" + (backup == null ? "" : ", old content kept at " + backup), context);
+    // Graphics files are written often while a project is built; they are recorded only with auditGraphics on.
+    if (!isGraphicsFile(body) || service.auditsGraphics())
+    {
+      audit("file_write", body, bytes.length + " bytes" + (backup == null ? "" : ", old content kept at " + backup), context);
+    }
     return result;
   }
 
@@ -230,6 +234,12 @@ final class BaskStreamFileResolver
 
   /** Graphics files (Px, nav, images) are copied before they are replaced unless the request says not to. */
   static boolean backsUpByDefault(String body)
+  {
+    return isGraphicsFile(body);
+  }
+
+  /** Px, nav and image files. */
+  static boolean isGraphicsFile(String body)
   {
     String lower = body.toLowerCase(java.util.Locale.ROOT);
     for (String ext : new String[] { ".px", ".nav", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".bmp" })

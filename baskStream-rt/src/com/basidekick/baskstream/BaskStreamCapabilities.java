@@ -153,7 +153,7 @@ final class BaskStreamCapabilities
         "read", Boolean.TRUE, "validate", Boolean.TRUE, "write", runtime.getService().writesAllowed(),
         "checkBindings", Boolean.TRUE, "suggestions", Boolean.TRUE, "attachViews", runtime.getService().writesAllowed(),
         "nav", Boolean.TRUE, "inventory", Boolean.TRUE, "maxTargets", Long.valueOf(BaskStreamGraphicsResolver.MAX_TARGETS),
-        "backups", BaskStreamFileResolver.BACKUP_ROOT));
+        "backups", BaskStreamFileResolver.BACKUP_ROOT, "audited", Boolean.valueOf(runtime.getService().auditsGraphics())));
 
     Map<String, Object> policy = new LinkedHashMap<String, Object>();
     policy.put("allowedPathPatterns", runtime.getService().getAllowedPathPatterns());

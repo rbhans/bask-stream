@@ -68,6 +68,19 @@ For agents, `write_px` is a file change: `agentDirectFiles` decides where they m
 
 `write_file` and `write_px` copy a file they replace to `^bask/backups/<yyyyMMdd-HHmmss-SSS>/<path>` before writing, and name the copy in `backup`. This is on by default for `.px`, `.nav` and image files (`.png`, `.jpg`, `.jpeg`, `.gif`, `.svg`, `.bmp`) and off for others; `backup: true` or `false` decides for one request. When the copy cannot be made, the file is not replaced. baskStream does not delete old backups; remove them with `delete_file` when they are no longer wanted. `graphics_inventory` skips the backups folder.
 
+### Records
+
+Graphics are written many times while a project is built, so baskStream does not record that work by default. The service's `auditGraphics` property (default off) decides:
+
+| | `auditGraphics` off (default) | `auditGraphics` on |
+| --- | --- | --- |
+| Writing a `.px`, `.nav` or image file (`write_px`, `write_file`) | not recorded | `file_write` in the audit history and the station log |
+| Adding or removing a Px view (`attach_px_view`) | Niagara's own record of the slot change only | also a `px_view_…` line in the station log |
+| Deleting any file, writing any other file | recorded | recorded |
+| Anything an AI agent session does | its `Agent` record (see [AI_AGENTS.md](AI_AGENTS.md)) | the same |
+
+`capabilities.px.audited` reports the setting.
+
 ## `check_px_bindings`
 
 The point-mapping check: one Px against many components.
@@ -121,7 +134,7 @@ Adds a Px view (a `baja:PxView` slot with `pxFile` set, and `media` taken from t
 - `remove: true`: remove the views of this Px instead (only the one named `view`, when given).
 - `dryRun: true`: report what would happen.
 
-Each component needs admin write, as Workbench requires for adding views. Each change is recorded in the station's audit history. Reply `px_views_result` with `views`: `{path, view, remove, default, dryRun?, summary, results, truncated}`; `summary` counts each `action` (`added`, `updated`, `unchanged`, `removed`, `conflict`, `failed`), and each result is `{ord, action, view?, views?, default?, defaultSet?, code?, message?}`.
+Each component needs admin write, as Workbench requires for adding views. Niagara records each slot change in the audit history in the user's name, as it does for Workbench; baskStream adds a station log line only with `auditGraphics` on (see [Records](#records)). Reply `px_views_result` with `views`: `{path, view, remove, default, dryRun?, summary, results, truncated}`; `summary` counts each `action` (`added`, `updated`, `unchanged`, `removed`, `conflict`, `failed`), and each result is `{ord, action, view?, views?, default?, defaultSet?, code?, message?}`.
 
 For agents, attaching a view is a model edit: `agentDirectModelEdits` decides whether they may do it directly while approval is required.
 

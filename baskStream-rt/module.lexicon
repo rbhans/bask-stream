@@ -10,6 +10,7 @@ type.BaskStreamService=BASkStreamService
 writesEnabled=Writes Enabled
 modelEditsEnabled=Model Edits Enabled
 securityEditsEnabled=Security Edits Enabled
+auditGraphics=Audit Graphics
 wsPath=WebSocket Path
 maxConnections=Max Connections
 maxConnectionsPerUser=Max Connections Per User

@@ -48,7 +48,7 @@ The station file space, `^`: Px pages, nav files, images, HTML and so on. Paths 
 - Replacing a `.px`, `.nav` or image file first copies the old one to `^bask/backups/<time>/<path>` (API 1.12); `backup: false` skips the copy and `backup: true` keeps one for any other file. If the copy cannot be made, nothing is replaced.
 - `delete_file` refuses a folder with contents unless `recursive: true`, and never deletes more than 500 entries in one request.
 - A written file is limited by the service's `maxMessageBytes` (1 MiB by default), since it travels in one request.
-- Writes and deletes are recorded in the station log and the audit history (`file_write`, `file_delete`).
+- Writes and deletes are recorded in the station log and the audit history (`file_write`, `file_delete`). Writes of `.px`, `.nav` and image files are not, unless the service's `auditGraphics` is on (API 1.12; see [GRAPHICS.md](GRAPHICS.md#records)).
 - Errors: `forbidden_file`, `file_not_found`, `file_exists`, `file_too_large`, `file_failed`.
 
 A Px page written with `write_file` is a file like any other and is not checked. `write_px` checks it first, and the other graphics operations read, check and attach Px files: see [GRAPHICS.md](GRAPHICS.md).

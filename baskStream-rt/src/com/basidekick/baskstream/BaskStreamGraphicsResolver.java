@@ -1174,21 +1174,18 @@ final class BaskStreamGraphicsResolver
       BPxView view = new BPxView(BOrd.make(pxOrd));
       if (media != null && BaskStreamPx.typeInfo(media) != null) view.setMedia(BTypeSpec.make(media));
       target = component.add(name, view, 0, context);
-      service.auditChange("Added", component, target.getName(), null, pxOrd, context);
     }
     else if ("updated".equals(action))
     {
       BPxView view = (BPxView) component.get(target);
-      String old = String.valueOf(view.getPxFile());
       view.set(BPxView.pxFile, BOrd.make(pxOrd), context);
-      service.auditChange("Changed", component, target.getName() + "/pxFile", old, pxOrd, context);
     }
     if (setDefault)
     {
       component.reorderToTop(target, context);
-      service.auditChange("Reordered", component, target.getName(), null, "default view", context);
     }
-    service.audit("px_view_" + action, "user=" + user(context) + " component=" + component.getSlotPath() + " view=" + target.getName()
+    // Niagara records the slot change itself, in the user's name, as it does for Workbench.
+    if (service.auditsGraphics()) service.audit("px_view_" + action, "user=" + user(context) + " component=" + component.getSlotPath() + " view=" + target.getName()
         + " px=" + pxOrd + (setDefault ? " default" : ""));
   }
 
@@ -1212,9 +1209,8 @@ final class BaskStreamGraphicsResolver
     for (Property property : doomed)
     {
       component.remove(property, context);
-      service.auditChange("Removed", component, property.getName(), pxOrd, null, context);
     }
-    service.audit("px_view_removed", "user=" + user(context) + " component=" + component.getSlotPath() + " views=" + names + " px=" + pxOrd);
+    if (service.auditsGraphics()) service.audit("px_view_removed", "user=" + user(context) + " component=" + component.getSlotPath() + " views=" + names + " px=" + pxOrd);
   }
 
   private static Property firstPxView(BComponent component)
