@@ -12,3 +12,5 @@ sdk/dist/
 cli/node_modules/
 cli/dist/
 cli/bin/
+mcp/node_modules/
+mcp/dist/

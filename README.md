@@ -45,6 +45,7 @@ The repository's own code and documentation are open source under the [Apache Li
 | WebSocket protocol | Production apps, graphics, dashboards, and integrations that should talk directly to the station. | [docs/THIRD_PARTY_API.md](docs/THIRD_PARTY_API.md) |
 | TypeScript SDK | JavaScript/TypeScript apps (Node, Electron, tooling) that want login, reconnects and live subscriptions handled for them. | [TypeScript SDK](#typescript-sdk) |
 | `bask` CLI | Quick station checks, scripts and exports from a terminal, a full-screen live dashboard, workspaces beside an AI agent, and simulated buildings to try it on. | [bask CLI and dashboard](#bask-cli-and-dashboard) |
+| MCP server | Claude and other MCP clients as AI agents on a station: points, history, alarms, schedules, changes with reasons, and pictures of Px pages. Packed as a Claude Desktop Extension. | [mcp/README.md](mcp/README.md) |
 | Integration direction | Compatibility rules and the future adapter strategy for Grafana, REST, OpenMetrics, and exporters. | [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) |
 | Python tools | Bench tests, quick station checks, and scripting experiments. | [Python test tools](#python-test-tools) |
 
@@ -202,6 +203,7 @@ docs/TERMS.md                    Open-source terms and third-party boundaries
 sdk/                             TypeScript SDK (login, calls, live watches, reconnects)
 cli/                             bask CLI and terminal dashboard, built on the SDK
 cli/install.sh, cli/install.ps1  One-line installers for the released executables
+mcp/                             MCP server and Claude Desktop Extension, built on the SDK
 .github/workflows/release-bask.yml
                                  Builds and publishes bask releases on bask-v* tags
 tools/baskstream-nav-tree.html   Companion guide and demo/test app
@@ -372,7 +374,7 @@ Most changes since API 1.5 are additive, but some requests that used to succeed 
 - **Model editing is stricter.** Previews now need `modelEditsEnabled` (not only apply), and each user may hold 8 open previews. Link and relation values are rejected inside `add_slot`/`update`; use `create_link`/`delete_link` and `write_relations`. Protected services and `program:` components cannot be edited, and actions flagged confirm-required need explicit confirmation.
 - **Limits replace failures.** A reply over 8 MiB returns `response_too_large` instead of closing the session. Alarm reads stop after examining 50,000 records (`truncatedReason: "examined_limit"`). A request running over 10 minutes gets `request_timeout` and the session closes. A client that falls behind gets `resync_required` instead of an unbounded backlog.
 - **COV is coalesced.** Each point appears once per batch with its latest value.
-- **Removed:** the MCP server and its Codex and Claude plugin templates are no longer part of this repository. **Not updated:** the Python tools cover read-only health, tree and values only.
+- **Removed, then back:** the first MCP server and its Codex and Claude plugin templates left this repository (2026-09-29). A new [MCP server](mcp/README.md), a thin layer over the SDK, is in `mcp/` (2026-11-18). **Not updated:** the Python tools cover read-only health, tree and values only.
 
 ## Metadata and discovery
 

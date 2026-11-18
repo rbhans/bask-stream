@@ -26,6 +26,10 @@ jobs:
       - name: SDK tests
         working-directory: sdk
         run: npm ci && npm test
+      # After the SDK: these use its fake station and its build.
+      - name: MCP server tests
+        working-directory: mcp
+        run: npm ci && npm test
       - name: CLI tests
         working-directory: cli
         run: npm ci && npm test

@@ -181,6 +181,6 @@ Images that a Px builds its ORD for at run time, and pages reached only through 
 These operations check a page as data. To see it as a person does, with live values, a client opens it in a web browser with its own session; the station serves it like any other page, and nothing here is needed for that.
 
 - The TypeScript SDK's `snapshot()` does it in headless Chrome, Chromium or Edge and returns PNG pictures with the page's title, HTTP status, failed requests and console errors ([sdk/README.md](../sdk/README.md#seeing-a-page)).
-- The baskStream MCP extension (1.2.0 and later) gives AI agents the same as `px_snapshot`.
+- The [MCP server](../mcp/README.md) (1.2.0 and later) gives AI agents the same as `px_snapshot`.
 - A useful loop for an agent: `write_px`, then a snapshot, look, fix.
 - It is the browser's rendering, through the user's web profile; Workbench can draw a page differently. Only what fits in the window is pictured.
