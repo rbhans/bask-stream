@@ -285,7 +285,8 @@ test("bask graphic: guide, print, save, list, get, show and rm", async () => {
   const printed = await bask("graphic", "print", file);
   assert.equal(printed.code, 0, printed.out);
   assert.match(printed.out, /VAV 105\s+Zone\s+Flow/);
-  assert.match(printed.out, /78\.\d °F/);
+  // VAV 105 is the demo's hot zone: 78.6 °F ± about 0.5 with the time of day, so 78.x or 79.x.
+  assert.match(printed.out, /7[89]\.\d °F/);
   assert.match(printed.out, /warning\s+slot:\/Drivers\/BacnetNetwork\/VAV_105\/points\/AirflowSetpoint could not be read/);
   const asJson = JSON.parse((await bask("graphic", "print", file, "-o", "json")).out);
   assert.equal(asJson.drawn, true);
