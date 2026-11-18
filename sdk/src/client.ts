@@ -6,6 +6,7 @@ import { BaskStreamError, CLIENT_ERRORS } from "./errors.js";
 import { StationHttp, type StationHttpOptions } from "./http.js";
 import { OPERATIONS, type OperationName } from "./operations.js";
 import { toSlotOrd } from "./ords.js";
+import { snapshotPage, type PxSnapshot, type SnapshotOptions } from "./snapshot.js";
 import type { Actor, AgentLog, AlarmFilter, BrowseNode, DiscoveredItem, Discovery, FileContent, FileEntry, JobDetail, JobSummary, Json, PointSnapshot, Proposal, QueryResult, ScheduleEntry, Weekday,
   GraphicsInventory, NavCheck, PxBindingCheck, PxInfo, PxNode, PxTargets, PxViewsResult } from "./types.js";
 
@@ -314,6 +315,17 @@ export class BaskStreamClient extends EventEmitter {
     const fields: Json = { ...options };
     if (options.under) fields.under = toSlotOrd(options.under);
     return (await this.call("graphics_inventory", fields, { timeoutMs: (options.timeoutMillis ?? 30000) + 30000 })).inventory as GraphicsInventory;
+  }
+
+  /**
+   * Pictures of a page as a person sees it in a web browser, with live values: a Px file
+   * (`^folder/Page.px`) or a component and view. Opens it in headless Chrome, Chromium or Edge on
+   * this computer with this connection's session (logging in again first if it has expired) and
+   * returns PNG frames. Nothing runs on the station beyond the page loading as it would for a person.
+   */
+  async snapshot(page: string, options: SnapshotOptions = {}): Promise<PxSnapshot> {
+    await this.ensureLogin();
+    return snapshotPage(this.http, page, options);
   }
 
   async jobs(): Promise<JobSummary[]> {

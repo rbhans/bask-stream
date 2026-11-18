@@ -118,4 +118,4 @@ Model plans leave the services that decide who can reach the station to Workbenc
 
 - **Platform work:** installing modules, commissioning, licenses and station copies go through the platform daemon, which a station module cannot reach.
 - **Program objects:** `program:` components cannot be created or edited remotely.
-- **Px validation and rendering.**
+- **Drawing Px pages:** the station doesn't render pages to pictures. Px checks are in [GRAPHICS.md](GRAPHICS.md); to see a page, a client opens it in a browser with its session, as the SDK's `snapshot()` does (see [sdk/README.md](../sdk/README.md#seeing-a-page)).

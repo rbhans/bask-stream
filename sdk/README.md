@@ -23,7 +23,7 @@ const open = await client.alarms({ scope: "open", order: "newest" });
 ```
 
 - **Login**: Niagara's SCRAM-SHA-256 web login, verifying the station's signature. Saved cookies are reused; the password is requested only when they have expired.
-- **Requests**: `call(op, fields)` sends any of the 60 operations (generated from `spec/baskstream-protocol.json`); failures reject with `BaskStreamError` whose `code` is the protocol error code, or `timeout`, `not_connected`, `connection_closed`, `login_failed`, `session_expired`, `bad_message`.
+- **Requests**: `call(op, fields)` sends any of the 67 operations (generated from `spec/baskstream-protocol.json`); failures reject with `BaskStreamError` whose `code` is the protocol error code, or `timeout`, `not_connected`, `connection_closed`, `login_failed`, `session_expired`, `bad_message`. `snapshot()` adds `browser_not_found` and `snapshot_failed`.
 - **Helpers**: `browse`, `describe`, `search`, `read`, `write`, `describeWrite`, `history`, `historyRollup`, `alarms`, `ackAlarms`, `clearAlarms`, `schedule`, `scheduleEvents`, `writeSchedule`, `subscriptionStatus`, `subscribeAlarms`.
 - **Live data**: `watch()` keeps a named subscription group: it renews the lease, re-reads after `resync_required`, and is restored after a reconnect. The client also emits `value`, `cov`, `alarm`, `model`, `resync`, `revoked` and `notice`.
 - **Staying connected**: keepalive pings; after a drop it reconnects with backoff (1 s → 30 s), logs in again if needed, and emits `disconnected`, `reconnecting`, `reconnected`.
@@ -42,6 +42,22 @@ agent.on("proposal", (p) => console.log(p.id, p.status)); // approved, rejected,
 People use `proposals()`, `approveProposal(id)` and `rejectProposal(id, note)`; `agentLog()` reads the `Agent` records from the station's audit history.
 
 While approval is required, an agent's other changes (files, discovery, model plans, tags, schedules, alarms) fail with `approval_required` unless the station's `agentDirect…` setting for that kind is on. `agent.capabilities.agents.direct` (API 1.11) says what is allowed: `{ pointWrites, files, discovery, modelEdits, tags, schedules, alarms }`. An agent's model plan cannot command a writable point (`agent_use_write`); use `write`.
+
+## Seeing a page
+
+`snapshot()` takes pictures of a Px page as a person sees it in a web browser, with live values, so an app or an AI agent can check a page after changing it:
+
+```ts
+const shot = await client.snapshot("^qag-demo/ahu.px");                                   // a Px file
+const unit = await client.snapshot("slot:/Drivers/BacnetNetwork/AHU_1", { view: "Graphic" }); // a component's view
+await writeFile("ahu.png", shot.frames[0].png);
+```
+
+- It opens the page in headless Chrome, Chromium or Microsoft Edge on this computer (`browser`, or `BASKSTREAM_BROWSER`, picks one), using this connection's session cookies; it logs in again first if they have expired. The browser gets a throwaway profile, deleted afterwards. Nothing is added to the station.
+- It waits for the page to load and its network to go quiet, then `settleMs` (default 3000) for bound values. `width` × `height` is the window (default 1600 × 900); only what fits is pictured. `frames` and `intervalMs` take several pictures to show animation or changing values.
+- The result has the PNG `frames` and what an agent needs to judge the page: `title`, `httpStatus`, `failedRequests` and the page's `consoleErrors`.
+- It's the browser's rendering, through the user's web profile; Workbench can differ.
+- Errors: `browser_not_found`, `session_expired` (the station sent the browser to its login page) and `snapshot_failed`. `snapshotPage(http, page, options)` does the same with a `StationHttp` alone.
 
 ## Develop
 

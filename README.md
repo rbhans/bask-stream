@@ -12,14 +12,14 @@ The repository's own code and documentation are open source under the [Apache Li
 
 ## Start here
 
-1. **Put the module on a station.** The signed `baskStream-rt.jar` at the repository root is API 1.11: [install it](#install-it-on-a-station), add `BASkStreamService`, and [decide its settings](#service-settings-to-decide), including what AI agents may do.
+1. **Put the module on a station.** The signed `baskStream-rt.jar` at the repository root is API 1.12: [install it](#install-it-on-a-station), add `BASkStreamService`, and [decide its settings](#service-settings-to-decide), including what AI agents may do.
 2. **Connect a client.** Talk to the [WebSocket protocol](docs/THIRD_PARTY_API.md) directly, use the [TypeScript SDK](#typescript-sdk), chart with the [Grafana data source](#grafana-integration), or work from a terminal with [`bask`](#bask-cli-and-dashboard), the command-line client built on the SDK.
 3. **No station yet?** [Install `bask`](#1-install) and run [`bask demo`](#2-try-it-without-a-station): a simulated building that speaks the same protocol.
 
 ## Current API highlights
 
-- The current source advertises API version `1.11`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
-- The signed `baskStream-rt.jar` at the repository root is built from this source and reports API `1.11` (see [Station setup](#station-setup)).
+- The current source advertises API version `1.12`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
+- The signed `baskStream-rt.jar` at the repository root is built from this source and reports API `1.12` (see [Station setup](#station-setup)).
 - API 1.11 adds the `agentDirect…` settings: while an agent's point writes wait for approval, a station can let it do chosen kinds of work by itself (station files, discovery, model edits, tags, schedules, alarms). `describe_component` also returns a component's `links`, which bask's Logic view draws. See the [compatibility notes](docs/THIRD_PARTY_API.md#api-111-changes).
 - API 1.12 adds [graphics](docs/GRAPHICS.md) operations: read a Px as data and validate it against the station's modules, write it with a backup, resolve one Px's bindings on many components with suggestions for the missing ones, attach it as a view in bulk, check nav files, and take an inventory of the station's graphics with a punch list.
 - API 1.10 adds the [headless Workbench](docs/HEADLESS_WORKBENCH.md) operations: BQL and NEQL queries, the station's files (Px, nav and so on), jobs, and BACnet discovery that adds devices and points with their facets learned. With model editing (create, wire, set any property, invoke any action), a client can engineer a station without Workbench. An opt-in `securityEditsEnabled` lets model plans edit users, roles and categories.
@@ -53,9 +53,10 @@ The repository's own code and documentation are open source under the [Apache Li
 [`sdk/`](sdk/README.md) is a typed client for the WebSocket API (Node 20+). It handles the connection plumbing every app otherwise repeats:
 
 - Niagara SCRAM-SHA-256 login with the station's signature verified, session reuse, and re-login when a session expires.
-- `call()` for all 60 operations, generated from [spec/baskstream-protocol.json](spec/baskstream-protocol.json), with protocol error codes on every failure, plus helpers such as `read`, `browse`, `historyRollup`, `alarms` and `writeSchedule`.
+- `call()` for all 67 operations, generated from [spec/baskstream-protocol.json](spec/baskstream-protocol.json), with protocol error codes on every failure, plus helpers such as `read`, `browse`, `historyRollup`, `alarms` and `writeSchedule`.
 - `watch()` subscription groups that renew their lease, re-read after `resync_required`, and come back after a reconnect.
 - Keepalive pings and reconnect with backoff.
+- `snapshot()`: pictures of a Px page as a person sees it in a web browser, with live values, so an app or an AI agent can check a page after changing it. It opens the page in headless Chrome, Chromium or Edge on the client's computer with the connection's session; nothing is added to the station. See [Seeing a page](sdk/README.md#seeing-a-page).
 
 ```ts
 const client = await BaskStreamClient.connect({ station: "https://my-jace", username: "tech", password: () => ask() });
@@ -187,7 +188,7 @@ For private signed installs, the Grafana root URL used during signing must exact
 ```text
 baskStream-rt/                   Niagara runtime module source
 niagara-module.xml               Module descriptor the Niagara build reads
-baskStream-rt.jar                Signed module jar built from this source (API 1.11)
+baskStream-rt.jar                Signed module jar built from this source (API 1.12)
 LICENSE                          Apache License 2.0 for this repository's code
 docs/THIRD_PARTY_API.md          Detailed WebSocket protocol guide
 docs/AI_AGENTS.md                AI agent rules: agent users, proposals, agentDirect settings
@@ -258,7 +259,7 @@ This is engineering guidance, not legal advice. Review the current [Tridium Niag
 
 ### Build the module
 
-The `baskStream-rt.jar` at the repository root is built from this source (API `1.11`) and code-signed, so most stations can [install it](#install-it-on-a-station) as it is. To build the module yourself:
+The `baskStream-rt.jar` at the repository root is built from this source (API `1.12`) and code-signed, so most stations can [install it](#install-it-on-a-station) as it is. To build the module yourself:
 
 1. Put this repository inside a Niagara 4 module workspace: the folder that holds Niagara's Gradle build (`gradlew`, `settings.gradle.kts`, and `gradle.properties` with `niagara_home` set to the Niagara install you build against). The workspace settings find `baskStream-rt/baskStream-rt.gradle.kts` as the `:baskStream-rt` project.
 2. From that workspace folder, regenerate the slot code, then build the jar:

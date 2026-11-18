@@ -19,5 +19,7 @@ export const CLIENT_ERRORS = {
   closed: "connection_closed",
   loginFailed: "login_failed",
   sessionExpired: "session_expired",
-  badMessage: "bad_message"
+  badMessage: "bad_message",
+  browserNotFound: "browser_not_found",
+  snapshotFailed: "snapshot_failed"
 } as const;

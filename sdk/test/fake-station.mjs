@@ -29,7 +29,7 @@ const ALARMS = [
 export async function startFakeStation() {
   const sessions = new Set();
   const scram = new Map();
-  const state = { sockets: new Set(), groups: new Map(), logins: 0, requests: [], proposals: new Map(), agentLog: [], files: new Map([["^px/Home.px", "<px/>"]]), jobs: new Map() };
+  const state = { sockets: new Set(), groups: new Map(), logins: 0, requests: [], proposals: new Map(), agentLog: [], files: new Map([["^px/Home.px", "<px/>"]]), jobs: new Map(), pages: [] };
   const salted = crypto.pbkdf2Sync(PASSWORD, SALT, ITERATIONS, 32, "sha256");
   const hmac = (key, text) => crypto.createHmac("sha256", key).update(text).digest();
 
@@ -51,6 +51,15 @@ export async function startFakeStation() {
     if (req.url === "/stream/metrics") {
       if (!sessions.has(sid)) return void res.writeHead(302).end();
       return void res.writeHead(200).end("baskstream_requests_total 3\n# EOF\n");
+    }
+    if (req.url.startsWith("/ord?")) {
+      // A page as the station's web UI serves it: a solid colour, a title and one console error,
+      // so a snapshot can be checked pixel by pixel. Without a session, the login page.
+      if (!sessions.has(sid)) return void res.writeHead(302, { Location: "/prelogin" }).end();
+      state.pages.push(decodeURIComponent(req.url.slice("/ord?".length)));
+      return void res.writeHead(200, { "Content-Type": "text/html" }).end(
+        '<!doctype html><html><head><title>Fake Px</title></head><body style="margin:0;background:#22aa66"><script>console.error("fake widget warning")</script></body></html>'
+      );
     }
     if (req.url === "/prelogin") return void res.writeHead(200).end("<html>login</html>");
     if (req.url === "/login") return void res.writeHead(200).end('<form action="j_security_check">');
