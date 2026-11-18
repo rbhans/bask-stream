@@ -83,7 +83,7 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/rbhans/bask-stream/main/cli/install.ps1 | iex
 ```
 
-It installs to `~/.local/bin/bask` (Windows: `%LOCALAPPDATA%\Programs\bask\bask.exe`, added to your user PATH). If `bask` is not found afterwards, open a new terminal or follow the PATH hint the installer prints. Run `bask --version` to check; it prints `0.6.0` for this release.
+It installs to `~/.local/bin/bask` (Windows: `%LOCALAPPDATA%\Programs\bask\bask.exe`, added to your user PATH). If `bask` is not found afterwards, open a new terminal or follow the PATH hint the installer prints. Run `bask --version` to check; it prints `0.7.0` for this release.
 
 ### 2. Try it without a station
 
