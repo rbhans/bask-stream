@@ -134,3 +134,49 @@ export function printPunchList(inv: GraphicsInventory, all: boolean): void {
   if (hidden > 0) console.log(chalk.dim(`\n${hidden} info item${hidden === 1 ? "" : "s"} (unused Px and image files) not shown; add --all.`));
   if (inv.truncated) console.log(chalk.yellow("Stopped at a limit; narrow it with --under."));
 }
+
+// ---- px snapshot: the page as a browser shows it (the SDK's snapshot(), on this computer) ---------
+
+/** "1600x900" → [1600, 900]. */
+export function parseSize(text: string): [number, number] {
+  const match = /^(\d{3,4})\s*[x×]\s*(\d{3,4})$/i.exec(text.trim());
+  if (!match) throw new Error(`Bad size "${text}" (use width x height, e.g. 1600x900).`);
+  return [Number(match[1]), Number(match[2])];
+}
+
+/**
+ * Where each frame goes: --out as given (or a name from the page: ahu.png, AHU_1-Graphic.png),
+ * with -1, -2… before .png when there are several frames.
+ */
+export function snapshotFiles(ord: string, frames: number, out?: string): string[] {
+  let base = out;
+  if (!base) {
+    const view = /\|view:([^|]+)/.exec(ord)?.[1];
+    const last = ord.replace(/\|view:[^|]*/, "").split(/[|/^:]/).filter(Boolean).pop() ?? "page";
+    base = `${[last.replace(/\.px$/i, ""), view].filter(Boolean).join("-").replace(/[^\w.-]+/g, "_") || "page"}.png`;
+  }
+  if (!/\.png$/i.test(base)) base += ".png";
+  if (frames === 1) return [base];
+  return Array.from({ length: frames }, (_, i) => base!.replace(/\.png$/i, `-${i + 1}.png`));
+}
+
+export interface SnapshotSummary {
+  ord: string;
+  url: string;
+  title: string;
+  httpStatus: number | null;
+  width: number;
+  height: number;
+  loadMs: number;
+  failedRequests: number;
+  consoleErrors: string[];
+  files: string[];
+}
+
+export function printSnapshot(s: SnapshotSummary): void {
+  const status = s.httpStatus === null ? "no status" : s.httpStatus >= 400 ? chalk.red(`HTTP ${s.httpStatus}`) : `HTTP ${s.httpStatus}`;
+  console.log(`${chalk.green("✓")} ${s.files.join(", ")} ${chalk.dim(`(${s.width}×${s.height})`)} from ${s.ord}`);
+  console.log(chalk.dim(`  ${s.title || "(no title)"} · `) + status + chalk.dim(` · quiet after ${(s.loadMs / 1000).toFixed(1)} s`));
+  if (s.failedRequests) console.log(chalk.yellow(`  ${s.failedRequests} request${s.failedRequests === 1 ? "" : "s"} failed (images, scripts or data the page asked for).`));
+  for (const message of s.consoleErrors) console.log(`  ${chalk.yellow("console")} ${message}`);
+}

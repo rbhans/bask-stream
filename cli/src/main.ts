@@ -1359,7 +1359,7 @@ graphic
 
 const px = program
   .command("px")
-  .description("Niagara Px graphics: read, validate and write Px files, check their bindings on many components, attach them as views, and check the station's graphics");
+  .description("Niagara Px graphics: read, validate and write Px files, check their bindings on many components, attach them as views, check the station's graphics, and take pictures of pages");
 
 const targetOptions = (command: Command) =>
   command
@@ -1502,6 +1502,36 @@ px
       if (g.output === "json") return console.log(JSON.stringify(inv, null, 2));
       if (g.output === "csv") return console.log(csv(["severity", "kind", "where", "target", "message"], inv.punchList.map((p) => [p.severity, p.kind, p.where, p.target ?? "", p.message])));
       printPunchList(inv, Boolean(opts.all));
+    })
+  );
+
+px
+  .command("snapshot")
+  .description("pictures of a page as a web browser shows it, with live values, saved as PNG: look at a Px after changing it (needs Chrome, Chromium or Edge on this computer; exit code 1 when the station answers with an error)")
+  .argument("<page>", "a Px file (^px/AHU_1.px), a component (slot:/…, its default view or --view), or a full ORD")
+  .option("--view <name>", "with a component: the view to open, e.g. Graphic")
+  .option("--out <file>", "PNG to write (default: a name from the page, e.g. AHU_1.png); several frames get -1, -2… before .png")
+  .option("--size <WxH>", "browser window; only what fits is pictured", "1600x900")
+  .option("--settle <duration>", "wait after the page loads, for bound values", "3s")
+  .option("--frames <n>", "pictures to take, --interval apart (animation, changing values)", "1")
+  .option("--interval <duration>", "time between frames", "3s")
+  .option("--browser <program>", "the Chrome, Chromium or Edge to use (or BASKSTREAM_BROWSER)")
+  .action((page: string, opts: { view?: string; out?: string; size: string; settle: string; frames: string; interval: string; browser?: string }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { parseSize, printSnapshot, snapshotFiles } = await import("./px.js");
+      const [width, height] = parseSize(opts.size);
+      const frames = Number(opts.frames);
+      if (!Number.isInteger(frames) || frames < 1 || frames > 10) throw new Error(`--frames is 1 to 10, not "${opts.frames}".`);
+      const shot = await client.snapshot(page, { view: opts.view, width, height, settleMs: parseDuration(opts.settle), frames, intervalMs: parseDuration(opts.interval), browser: opts.browser });
+      const files = snapshotFiles(shot.ord, shot.frames.length, opts.out);
+      shot.frames.forEach((frame, i) => {
+        mkdirSync(path.dirname(path.resolve(files[i])), { recursive: true });
+        writeFileSync(files[i], frame.png);
+      });
+      if (shot.httpStatus !== null && shot.httpStatus >= 400) process.exitCode = 1;
+      const summary = { ord: shot.ord, url: shot.url, title: shot.title, httpStatus: shot.httpStatus, width: shot.width, height: shot.height, loadMs: shot.loadMs, failedRequests: shot.failedRequests, consoleErrors: shot.consoleErrors, files: files.map((f) => path.resolve(f)) };
+      if (g.output === "json") return console.log(JSON.stringify(summary, null, 2));
+      printSnapshot({ ...summary, files });
     })
   );
 

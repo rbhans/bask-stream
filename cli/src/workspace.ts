@@ -175,6 +175,11 @@ The \`bask\` command is on your PATH and already points at this station. You act
 ## Showing the person things
 - \`bask show <ord>\` selects it in their Explorer pane, \`bask show --trend <ord>\` charts it, \`bask show --watch <ord>\` adds it to their watch list. Use these when you refer to a point, so they can see it.
 
+## Looking at a Px page
+- \`bask px snapshot <page> --out <file>.png\` saves a picture of a Niagara Px page as a web browser shows it, with live values: a Px file (\`^px/AHU_1.px\`) or a component with \`--view Graphic\`. Open the PNG and look at it. It also prints the page's HTTP status, failed requests and console errors.
+- Look after you write or change a page (\`bask px put\`), and fix what is wrong before you say it is done. Only what fits in the window is pictured (\`--size 1920x1080\` for more), and Workbench can draw a page a little differently.
+- \`bask px validate\`, \`bask px check\` and \`bask px qa\` check a page's markup and bindings; \`bask px --help\` lists the rest.
+
 ## Drawing a graphic
 - A graphic is a drawing of equipment in the person's terminal, moving, with live values: an air handler, a plant, a row of freezers. You write a small JSON file with no coordinates, naming symbols and points.
 - Read \`bask graphic guide\` first: it has the format, every symbol and an example. Then \`bask graphic print <file>\` shows the result as text with live values and lists anything wrong; fix the file until it reads well.

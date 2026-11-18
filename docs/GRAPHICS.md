@@ -182,5 +182,6 @@ These operations check a page as data. To see it as a person does, with live val
 
 - The TypeScript SDK's `snapshot()` does it in headless Chrome, Chromium or Edge and returns PNG pictures with the page's title, HTTP status, failed requests and console errors ([sdk/README.md](../sdk/README.md#seeing-a-page)).
 - The [MCP server](../mcp/README.md) (1.2.0 and later) gives AI agents the same as `px_snapshot`.
-- A useful loop for an agent: `write_px`, then a snapshot, look, fix.
+- From a terminal or a script, `bask px snapshot <page> --out page.png` saves the pictures as files ([cli/README.md](../cli/README.md)); an agent then opens the PNG to look at it.
+- A useful loop for an agent: `write_px` (`bask px put`), then a snapshot, look, fix.
 - It is the browser's rendering, through the user's web profile; Workbench can draw a page differently. Only what fits in the window is pictured.

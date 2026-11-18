@@ -385,11 +385,19 @@ class Browser {
   async close(): Promise<void> {
     await this.cdp.send("Browser.close").catch(() => undefined);
     this.cdp.close();
-    await Promise.race([this.exited, delay(5000)]);
+    await Promise.race([this.exited, idle(5000)]);
     if (this.child.exitCode === null && this.child.signalCode === null) {
       this.child.kill();
-      await Promise.race([this.exited, delay(5000)]);
+      await Promise.race([this.exited, idle(5000)]);
     }
     await rm(this.profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
+}
+
+/**
+ * Resolves after `ms` without keeping the process alive: a fallback raced against something that
+ * usually comes first. A plain timer would hold a short-lived program (a CLI) open until it fires.
+ */
+function idle(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms).unref());
 }

@@ -1,13 +1,15 @@
 // Runs the built CLI against the SDK's fake station with a throwaway config folder.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { findBrowser } from "@basidekick/baskstream";
 import { PASSWORD, USER, startFakeStation } from "../../sdk/test/fake-station.mjs";
+import { parseSize, snapshotFiles } from "../dist/px.js";
 
 const run = promisify(execFile);
 const main = fileURLToPath(new URL("../dist/main.js", import.meta.url));
@@ -134,6 +136,58 @@ test("agent-brief tells an agent how to work on this station", async () => {
   assert.match(out, /--allow-writes -y --reason/);
   assert.match(out, /bask show --trend <ord>/);
   assert.match(out, /bask discover <network ord> --points --add/);
+  assert.match(out, /bask px snapshot <page> --out <file>\.png/);
+});
+
+// px snapshot needs Chrome, Chromium or Edge on this computer; without one those tests are skipped.
+let hasBrowser = true;
+try {
+  findBrowser();
+} catch {
+  hasBrowser = false;
+}
+const withBrowser = hasBrowser ? {} : { skip: "no Chrome, Chromium or Edge on this computer" };
+
+test("px snapshot names its files from the page and reads --size", () => {
+  assert.deepEqual(snapshotFiles("file:^px/ahu.px", 1), ["ahu.png"]);
+  assert.deepEqual(snapshotFiles("station:|slot:/Drivers/AHU_1|view:Graphic", 2), ["AHU_1-Graphic-1.png", "AHU_1-Graphic-2.png"]);
+  assert.deepEqual(snapshotFiles("file:^px/Home.px", 1, "shots/home"), ["shots/home.png"]);
+  assert.deepEqual(parseSize("1920x1080"), [1920, 1080]);
+  assert.throws(() => parseSize("big"), /Bad size/);
+});
+
+test("px snapshot saves a picture of a page and says what the page did", withBrowser, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bask-shot-"));
+  try {
+    const file = join(dir, "home.png");
+    const { code, out } = await bask("px", "snapshot", "^px/Home.px", "--out", file, "--size", "400x300", "--settle", "0s");
+    assert.equal(code, 0, out);
+    assert.match(out, /home\.png \(400×300\) from file:\^px\/Home\.px/);
+    assert.match(out, /Fake Px · HTTP 200/);
+    assert.match(out, /console fake widget warning/);
+    const png = readFileSync(file);
+    assert.equal(png.toString("ascii", 1, 4), "PNG");
+    assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [400, 300]);
+
+    const json = await run(process.execPath, [main, "-o", "json", "px", "snapshot", "slot:/Drivers/Net/VAV_01", "--view", "Graphic", "--out", join(dir, "vav"), "--size", "320x240", "--settle", "0s", "--frames", "2", "--interval", "100ms"], { env: { ...process.env, BASKSTREAM_CONFIG_DIR: configDir, BASKSTREAM_PASSWORD: PASSWORD, FORCE_COLOR: "0" } });
+    const summary = JSON.parse(json.stdout);
+    assert.equal(summary.ord, "station:|slot:/Drivers/Net/VAV_01|view:Graphic");
+    assert.equal(summary.title, "Fake Px");
+    assert.equal(summary.httpStatus, 200);
+    assert.deepEqual(summary.files, [join(dir, "vav-1.png"), join(dir, "vav-2.png")]);
+    for (const f of summary.files) assert.ok(existsSync(f), f);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("px snapshot without a browser says so", async () => {
+  const result = await run(process.execPath, [main, "px", "snapshot", "^px/Home.px"], { env: { ...process.env, BASKSTREAM_CONFIG_DIR: configDir, BASKSTREAM_PASSWORD: PASSWORD, BASKSTREAM_BROWSER: "/nowhere/chrome", FORCE_COLOR: "0" } }).then(
+    () => ({ code: 0, out: "" }),
+    (e) => ({ code: e.code, out: e.stdout + e.stderr })
+  );
+  assert.equal(result.code, 1);
+  assert.match(result.out, /\[browser_not_found\] The browser \/nowhere\/chrome doesn't exist/);
 });
 
 test("workspace plans its panes for Rex and tmux without starting anything", async () => {
