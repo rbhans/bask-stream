@@ -9,6 +9,7 @@ import { decode, encode } from "@msgpack/msgpack";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { DEMO_SITES, type FieldDevice, type FieldObject, type SiteContext, type SiteName } from "./sites.js";
+import { siteFromRecording, type Recording } from "./recorded.js";
 
 export { DEMO_SITES, SITE_NAMES, type SiteName } from "./sites.js";
 export const DEMO_USER = "admin";
@@ -41,6 +42,14 @@ interface Node {
   props?: Record<string, { typeSpec: string; encoded: string; writable?: boolean }>;
   actions?: string[];
   tags?: string[];
+  /** Tags that hold a value (a marker is in `tags`). */
+  tagValues?: Record<string, string | number | boolean>;
+  /** Relations stored here that leave it. */
+  relations?: { id: string; to: string }[];
+  /** A schedule's special events, as read_schedule lists them. */
+  special?: any[];
+  /** When this point's history stopped recording, as a time; absent while it records. */
+  historyStoppedAt?: number;
   week?: Record<string, { start: string; finish: string; value: unknown; text: string }[]>;
   defaultOutput?: { value: unknown; text: string };
   /** For a device added from discovery: the controller it is, so its points can be discovered. */
@@ -181,9 +190,10 @@ const stamp = (ms: number) => {
   return `${d.getDate()}-${MONTHS[d.getMonth()]}-${String(d.getFullYear()).slice(2)} ${h % 12 || 12}:${pad2(d.getMinutes())} ${h < 12 ? "AM" : "PM"} MST`;
 };
 
-export async function startDemoStation(options: { live?: boolean; port?: number; site?: SiteName } = {}): Promise<DemoStation> {
+export async function startDemoStation(options: { live?: boolean; port?: number; site?: SiteName; recording?: Recording } = {}): Promise<DemoStation> {
   const live = options.live !== false;
-  const site = DEMO_SITES[options.site ?? "northgate"];
+  // A site recorded from a station (bask record) is played back in place of a built-in one.
+  const site = options.recording ? siteFromRecording(options.recording) : DEMO_SITES[options.site ?? "northgate"];
   const stationName = site.station;
   const started = Date.now();
   /** Simulation time: frozen when not live so tests see steady values. */
@@ -380,6 +390,10 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
   };
   Object.assign(c, { raise, alarms });
   site.alarms(c);
+  // The alarm classes the alarms are in are components of the alarm service, as on a station.
+  for (const cls of new Set([...alarms.values()].map((a) => String(a.alarmClass)))) {
+    if (!nodes.has(`${services}/AlarmService/${cls}`)) add(`${services}/AlarmService`, cls, "alarm:AlarmClass", "component");
+  }
 
   // ---- AI agents: proposals, the agent log and the station's audit history -----------------------
   const proposals = new Map<string, any>();
@@ -529,6 +543,19 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     const plain = plainOf(value);
     return (n) => void (n.slots = { ...n.slots, [slot]: plain });
   };
+  /** Sets a point's units, precision, state texts or options from a facets string, as slotsOf writes one. */
+  const facetsInto = (n: Node, encoded: string) => {
+    const units = /units=u:([^|;]+)(?:;([^|;]+))?/.exec(encoded);
+    const precision = /precision=i:(\d+)/.exec(encoded)?.[1];
+    const on = /trueText=s:([^|]*)/.exec(encoded)?.[1];
+    const off = /falseText=s:([^|]*)/.exec(encoded)?.[1];
+    const range = /range=E:\{([^}]*)\}/.exec(encoded)?.[1];
+    if (units) n.units = (units[2] ?? units[1]) === "null" || (units[2] ?? units[1]) === "undefined" ? undefined : units[2] ?? units[1];
+    if (precision) n.precision = Number(precision);
+    if (on !== undefined && off !== undefined) n.texts = [on, off];
+    if (range !== undefined) n.options = range.split(",").filter(Boolean);
+  };
+  const coerced = (n: Node, value: SlotValue) => (n.vt === "numeric" ? Number(value) : n.vt === "boolean" ? value === true || value === "true" : String(value));
   const planFor = (user: string, changes: any[], label?: string, agent = false) => {
     if (!Array.isArray(changes) || changes.length === 0) throw refuse("bad_request", "changes must be a nonempty array.");
     // What earlier changes in this plan will have made, so a later one can link to it: by its ORD, or by "@ref".
@@ -555,17 +582,18 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
                 return { index, action: "update", ord: c.ord, ok: true };
               } };
           }
-          for (const name of Object.keys(c.properties ?? {})) if (!n.props?.[name] && !(name === "fallback" && n.writable) && name !== "displayName") throw refuse("invalid_slot", `${n.name} has no property "${name}".`);
+          for (const name of Object.keys(c.properties ?? {})) if (!n.props?.[name] && !(name === "fallback" && n.writable) && !(name === "facets" && n.kind === "point") && name !== "displayName") throw refuse("invalid_slot", `${n.name} has no property "${name}".`);
           if (agent && n.writable && "fallback" in (c.properties ?? {})) throw useWrite("set fallback");
-          return { wire: { action: "update", ord: c.ord, properties: Object.fromEntries(Object.entries(c.properties ?? {}).map(([k, v]: [string, any]) => [k, { before: n.props?.[k]?.encoded ?? null, after: v.encoded }])) },
+          return { wire: { action: "update", ord: c.ord, properties: Object.fromEntries(Object.entries(c.properties ?? {}).map(([k, v]: [string, any]) => [k, { before: n.props?.[k]?.encoded ?? null, after: v.encoded ?? plainOf(v) }])) },
             run: () => {
               for (const [name, v] of Object.entries<any>(c.properties ?? {})) {
                 const before = n.props?.[name]?.encoded ?? "";
                 if (name === "displayName") n.display = v.encoded;
-                else if (name === "fallback") n.fallback = n.vt === "numeric" ? Number(v.encoded) : n.vt === "boolean" ? v.encoded === "true" : v.encoded;
+                else if (name === "fallback") n.fallback = coerced(n, plainOf(v));
+                else if (name === "facets" && n.kind === "point") facetsInto(n, String(v.encoded ?? ""));
                 else n.props![name].encoded = String(v.encoded);
                 if (name === "enabled" && /Device$/.test(n.typeSpec)) n.down = v.encoded !== "true";
-                auditAdd(Date.now(), user, "Changed", c.ord.replace(/^slot:/, ""), name, before, String(v.encoded));
+                auditAdd(Date.now(), user, "Changed", c.ord.replace(/^slot:/, ""), name, before, String(v.encoded ?? plainOf(v)));
               }
               return { index, action: "update", ord: c.ord, ok: true };
             } };
@@ -621,25 +649,36 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
             // A point or device built from a discovery result carries the object or controller it came from.
             const object = c.object as FieldObject | undefined;
             const controller = c.device as FieldDevice | undefined;
+            // Properties given with the create are set on the new component, as on a station.
+            const given = (c.properties ?? {}) as Record<string, any>;
+            const asProps = (names: string[]) => Object.fromEntries(Object.entries(given).filter(([name]) => name !== "displayName" && !names.includes(name)).map(([name, v]) => [name, { typeSpec: String(v?.typeSpec ?? "baja:String"), encoded: String(v?.encoded ?? plainOf(v)), writable: true }]));
             if (/^control:/.test(c.typeSpec)) {
               const vt = /Boolean/.test(c.typeSpec) ? "boolean" : /Enum/.test(c.typeSpec) ? "enum" : "numeric";
-              add(parent, c.name, c.typeSpec, "point", {
+              const made = nodes.get(add(parent, c.name, c.typeSpec, "point", {
                 vt, writable: /Writable/.test(c.typeSpec), units: object?.units, precision: object?.precision ?? 1, texts: object?.texts ?? ["Active", "Inactive"], options: object?.options ?? ["occupied", "unoccupied", "standby"],
                 fallback: object ? object.value : vt === "numeric" ? 0 : vt === "boolean" ? false : "occupied", sim: object?.sim
-              });
+              }))!;
+              if (given.facets) facetsInto(made, String(given.facets.encoded ?? ""));
+              if (given.fallback !== undefined) made.fallback = coerced(made, plainOf(given.fallback));
             } else if (/Device$/.test(c.typeSpec)) {
               add(parent, c.name, c.typeSpec, "container", {
                 actions: ["ping", "upload"], tags: controller?.tags, field: controller,
                 props: {
                   enabled: { typeSpec: "baja:Boolean", encoded: "true", writable: true },
                   address: { typeSpec: "baja:String", encoded: controller?.address ?? "", writable: true },
-                  ...(controller ? { objectId: { typeSpec: "bacnet:BacnetObjectIdentifier", encoded: `device:${controller.instance}`, writable: true } } : {}),
+                  ...(controller || given.objectId ? { objectId: { typeSpec: "bacnet:BacnetObjectIdentifier", encoded: controller ? `device:${controller.instance}` : "", writable: true } } : {}),
                   pollFrequency: { typeSpec: "driver:PollFrequency", encoded: "normal", writable: true },
                   health: { typeSpec: "baja:String", encoded: `Ok [${stamp(Date.now())}]` }
                 }
               });
-              add(ord, "points", "bacnet:BacnetPointDeviceExt", "container", { display: "Points" });
-            } else add(parent, c.name, c.typeSpec, /Folder$/.test(c.typeSpec) ? "container" : "component", { actions: [], props: {} });
+              const props = nodes.get(ord)!.props!;
+              for (const [name, v] of Object.entries(given)) if (props[name]?.writable) props[name].encoded = String(v?.encoded ?? plainOf(v));
+              add(ord, "points", String(c.typeSpec).replace(/Device$/, "PointDeviceExt"), "container", { display: "Points" });
+            } else if (/^schedule:/.test(c.typeSpec)) {
+              const vt = /Boolean/.test(c.typeSpec) ? false : /Numeric/.test(c.typeSpec) ? 0 : "";
+              add(parent, c.name, c.typeSpec, "schedule", { defaultOutput: { value: vt, text: String(vt) }, week: {} });
+            } else add(parent, c.name, c.typeSpec, /Folder$|Network$|DeviceExt$|Container$/.test(c.typeSpec) ? "container" : "component", { actions: [], props: asProps([]) });
+            if (given.displayName && nodes.get(ord)) nodes.get(ord)!.display = String(given.displayName.encoded ?? plainOf(given.displayName));
             auditAdd(Date.now(), user, "Added", parent.replace(/^slot:/, ""), c.name, "", c.typeSpec);
             return { index, action: "create", ord, ok: true };
           } };
@@ -715,7 +754,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     }
     const isPoint = n.kind === "point";
     const snap = isPoint ? snapshot(n.ord) : undefined;
-    const tags = [{ id: "n:name", value: n.name }, { id: "n:type", value: n.typeSpec }, { id: "n:station", value: stationName }, ...(isPoint ? [{ id: "n:point", value: "Marker" }] : []), ...(n.hasHistory ? [{ id: "n:history", value: `/${stationName}/${n.ord.split("/").slice(-3).filter((s) => s !== "points").join("_")}` }] : []), ...(n.tags ?? []).map((id) => ({ id, value: "Marker" }))];
+    const tags = [{ id: "n:name", value: n.name }, { id: "n:type", value: n.typeSpec }, { id: "n:station", value: stationName }, ...(isPoint ? [{ id: "n:point", value: "Marker" }] : []), ...(n.hasHistory ? [{ id: "n:history", value: `/${stationName}/${n.ord.split("/").slice(-3).filter((s) => s !== "points").join("_")}` }] : []), ...(n.tags ?? []).map((id) => ({ id, value: "Marker" })), ...Object.entries(n.tagValues ?? {}).map(([id, value]) => ({ id, value }))];
     return {
       ...wire(n), description: n.typeSpec,
       metadata: {
@@ -818,7 +857,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     "control:BooleanPoint": (n) => n.vt === "boolean", "control:BooleanWritable": (n) => n.vt === "boolean" && !!n.writable, "control:EnumPoint": (n) => n.vt === "enum", "control:EnumWritable": (n) => n.vt === "enum" && !!n.writable,
     "driver:Device": (n) => /Device$/.test(n.typeSpec), "bacnet:BacnetDevice": (n) => /Device$/.test(n.typeSpec), "driver:DeviceNetwork": (n) => /Network$/.test(n.typeSpec), "bacnet:BacnetNetwork": (n) => /Network$/.test(n.typeSpec),
     "schedule:AbstractSchedule": (n) => n.kind === "schedule", "schedule:WeeklySchedule": (n) => n.kind === "schedule", "baja:Component": () => true, "baja:Folder": (n) => n.typeSpec === "baja:Folder",
-    "history:HistoryExt": (n) => !!n.hasHistory, "alarm:AlarmSourceExt": (n) => !!n.alarm || !!n.fault, "control:IWritablePoint": (n) => !!n.writable, "baja:User": () => false
+    "history:HistoryExt": (n) => !!n.hasHistory, "alarm:AlarmSourceExt": (n) => !!n.alarm || !!n.fault, "control:IWritablePoint": (n) => !!n.writable, "alarm:AlarmClass": (n) => n.typeSpec === "alarm:AlarmClass", "baja:User": () => false
   };
   const column = (n: Node, name: string): unknown => {
     const snap = n.kind === "point" ? snapshot(n.ord) : undefined;
@@ -968,6 +1007,13 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     policy: { allowedPathPatterns: "slot:/*", slotBrowseOnly: true, hierarchyBrowse: true, historyOrdReads: true }
   });
 
+  /** The relations at a component, both ways, as read_tags lists them. */
+  const relationsAt = (ord: string, dictionary?: string) => {
+    const wireOf = (id: string, direction: "in" | "out", endpointOrd: string) => ({ id, dictionary: id.split(":")[0], name: id.split(":")[1], direction, endpointOrd, source: "direct" });
+    const found = (nodes.get(ord)?.relations ?? []).map((x) => wireOf(x.id, "out", x.to));
+    for (const other of nodes.values()) for (const x of other.relations ?? []) if (x.to === ord) found.push(wireOf(x.id, "in", other.ord));
+    return found.filter((x) => !dictionary || x.dictionary === dictionary);
+  };
   const handlers: Record<string, (ws: any, r: any) => Record<string, unknown> | void> = {
     ping: () => ({ op: "pong" }),
     capabilities: (ws) => ({ op: "capabilities_result", capabilities: CAPS(ws) }),
@@ -1053,7 +1099,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       const buckets: any[] = [];
       const value = (t: number) => Number(n.sim ? n.sim(t) : n.fallback);
       for (let t = r.start; t < r.end && buckets.length < 2000; t += r.interval) {
-        if (t > now) break;
+        if (t > (n.historyStoppedAt ?? now)) break;
         const samples = [0.1, 0.35, 0.6, 0.85].map((f) => value(t + r.interval * f));
         const avg = samples.reduce((a, b) => a + b, 0) / samples.length;
         buckets.push({ start: t, count: Math.max(1, Math.round(r.interval / 300000)), min: Math.min(...samples), max: Math.max(...samples), sum: avg * Math.max(1, Math.round(r.interval / 300000)), avg, first: samples[0], last: samples[3] });
@@ -1069,8 +1115,20 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       const n = nodes.get(r.ord);
       if (!n?.hasHistory) return { op: "history_result", history: { requestOrd: r.ord, start, end, limit, histories: [] } };
       const records: any[] = [];
-      for (let t = Math.ceil(start / 300000) * 300000; t <= Math.min(end, Date.now()) && records.length < limit; t += 300000) records.push({ timestamp: t, value: Number(n.sim ? n.sim(t) : n.fallback), status: "{ok}" });
+      for (let t = Math.ceil(start / 300000) * 300000; t <= Math.min(end, n.historyStoppedAt ?? Date.now()) && records.length < limit; t += 300000) records.push({ timestamp: t, value: Number(n.sim ? n.sim(t) : n.fallback), status: "{ok}" });
       return { op: "history_result", history: { requestOrd: r.ord, start, end, limit, histories: [{ historyId: `/${stationName}/${n.name}`, records, count: records.length, truncated: false }] } };
+    },
+    // What a point's histories hold, without their records: how many, the first and the last.
+    describe_history: (_ws, r) => {
+      const ord = r.ord ?? r.point ?? r.source;
+      const n = need(ord);
+      const last = Math.floor(Math.min(Date.now(), n.historyStoppedAt ?? Date.now()) / 300000) * 300000;
+      const histories = n.hasHistory ? [{
+        historyId: `/${stationName}/${n.ord.split("/").slice(-3).filter((s) => s !== "points").join("_")}`, enabled: true,
+        config: { id: `/${stationName}/${n.name}`, capacity: "2016 records", interval: "5 minutes", fullPolicy: "Roll" },
+        totalCount: 2016, firstTimestamp: last - 2015 * 300000, lastTimestamp: last
+      }] : [];
+      return { op: "history_description", history: { requestOrd: ord, count: histories.length, histories } };
     },
     read_schedule: (_ws, r) => {
       const s = need(r.ord);
@@ -1080,7 +1138,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       return { op: "schedule_result", schedule: {
         ord: s.ord, slotPath: s.ord, name: s.name, display: s.display, typeSpec: s.typeSpec, kind: "schedule", at, status: "{ok}", effectiveNow: true,
         currentOutput: valueWire(outputAt(s, at)), defaultOutput: valueWire(s.defaultOutput!), nextEvent: next?.time ?? null,
-        tree: { typeSpec: s.typeSpec, name: s.name, week: Object.fromEntries(DAYS.map((d) => [d, { name: d, day: (s.week?.[d] ?? []).map((e) => ({ start: e.start, finish: e.finish, effectiveValue: valueWire(e), display: `${e.start} - ${e.finish}: ${e.text}` })) }])), specialEvents: [] }
+        tree: { typeSpec: s.typeSpec, name: s.name, week: Object.fromEntries(DAYS.map((d) => [d, { name: d, day: (s.week?.[d] ?? []).map((e) => ({ start: e.start, finish: e.finish, effectiveValue: valueWire(e), display: `${e.start} - ${e.finish}: ${e.text}` })) }])), specialEvents: s.special ?? [] }
       } };
     },
     read_schedule_events: (_ws, r) => {
@@ -1203,11 +1261,74 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
         const tags = (describe(n).metadata.tags as { id: string; value: unknown }[]).filter((tag) => !r.dictionary || tag.id.startsWith(`${r.dictionary}:`)).map((tag) => {
           const [dictionary, name] = tag.id.split(":");
           const marker = tag.value === "Marker";
-          return { id: tag.id, dictionary, name, value: marker ? null : tag.value, valueType: marker ? "baja:Marker" : "baja:String", marker, source: dictionary === "n" ? "implied" : "direct" };
+          return { id: tag.id, dictionary, name, value: marker ? null : tag.value, valueType: marker ? "baja:Marker" : typeof tag.value === "number" ? "baja:Double" : typeof tag.value === "boolean" ? "baja:Boolean" : "baja:String", marker, source: dictionary === "n" ? "implied" : "direct" };
         });
-        return { ord, ok: true, slotPath: ord, display: n.display, typeSpec: n.typeSpec, tags, relations: [] };
+        return { ord, ok: true, slotPath: ord, display: n.display, typeSpec: n.typeSpec, tags, relations: r.includeRelations === false ? [] : relationsAt(ord, r.dictionary) };
       })
     }),
+    write_tags: (ws, r) => {
+      if (r.dryRun) throw refuse("bad_request", "write_tags has no dry run.");
+      const targets = (r.targets ?? [{ ord: r.ord, set: r.set, remove: r.remove }]) as any[];
+      agentChange(ws, r, "write_tags", String(targets[0]?.ord ?? ""), "tags");
+      const done = targets.map((target) => {
+        const n = nodes.get(target.ord);
+        if (!n) return { ord: target.ord, ok: false, code: "invalid_component", message: `No component at ${target.ord}.` };
+        const results: any[] = [];
+        for (const tag of (target.set ?? []) as any[]) {
+          const id = String(tag.id);
+          if (!/^[A-Za-z][\w]*:[A-Za-z][\w]*$/.test(id) || id.startsWith("n:")) { results.push({ op: "set", id, ok: false, code: "tag_failed", message: "Not a tag id that can be written here." }); continue; }
+          n.tags = (n.tags ?? []).filter((t) => t !== id);
+          if (n.tagValues) delete n.tagValues[id];
+          if (tag.value === undefined || tag.value === null) n.tags.push(id);
+          else n.tagValues = { ...n.tagValues, [id]: tag.value };
+          auditAdd(Date.now(), userOf(ws), "Changed", target.ord.replace(/^slot:/, ""), `tag:${id}`, "", tag.value === undefined || tag.value === null ? "M" : String(tag.value));
+          results.push({ op: "set", id, ok: true });
+        }
+        for (const id of (target.remove ?? []) as string[]) {
+          const had = (n.tags ?? []).includes(id) || (n.tagValues && id in n.tagValues);
+          if (!had) { results.push({ op: "remove", id, ok: false, code: id.startsWith("n:") ? "implied_tag" : "tag_not_found", message: id.startsWith("n:") ? "An implied tag cannot be removed." : "No direct tag with this id exists on the component." }); continue; }
+          n.tags = (n.tags ?? []).filter((t) => t !== id);
+          if (n.tagValues) delete n.tagValues[id];
+          auditAdd(Date.now(), userOf(ws), "Removed", target.ord.replace(/^slot:/, ""), `tag:${id}`);
+          results.push({ op: "remove", id, ok: true });
+        }
+        const changed = results.filter((x) => x.ok).map((x) => `${x.op === "set" ? "add" : "remove"} ${x.id}`);
+        if (changed.length) agentDid(ws, r, target.ord, "write_tags", changed.join(", "));
+        return { ord: target.ord, ok: results.every((x) => x.ok), results };
+      });
+      return { op: "tags_written", targets: done };
+    },
+    write_relations: (ws, r) => {
+      if (r.dryRun) throw refuse("bad_request", "write_relations has no dry run.");
+      const targets = (r.targets ?? [{ ord: r.ord, add: r.add, remove: r.remove }]) as any[];
+      agentChange(ws, r, "write_relations", String(targets[0]?.ord ?? ""), "tags");
+      const done = targets.map((target) => {
+        const n = nodes.get(target.ord);
+        if (!n) return { ord: target.ord, ok: false, code: "invalid_component", message: `No component at ${target.ord}.` };
+        const results: any[] = [];
+        for (const rel of (target.add ?? []) as any[]) {
+          const id = String(rel.id), endpoint = String(rel.endpoint ?? "");
+          const other = nodes.get(endpoint);
+          if (!other) { results.push({ op: "add", id, endpoint, ok: false, code: "bad_reference", message: `No component at ${endpoint}.` }); continue; }
+          const [holder, to] = rel.inbound ? [other, target.ord] : [n, endpoint];
+          if (!(holder.relations ?? []).some((x) => x.id === id && x.to === to)) holder.relations = [...(holder.relations ?? []), { id, to }];
+          auditAdd(Date.now(), userOf(ws), "Added", target.ord.replace(/^slot:/, ""), `relation:${id}`, "", endpoint.replace(/^slot:/, ""));
+          results.push({ op: "add", id, endpoint, ok: true });
+        }
+        for (const rel of (target.remove ?? []) as any[]) {
+          const id = String(rel.id);
+          const before = (n.relations ?? []).length;
+          n.relations = (n.relations ?? []).filter((x) => !(x.id === id && (!rel.endpoint || x.to === rel.endpoint)));
+          const removed = before - n.relations.length;
+          if (removed) auditAdd(Date.now(), userOf(ws), "Removed", target.ord.replace(/^slot:/, ""), `relation:${id}`);
+          results.push(removed ? { op: "remove", id, ok: true, removed } : { op: "remove", id, ok: false, code: "relation_not_found", message: "No direct relation with this id exists on the component." });
+        }
+        const changed = results.filter((x) => x.ok).map((x) => `${x.op} ${x.id}`);
+        if (changed.length) agentDid(ws, r, target.ord, "write_relations", changed.join(", "));
+        return { ord: target.ord, ok: results.every((x) => x.ok), results };
+      });
+      return { op: "relations_written", targets: done };
+    },
     subscribe_model: (ws, r) => {
       const bases = (r.bases ?? [r.base ?? "slot:/"]) as string[];
       ws.modelBases = new Set([...(ws.modelBases ?? []), ...bases]);
@@ -1220,6 +1341,11 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     describe_component_types: (_ws, r) => {
       const info = (typeSpec: string) => ({ typeSpec, module: "kitControl", abstract: false, interface: false, component: true, superType: LOGIC[typeSpec].vt === "numeric" ? "control:NumericPoint" : "control:BooleanPoint", runtimeProfile: "rt" });
       if (r.typeSpec) {
+        // A device comes with its points folder, a frozen slot: all the demo says about a driver type.
+        if (/^[a-z]\w*:\w+Device$/.test(r.typeSpec)) {
+          const ext = String(r.typeSpec).replace(/Device$/, "PointDeviceExt");
+          return { op: "model_result", operation: "describe_component_types", result: { typeSpec: r.typeSpec, module: String(r.typeSpec).split(":")[0], abstract: false, interface: false, component: true, superType: "driver:Device", runtimeProfile: "rt", slots: [{ name: "points", kind: "property", dynamic: false, flags: 0, facets: "", typeSpec: ext, writable: false, value: { typeSpec: ext, expand: true } }] } };
+        }
         const type = LOGIC[r.typeSpec];
         if (!type) throw refuse("unknown_type", `The demo station describes its logic blocks only: ${Object.keys(LOGIC).join(", ")}.`);
         const sample: Node = { ord: "slot:/@type", name: r.typeSpec, display: r.typeSpec, typeSpec: r.typeSpec, kind: "point", children: [], vt: type.vt, logic: r.typeSpec, slots: { ...Object.fromEntries(Object.keys(type.ins).map((slot) => [slot, null])), ...type.defaults, ...type.config }, precision: 1 };
@@ -1413,7 +1539,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     station: stationName,
     user: DEMO_USER,
     password: DEMO_PASSWORD,
-    state: { nodes, alarms, proposals, agentLog, audit, files, jobs, sockets, counters, propose, pushProposal, raise, pushAlarm, agentRecord, auditAdd, snapshot, point },
+    state: { nodes, links, alarms, proposals, agentLog, audit, files, jobs, sockets, counters, propose, pushProposal, raise, pushAlarm, agentRecord, auditAdd, snapshot, point },
     push: broadcast,
     dropAll() {
       for (const ws of sockets) ws.terminate();

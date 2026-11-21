@@ -59,6 +59,19 @@ Colours follow the terminal: bask asks it whether it is light or dark as it star
 
 `bask fleet` connects to every saved station (or the profiles you name) and shows a card for each: its link, unacknowledged and open alarms, what the AI is waiting on or did last, and the first points on its watch list, live. Underneath, the newest alarms from all stations in one list. `⏎` or a number opens a station's full dashboard; `q` there comes back. A station whose saved login has expired says so on its card, with the `bask login` command to run.
 
+Two more commands run across saved stations and print a list. Both only read.
+
+```bash
+bask fleet check                          # bask check on every saved station
+bask fleet check north south --rules our-standard.json
+bask fleet diff --against standard/       # every station against a folder of export files
+```
+
+- `bask fleet check` prints one line per station with its counts, then every error and warning with the station's profile beside it. `--under` and `--rules` work as in `bask check`. The exit code is 1 when any station has an error or could not be checked.
+- `bask fleet diff --against <dir>` takes a folder of files from `bask export` (or one file). Each file is compared with its own branch on each station, so the list shows where each station departs from the standard. "added" is on the station and not in the standard. The exit code is 1 when any station differs or could not be compared.
+- With no profiles named, both cover every saved station once, leaving out the demo profiles. A station that cannot be reached is listed with the reason, and the others still run. A saved login that has expired is an error here, not a password prompt; set `BASKSTREAM_PASSWORD` to log in again without one.
+- `-o json` and `-o csv` give the same lists.
+
 ## Demo buildings
 
 `bask demo` needs no station. There are five simulated buildings, each with its own equipment, alarms, schedules, files and AI agent history, and each keeps changing while it runs. They start in different states, so there is one to look at and two to work on:
@@ -168,6 +181,256 @@ bask show --logic slot:/Logic/AHU_01                 # open a sheet in the Logic
 
 **For an AI agent.** `bask logic guide` gives the file format (create blocks, link slots, set properties), the kitControl blocks used most with their real slot names, and a complete example. The agent writes a file, `bask plan` checks it and says what it would do, `--apply` makes the changes, and `bask logic print` reads back what every slot holds, so the agent can see whether the logic does what it meant. Applying a plan as an agent needs `agentDirectModelEdits` on the station; commanding a point stays a proposal.
 
+## Station check
+
+`bask check` reads the station and prints a punch list: what is wrong or worth a look, most serious first. It changes nothing. It sends only `query`, `browse`, `describe_component`, `read_schedule`, `read_history`, `describe_history`, `read_alarms` and `graphics_inventory`, so a login with read permission is enough and `--allow-writes` is not needed.
+
+```bash
+bask check                                   # the whole station, as a table
+bask check --under slot:/Drivers/BacnetNetwork
+bask check -o json                           # also -o csv
+bask check --html northgate-check.html       # one page to hand to an owner
+bask check --rules our-standard.json         # your own rules
+```
+
+The exit code is 1 when any finding is an error, so it can run on a schedule. Severities are `error`, `warning`, `review` and `info`.
+
+The HTML page is one file with its styles inside it: no scripts, no images, nothing loaded from elsewhere.
+
+**What the starter rules check**
+
+| Group | Rule id | Finds |
+|---|---|---|
+| Points | `points.fault`, `points.down`, `points.stale` | Points in fault, down or stale. Points under a device that is itself reported down are not listed again |
+| | `points.overriddenLong` | Points overridden for more than 8 hours. The time comes from the station's audit history: the newest override of the point in the last 7 days |
+| | `points.overridden` | Points that are overridden now and not already listed as long |
+| | `points.noUnits` | Numeric points with no units |
+| | `points.outsideFacets` | A value outside the min and max in the point's own facets |
+| Histories and alarms | `histories.missing`, `alarms.missing` | A point with no history (or alarm extension) when at least three quarters of the other points with the same name have one |
+| | `histories.stopped` | A point whose history records on an interval and has no record for more than 24 hours. Points under a device that is reported down are not listed again |
+| | `alarms.unusedClasses` | An alarm class that no alarm extension names and that no alarm in the alarm database is in |
+| Names | `names.devices`, `names.points` | A name that joins its words differently (underscores, hyphens, spaces, joined words) from at least 80% of its siblings |
+| | `names.pointSet` | A device that lacks a point most devices named like it have (`VAV_108` has `ZnTmp` where the other `VAV_*` have `ZoneTemp`) |
+| Devices | `devices.down`, `devices.duplicateAddress`, `devices.noPoints`, `networks.empty` | Devices down, two BACnet devices with one address, devices with no points, networks with no devices |
+| Schedules | `schedules.unreferenced`, `schedules.noEvents` | Schedules no link leaves, and schedules with nothing in their week |
+| | `schedules.pastExceptions` | Special events whose dates name a year and are all over |
+| Graphics | `graphics.qa` | The `bask px qa` list |
+| Security posture | `security.defaultAccounts` | Enabled accounts with a common default name (`admin`, `guest`, `operator`…), as `review`. bask reads the user list only. It never tries a password |
+
+**Limits, and what is left out**
+
+- `points.overriddenLong` reads the last 7 days of the audit history, up to 5,000 records. A point with no override on record is taken to be overridden for at least as long as the records read go back, and the finding says so. When the read stops at its limit, such a point is left as plainly overridden. The set time is the rule's: change the `8` in its test with a rule file.
+- `histories.stopped` asks the station about each point's histories, one request a point, for up to 2,000 points. It looks only at histories that record on an interval, and only when the gap is over three intervals. A history that records on change of value may rightly go quiet, so it is left alone. A history that never recorded is not listed either. On a station with many histories this is the slowest rule; `{"id": "histories.stopped", "off": true}` in a rule file leaves it out.
+- `alarms.unusedClasses` reads up to 1,000 alarms. A class used only by something that is not an alarm extension, and with no alarm in the database, is listed though it is in use.
+- `schedules.pastExceptions` goes by the year in a special event's date text. An event with no year (one that comes round each year) is left alone. A date bask cannot read counts as the last day of its year.
+- Northgate has one of each planted: AHU-2's fan overridden sixteen hours ago, a history on VAV-106 that stopped three days ago, an alarm class `afterHours` that nothing uses, and last December's holiday on the OfficeHours schedule. The other buildings have none.
+- `points.outsideFacets` is tested on rows made for the test, not on a station: the simulated points have no min and max.
+- `schedules.unreferenced` looks at links only. A schedule that something reads by ORD still counts as unreferenced.
+- `devices.duplicateAddress` asks for `bacnet:BacnetDevice`. Other drivers need a rule of their own.
+- `graphics.qa` needs baskStream API 1.12. On an older station, and on the simulated buildings (API 1.11), it is listed as skipped with the reason.
+- A rule the station refuses (a type it does not have, a query it rejects) is skipped and named; the other rules still run.
+- A query returns at most 5,000 rows and a walk covers at most 20,000 components. A rule that hits a limit says so. Narrow it with `--under`.
+- The rules were tested on the simulated buildings only, not on a real station.
+
+**Rules are data.** A rule names where its rows come from, a test, and a severity. `--rules <file>` takes `{"rules": [...]}`:
+
+```json
+{
+  "rules": [
+    { "id": "points.overridden", "severity": "error" },
+    { "id": "security.defaultAccounts", "off": true },
+    {
+      "id": "site.hotZones", "group": "Site standard", "title": "Zone above 76 °F", "severity": "warning",
+      "query": { "bql": "select slotPath, out.value from control:NumericPoint where name = 'ZoneTemp'" },
+      "test": { "is": "compare", "all": [{ "field": "out.value", "op": "above", "value": 76 }] },
+      "message": "reads {out.value}, above 76"
+    }
+  ]
+}
+```
+
+- A rule whose `id` is in the starter set changes only the fields it gives. `"off": true` drops it. Any other `id` adds a rule. `"replace": true` beside `"rules"` leaves the starter set out.
+- Source, one of: `"query": {"bql": "..."}` or `{"neql": "..."}`; `"walk": {"type": "*Device", "kind": "point", "name": "VAV*"}` (components of the tree, with the fields `ord`, `name`, `typeSpec`, `kind`, `status`, `parent`, `children`, `points`; add `"describe": true` for `linksIn` and `linksOut`, `"schedule": true` for `events`, `pastExceptions` and `pastExceptionNames`); or `"graphics": true`.
+- A query can read more about each row with `"add"`: `"overrideAge"` gives `overriddenHours` and `overriddenFor` from the audit history, and `"historyAge"` gives `lastRecordHours`, `lastRecordFor`, `historyId` and `historyInterval` from `describe_history`.
+- Test (`"is"`): `found` (every row), `compare` (`all` conditions with `op` `equals`, `notEquals`, `matches`, `notMatches`, `above`, `below`, `empty`, `notEmpty`), `duplicate` (`field`), `outsideFacets` (`value`, `facets`), `missingAmongAlike` (`key`, `alike`, `having`), `notNamedBy` (`key`, `by`, and `"alarms": true` to count alarm records as use), `nameStyle`, `pointSet`.
+- `message` is filled from the row: `{slotPath}`, `{out}`. `where` names the field that says where the finding is. `unless` lists rules whose findings this one does not repeat.
+- `bask check -o json` lists every rule that ran with its `id`, how many rows it looked at and how many findings it made.
+
+## Station as text
+
+`bask export <ord>` prints a branch as JSON: every component under the ORD with its type, the properties set on it, the links that arrive at it, and its own tags and relations.
+
+```bash
+bask export slot:/Drivers/BacnetNetwork > network.json
+bask diff network.json slot:/Drivers/BacnetNetwork     # the file against the station now
+bask diff monday.json friday.json                      # two files; no station needed
+bask diff slot:/Drivers/BacnetNetwork/AHU_01 slot:/Drivers/BacnetNetwork/AHU_02
+bask diff north:Drivers/BacnetNetwork south:Drivers/BacnetNetwork   # two saved stations
+bask apply network.json                                # what would make the station match the file
+bask apply network.json --allow-writes --yes           # make those changes
+```
+
+Two exports of an unchanged branch are the same bytes, so the file can go in version control.
+
+- Components are in path order. Paths are relative to the exported ORD (`.` is the ORD itself), so two branches can be compared.
+- A property is left out when it equals the default of its type. The station is asked for each type's defaults with `describe_component_types`. When it cannot say, every property of that type is written.
+- Left out because they change while the station only runs: read-only and transient slots (values, status, health, times), inputs a link feeds, and the priority inputs `in1`–`in16` of writable points. An override is not in an export.
+- Left out as secrets: slots whose name or type looks like a password, secret, token, key, credential or certificate, and anything the station redacts. A secret in a slot with an ordinary name and a plain string type is not recognised.
+- No handles: a value that is a handle ORD (`h:2c45e`) is left out. Links and relations are written by slot path.
+- Only tags and relations stored on the component are written, not the ones a tag dictionary implies.
+- A component the login cannot read is written with its path and type and `"unreadable": true`.
+- An export holds at most 20,000 components. A larger branch is refused; export it in parts.
+- Reading is one `describe_component` request per component, so a large branch takes a while.
+- Tested on the simulated buildings only. On a real station the list of what counts as state may need more entries; `bask diff` of two exports taken a minute apart shows them.
+
+`bask diff <a> <b>` compares two exports. Each side is a file, or a branch that is exported first. It lists components added and removed, and for a component on both sides the type, properties, links, tags and relations that changed. `-o json` and `-o csv` give the same list. The exit code is 1 when they differ.
+
+A side written `<profile>:<branch>` is a branch on that saved station, so one run can compare two stations, or a file with any station. A side with no profile is on the current station. A name that is a file on this computer is always read as a file.
+
+### Apply
+
+`bask apply <file>` writes an export back. It exports the branch as it is now, compares it with the file, and lists the changes that would make the branch match. **It changes nothing unless you add `--yes`** (with `--allow-writes`, as for every command that changes the station).
+
+```bash
+bask apply ahu.json                         # preview against the branch the file was exported from
+bask apply ahu.json --to slot:/Drivers/BacnetNetwork/AHU_09
+bask apply ahu.json --allow-writes --yes    # make the changes, then read the branch back
+bask apply ahu.json --prune --allow-writes --yes
+```
+
+- The changes are model plans: `create`, `update`, `create_link`, `delete_link` and, with `--prune`, `delete`. The station checks each plan with `preview_model_changes` and makes it with `apply_model_changes`, as `bask plan` does. Tags and relations are not plan operations, so they are written after the plans with `write_tags` and `write_relations`; the station has no preview for those.
+- A plan holds at most 100 changes. New components come first, then properties, links and deletes. In a preview, the station can check a plan only when it does not touch what an earlier plan adds; the others say so and are checked when they are applied.
+- A component that comes with its parent (a new device's points folder) is not created a second time. bask asks the station what a new component of the parent's type already holds.
+- Without `--prune`, a component on the station that the file does not have is reported and left alone.
+- `--to` names another branch. A branch that is not there is created with the file's root type; its parent must exist.
+- After `--yes`, the branch is exported again and compared with the file. The output says whether it now matches.
+- If the station refuses a plan, bask stops there and reports it. It does not retry.
+- As an agent, `apply` needs `agentDirectModelEdits` and `agentDirectTags` on the station, and a `--reason`.
+
+**Limits.** These are reported as differences and never applied: `program:` objects, protected services (users, roles, authentication, categories, security, Fox, Web, audit history, programs, baskStream itself) and platform settings. Every run prints this. Also not applied, each with its reason: a component whose type differs (delete it and apply again), a link whose slot cannot be told from the station's reply, and a property the file leaves at a default the station does not report. Secrets are not in an export, so they are not applied. The station's change sets are not built yet, so the plans are applied directly and there is no one-step undo. Tested on the simulated buildings only: applying an export to an empty folder and exporting it again gives no difference there.
+
+### Templates
+
+A template is an export with named gaps, written `${name}`. A CSV file fills them: its first line names the gaps, and each later line is one copy.
+
+```bash
+bask export slot:/Drivers/BacnetNetwork/VAV_101 > vav.json    # then replace what differs per unit with ${name}
+bask apply --template vav.json --each units.csv                # preview every row
+bask apply --template vav.json --each units.csv --allow-writes --yes
+```
+
+```json
+{ "format": "bask-export", "version": 1, "root": "slot:/Drivers/BacnetNetwork/${device}",
+  "components": [{ "path": ".", "type": "bacnet:BacnetDevice", "properties": { "address": "${address}" } }] }
+```
+
+```
+device,address
+VAV_201,MSTP 3:1
+VAV_202,MSTP 3:2
+```
+
+- A gap can be anywhere in the file: the root, a path, a property, a tag. `--to` takes gaps too.
+- A gap with no column in the CSV is an error that names it, and nothing is applied.
+- The template is JSON, whatever the file is called. A YAML reader accepts JSON, but bask does not read other YAML.
+- Each row is previewed or applied in turn, with the same limits as `bask apply`.
+
+## Meaning
+
+`bask model infer` proposes what the station's components mean: which are equipment and of what kind (air handler, VAV box, chiller, plant…), what each point under them is for (supply air temperature, cooling valve command…), and which equipment feeds which. Every proposal has a confidence between 0 and 1 and a reason in words. `infer` writes nothing to the station.
+
+```bash
+bask model infer                              # writes <station>-model.json and prints a table
+bask model infer --under slot:/Drivers/BacnetNetwork --out reviews/north.json
+bask model write Northgate-model.json         # what would be written as tags and relations
+bask model write Northgate-model.json --allow-writes --yes
+bask model export Northgate-model.json --format haystack > northgate-haystack.json
+bask model export Northgate-model.json --format brick > northgate.ttl
+```
+
+It reads names, types, units, value types, the folder shape and any Haystack tags already there. Points are grouped under the device they belong to, or under their folder when no device is above them. Names are split into words and BAS abbreviations are spelled out (`SAT` is supply air temp, `ZnTmp` is zone temp) with the same word table the station uses for `bask px check --suggest`.
+
+- An equipment's confidence comes from its name, from the points it has, and from siblings named alike that came out the same kind ("name says vav; has zone temperature, damper command; 7 siblings agree").
+- A point's confidence comes from how close its name is to a role's, whether its units fit, and whether it is writable ("name 1.00, units °F, read-only").
+- A proposal is never above 0.95. Only what is already tagged on the station is 1, and it is marked confirmed.
+- A point whose name is not close to any role is `unknown` with a low confidence. It is not guessed.
+- A component that is itself a control point is never equipment, and a proxy extension (or anything else inside a point) is never a point. A lone point in a folder is a point of that folder, and the folder is `unknown` unless its name says more.
+
+**What serves what.** The file's `serves` list says which equipment feeds which: an air handler its VAV boxes (air), a chilled or hot water plant the units that have a valve for its water, a chiller or boiler its plant. Every entry bask worked out has `"inferred": true`. The reasons, strongest first:
+
+- A link joins the two, directly or through up to three logic blocks ("a link joins them (VAV_105/DamperPosition → AHU_02/MostOpen → AHU_02/SupplyFanSpeed)"). The kinds say which way the air or water goes, not the link.
+- The fed unit's name holds the feeder's name (`AHU1_VAV_3` holds `AHU_1`).
+- The feeder is the only one of its kind in the folder, or on the station.
+- When two could equally be the feeder and nothing tells them apart, nothing is proposed. Northgate has eight VAV boxes and two air handlers with no link or name between them, so it gets no air proposals.
+- A relation the station already holds (`hs:airRef`, `hs:chilledWaterRef`, `hs:hotWaterRef`) is listed as it is, confirmed and not marked inferred.
+- Reading links is one request a point, for up to 4,000 components. `--no-links` skips it.
+
+**The review file** is JSON. Equipment is listed with the least certain first, and so are the points inside each. Set `"confirmed": true` on what is right. Where a proposal is wrong, change `kind` or `role`, `label` and `tags`, then confirm it. Running `infer` again on the same file keeps what was confirmed. The table shows the equipment and the points under 0.7; the rest are in the file.
+
+`bask model write <file>` puts the confirmed entries on the station. **It lists what it would write and writes nothing unless you add `--yes`** (with `--allow-writes`). An entry that is not confirmed is never written.
+
+- Confirmed equipment gets `hs:equip` and its tags as Haystack markers. A confirmed point gets `hs:point` and its tags.
+- A confirmed point under confirmed equipment gets the relation `hs:equipRef` to it. A confirmed `serves` entry is a relation on the unit that is fed: `hs:airRef`, `hs:chilledWaterRef` or `hs:hotWaterRef`.
+- What the station already holds is left out, so a second run has nothing to do. Nothing is ever removed.
+- The preview is worked out from `read_tags`; the station has no dry run for tag writes. After writing, the tags and relations are read back.
+- A review file made on one station is refused on another. A confirmed entry whose component has gone is named and left out. A tag that is not a Haystack name is named and left out.
+- It uses `write_tags` and `write_relations`. As an agent it needs `agentDirectTags` and a `--reason`. The station's change sets are not built yet, so the writes are made directly; the audit history records each one.
+
+`bask model export <file> --format haystack` writes the confirmed entries as a Haystack grid in JSON (version 3.0 encoding: `m:` marker, `r:` ref, `s:` string). Equipment rows have `equip` and their kind tags; point rows have `point`, their role tags, `equipRef`, `kind`, `unit`. A confirmed `serves` entry is an `airRef`, `chilledWaterRef` or `hotWaterRef` on the fed unit's row. `axSlotPath` holds the slot ORD. Unconfirmed entries are never exported.
+
+`--format brick` writes them as a Brick model in Turtle: each equipment and point with its Brick class, `brick:isPointOf` from a point to its equipment, and `brick:feeds` for a confirmed `serves` entry. The class names were checked against Brick 1.3.0. A kind or role with no class of its own there (cooler, UPS, PDU, generator, door status, load) is written as `brick:Equipment` or `brick:Point` and named in a comment at the end. Units are not written.
+
+Limits:
+
+- It knows 18 kinds of equipment and about 55 point roles, mostly HVAC. Anything else comes out `unknown`.
+- What serves what covers air handlers, plants, chillers and boilers. Pumps, towers and fan coil units on an air handler are not proposed.
+- Tags are written as Haystack only. Brick is an export, not something written to the station.
+- The `resolve` operation and bindings by role are not built: they need a change to the station module.
+- Tested on the simulated buildings with their tags removed, where it finds the kind of every device the tags named, and on thirty VAV boxes named three ways. It has not been run on a real station since the fix for lone points.
+
+## Test bench for agents
+
+Three commands for trying work away from a building and for measuring an agent.
+
+**Record.** `bask record` turns a station into a site file. It reads the tree, what every point holds now, the open alarms, each schedule's week, the tags, and a day of history for each numeric point. It only reads.
+
+```bash
+bask record                                   # writes <station>-site.json
+bask record --under slot:/Drivers --hours 48 --interval 30m --out sites/plant.json
+bask record --scramble                        # replace names
+bask replay Northgate-site.json               # the dashboard on the recorded site
+bask replay Northgate-site.json --serve       # only run it; then: bask -p demo-recorded <command>
+```
+
+- `bask replay` runs the file as a simulated station on port 47910 and saves it as the profile `demo-recorded`, so every other command works on it. Points with a recorded history play it back and repeat it; the others hold the value they had. Open alarms are there, as old as they were.
+- `--scramble` replaces names so the file does not say whose building it is. In each name, digits and the words that only say what a thing is are kept (`AHU`, `Supply`, `Temp`, `Plant`…); every other word becomes a made-up word, the same one each time in that file. `Hartwell_Annex_AHU_01` becomes something like `Gufudusi_Nubif_AHU_01`. The station is called `Recorded`. Alarm text is rebuilt from the alarm's state and source, not copied. Tags outside `hs:` and `n:` are dropped. Top-level containers and the services keep their names.
+- Not recorded: links and logic, property values other than a point's facets, files and graphics, histories of points that are not numeric, special events, the audit history, users. Device addresses are not in the file. Look through a scrambled file before you share it: state texts, enum options and schedule entry names are copied as they are.
+- A recording holds at most 20,000 components, and one history request is sent per numeric point.
+- Tested by recording the simulated buildings and playing them back. It has not been run on a real station.
+
+**Eval.** `bask eval --agent <command>` runs an agent on a set of jobs and scores each one from the simulated station as the agent left it. What the agent prints is not read.
+
+```bash
+bask eval --list
+bask eval --agent "claude -p"                 # all four tasks
+bask eval --agent "claude -p" --task northgate-ahu2-logic --timeout 20m -o json
+```
+
+The four tasks are the four things to show above:
+
+| Task | Building | The job | Scored from |
+|---|---|---|---|
+| `northgate-faults` | Northgate | Find what is wrong and write it to `^notes/faults.md` | That file on the station: does it name the dead device, the chiller in fault, the fan left overridden, the zone in alarm and the stopped history; and that nothing else changed |
+| `harbor-graphics` | Harbor | Draw the freezers and coolers, and the compressor rack | The graphics saved on the station: each must be a graphic with no errors that binds to that equipment's points |
+| `eastgate-bringup` | Eastgate | Discover the BACnet network, add everything, draw the plants and air handlers | The controllers (of 46) and points (of 614) now in the station, and the six graphics |
+| `northgate-ahu2-logic` | Northgate | Give AHU-2 the same supply air reset and cooling loop as AHU-1 | The links and blocks on the station: the valve follows a loop, the loop reads AHU-2's supply air and a reset, the reset reads AHU-2's outdoor air, both have AHU-1's settings, and AHU-1's logic is untouched |
+
+- Each task starts a fresh station. The agent command runs through the shell in an empty folder with `bask` on its PATH, logged in as the station's agent user, so the agent rules apply to it. The job is on its standard input and in `BASK_EVAL_PROMPT`; `{prompt}` and `{task}` in the command are replaced.
+- The report gives each task's score (0 to 1), the time, the `bask` commands the agent ran, how many changes the station refused, and how many point writes became proposals. The overall score is the mean.
+- While a task runs, the station's values are frozen and its scripted agent is off, so an agent that runs the same commands gets the same score. An agent that is not the same each time will not.
+- The first task stands for the README's "a finished station": that one has no job for an agent, so the job is to find Northgate's planted faults.
+- It needs a POSIX shell: on Windows, run it under WSL. It was tested with a scripted agent, not with a model.
+
 ## Workspace
 
 `bask workspace` lays out a station workspace in Rex (Superlogical's terminal multiplexer) or tmux: an Explorer, Alarms and AI Activity pane, and an AI agent session (Claude Code by default) that works on the station through `bask`. It needs Rex or tmux installed. The agent pane runs `claude` (Claude Code); when that is not on the PATH, the workspace starts without an agent pane and says so. `--agent <command>` starts another agent and `--no-agent` leaves the pane out.
@@ -206,7 +469,9 @@ The first time, bask asks for that user's password once (it says so: "Password f
 
 As it starts, the workspace says who is who: "Claude Code is signed in as ai-claude; you are admin", and whether the station itself counts that user as an agent. It does when the user is listed in `agentUsers` on BASkStreamService; then the agent rules (approval, reasons, limits) follow that user however it connects, and its changes are under its own name in the audit history. In the agent's pane, `bask status` shows the user and the rules it works under. With no agent login the agent shares yours, and the workspace says so.
 
-**What the agent may do by itself.** With `agentApprovalRequired` on (the default), the station turns an agent's point writes into proposals and refuses every other change unless the matching `agentDirect…` setting on BASkStreamService is on (baskStream API 1.11):
+**Asking first.** `bask explain write --point <ord>` (or `explain write_file --path ^px/Home.px`, `explain write_tags`…) says what the station would do with a change and which setting decides, without making it (baskStream API 1.13). A person can add `--user <name>` to ask about an agent's user. `bask status` names the agent profile a login follows, if the station has given it one.
+
+**What the agent may do by itself.** By default the station turns an agent's point writes into proposals (`agentPointWrites` is `ask`; from API 1.13 it can also be `refuse` or `allow`) and refuses every other change unless the matching `agentDirect…` setting on BASkStreamService is on (baskStream API 1.11):
 
 | To let the agent | Set |
 |---|---|
@@ -214,6 +479,8 @@ As it starts, the workspace says who is who: "Claude Code is signed in as ai-cla
 | run BACnet discovery and add what it finds | `agentDirectDiscovery` = true |
 | build and change the station (logic, renames, deletes) | `agentDirectModelEdits` = true |
 | tag, schedule, acknowledge alarms | `agentDirectTags`, `agentDirectSchedules`, `agentDirectAlarms` |
+
+From API 1.14 a kind of work can also be set to wait for a person instead of being refused (`agentAskKinds`). A command whose change waits prints `proposed P8: …` and exits with code 2: the change was not made, and it should not be sent again. `bask -o json` prints `{"outcome": "proposed", "proposal": {…}}`. `bask status` lists those kinds under "waits for a person". A person approves with `bask approve P8`, sees everything agents did with `bask changes`, and puts a change back with `bask revert P8`.
 
 The workspace says what the agent may do as it starts, and warns when the layout needs something the station does not allow (graphics in the `graphics` layout, discovery in `build`). `bask status` in the agent's pane lists it under "may do by itself", and the AI Activity header shows it. A refused change names the setting that would allow it. Discovery over a whole building is many changes: `bask discover` waits its turn under `agentMaxChangesPerMinute` rather than failing, so raise that limit if it should go faster. The demo buildings allow files under `^bask/*` and `^notes/*`, discovery, model edits and tags, and leave schedules and alarms to people.
 
@@ -240,7 +507,7 @@ A saved login lapses when nothing uses it for a while, and an agent cannot type 
 | `bask call <op> '<json>'` | Any operation (gated ones need `--allow-writes`) |
 | `bask query "<bql>"` · `bask query --neql "<tags>" [--base ord] [--limit n]` | A BQL select or a NEQL tag query |
 | `bask files [path]` · `bask cat <path> [--out file]` | List and read the station's files (`^px/Home.px`) |
-| `bask put <file> <path> [--overwrite]` · `bask rm <path> [--recursive]` | Upload or delete station files; needs `--allow-writes`; confirms |
+| `bask put <file> <path> [--overwrite]` · `bask rm <path> [--recursive]` | Upload or delete station files; needs `--allow-writes`; confirms. A file larger than one message is sent in pieces, up to 16 MiB (API 1.14) |
 | `bask px read <path> [--refs]` · `bask px validate <path> [--local]` | What a Px imports, binds to and links to; check it against this station's modules and types (exit code 1 on errors) |
 | `bask px put <file> <path> [--overwrite] [--no-backup]` | Validate a local Px and write it; a replaced file is kept under `^bask/backups`. Needs `--allow-writes` |
 | `bask px check <path> [ords...] [--under ord --name 'VAV*' --type t] [--views] [--relative-to ord] [--suggest] [--matrix]` | Resolve a Px's bindings on many components: which deviate from the template, and the likeliest points for missing ones |
@@ -251,7 +518,9 @@ A saved login lapses when nothing uses it for a while, and an agent cannot type 
 | `bask jobs` · `bask job <ord> [--cancel]` | Station jobs; one job's state, log and results |
 | `bask discover <network\|device...> [--add] [--points] [--no-wait]` | BACnet discovery: the devices on a network, or the points of devices. `--add` adds everything found that is not there yet; `--points` on a network does every device under it. Needs `--allow-writes` |
 | `bask add <job> <slots...\|all> [--parent ord] [--apply]` | Plan for adding chosen discovery results; `--apply` adds them, a hundred at a time (needs `--allow-writes`) |
-| `bask proposals [--all]` · `bask approve <id>` · `bask reject <id> [--note]` | AI agent proposals waiting for a person; approving runs the write with your permissions (needs `--allow-writes`) |
+| `bask proposals [--all]` · `bask approve <id>` · `bask reject <id> [--note]` | AI agent proposals waiting for a person; approving makes the change with your permissions (needs `--allow-writes`) |
+| `bask changes [--status s] [--kind k]` · `bask revert <id> [--force] [--partial]` | Every change AI agents asked for or made in the last week, with what the check afterwards found; `revert` puts one back with your permissions (needs `--allow-writes`; baskStream API 1.14) |
+| `bask resolve <equip> <role...> [--tag name]` | The point that plays a role on a piece of equipment, such as `bask resolve Drivers/BacnetNetwork/AHU_1 discharge air temp`. Inferred from tags and names; exit code 1 when no match is clearly best (API 1.14) |
 | `bask agent-log [--since 24h]` | What AI agents did, from the station's audit history |
 | `bask metrics` | OpenMetrics text |
 | `bask tui [--view <name>] [--pane] [--no-mouse] [--theme dark\|light]` | The dashboard (also what `bask` alone runs), opened on a view |
@@ -260,6 +529,19 @@ A saved login lapses when nothing uses it for a while, and an agent cannot type 
 | `bask logic print <folder> [--trace block.slot]` | A folder's logic as a wire sheet in text, with live values and every link listed |
 | `bask logic guide` | How to build logic through bask: the plan file, the common blocks and their slots, an example |
 | `bask plan <file> [--apply] [--show ord]` | Check a JSON file of station changes (components, properties, links, actions) and list them; `--apply` makes them (needs `--allow-writes`) |
+| `bask check [--under ord] [--rules file] [--html file]` | A read-only punch list for the station from a set of rules: points, histories, names, devices, schedules, graphics, accounts. Exit code 1 when there are errors |
+| `bask export <ord>` | A branch as JSON: components, types, set properties, links, tags and relations. The same bytes every time the branch is unchanged |
+| `bask diff <a> <b>` | Compare two exports, an export and a live branch, two branches, or two saved stations (`<profile>:<branch>`): added, removed and changed. Exit code 1 when they differ |
+| `bask apply <file> [--to ord] [--prune]` | List the changes that would make a branch match an export file; `--yes` makes them (needs `--allow-writes`). `program:` objects, protected services and platform settings are reported and never applied |
+| `bask apply --template <file> --each <csv> [--to ord]` | Stamp out an export with `${name}` gaps once per CSV row |
+| `bask fleet check [profiles...] [--under ord] [--rules file]` | `bask check` on every saved station, with each one's errors and warnings. Exit code 1 when any has errors |
+| `bask fleet diff [profiles...] --against <dir>` | Every saved station against a folder of export files. Exit code 1 when any departs |
+| `bask model infer [--under ord] [--out file] [--no-links]` | Propose equipment kinds, point roles and what serves what, each with a confidence and a reason, in a review file to edit. Writes nothing to the station |
+| `bask model write <file>` | List the tags and relations the confirmed entries of a review file would add; `--yes` writes them (needs `--allow-writes`). Unconfirmed entries are never written |
+| `bask model export <file> --format haystack\|brick` | The confirmed entries of a review file as a Haystack grid (JSON) or a Brick model (Turtle) |
+| `bask record [--under ord] [--out file] [--hours n] [--interval 15m] [--scramble]` | Read a station into a demo site file: structure, values, alarms, schedules, a day of histories. `--scramble` replaces names |
+| `bask replay <file> [--serve] [--port n]` | Run a recorded site as a simulated station (profile `demo-recorded`) and open the dashboard on it |
+| `bask eval --agent <command> [--task id...] [--timeout 30m] [--list]` | Run an agent on four scored jobs on the simulated buildings; the score reads each station as the agent left it |
 | `bask agent-brief` | The briefing an AI agent gets on working with this station |
 | `bask symbols [--list]` | The terminal symbol library: animated equipment drawn in text, with example assemblies |
 | `bask graphic guide` | How to write a graphic: the format, every symbol with its ports, an example |
@@ -269,7 +551,7 @@ A saved login lapses when nothing uses it for a while, and an agent cannot type 
 | `bask fleet [profiles...] [--demo]` | Every saved station at once: alarms, AI activity and live values per station, and all alarms in one list |
 | `bask demo [--site <name>] [--fleet] [--list] [--view <name>] [--serve] [--port <n>]` | The dashboard on a simulated building; `--serve` only runs the station |
 
-`-o json` or `-o csv` on any listing command; `-p <profile>` picks a station. ORDs may drop the `slot:/` prefix.
+`-o json` or `-o csv` on any listing command; `-p <profile>` picks a station. ORDs may drop the `slot:/` prefix. Output of any size arrives whole through a pipe (`bask ... -o json | jq`); up to 0.8.0 the standalone executable stopped at 65,536 bytes.
 
 - Profiles live in `~/.config/baskstream/profiles.json` (mode 0600; `$XDG_CONFIG_HOME/baskstream` when that is set, Windows `%APPDATA%\baskstream`; `BASKSTREAM_CONFIG_DIR` overrides all of these). The password is never saved: it is prompted, or read from `BASKSTREAM_PASSWORD` if you set it.
 - `--insecure` accepts a self-signed station certificate.

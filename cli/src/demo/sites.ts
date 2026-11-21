@@ -182,9 +182,16 @@ const northgate: Site = {
       bool(p, "PlantEnable", ["Enabled", "Disabled"], true, { writable: true });
     }
     nodes.get(point("AHU_02/SupplyFanSpeed"))!.override = { value: 85 };
+    // Planted for bask check: a history that stopped three days ago, an alarm class nothing uses, and
+    // (below) a holiday left over from last year beside one still to come.
+    nodes.get(point("VAV_106/Airflow"))!.historyStoppedAt = Date.now() - 72 * HOUR;
+    add("slot:/Services/AlarmService", "afterHours", "alarm:AlarmClass", "component");
+    const year = new Date().getFullYear();
+    const holiday = (name: string, date: string) => ({ name, display: date, effectiveNow: false, day: [], days: { typeSpec: "schedule:DateSchedule", name: "days", display: date, alwaysEffective: false, effectiveNow: false, effectiveValue: null, date } });
 
     add(schedules, "OfficeHours", "schedule:BooleanSchedule", "schedule", {
       defaultOutput: { value: false, text: "Unoccupied" },
+      special: [holiday("WinterBreak", `24 Dec ${year - 1}`), holiday("NewYear", `1 Jan ${year + 1}`)],
       week: weekdays([{ start: "06:30", finish: "18:00", value: true, text: "Occupied" }], [{ start: "08:00", finish: "13:00", value: true, text: "Occupied" }])
     });
     add(schedules, "ZoneSetback", "schedule:NumericSchedule", "schedule", {
@@ -245,6 +252,8 @@ const northgate: Site = {
     agentRecord(past(18), agentUser, point("AHU_02/SupplyFanSpeed"), "override", { outcome: "refused", code: "agent_rate_limited", ...who, change: "override 60.0 %", reason: "Trimming fan speed after hours." });
     propose(point("VAV_105/ZoneSetpoint"), "override", 70, "Room 105 is in high-temperature alarm at 78.6 °F; lowering the setpoint 2 °F for 30 minutes to drive more air.", past(3), 30);
     auditAdd(past(380), "admin", "Changed", "/Services/AlarmService/critical", "priority", "40", "30");
+    // The override on AHU-2's fan that nobody released: sixteen hours old.
+    auditAdd(past(962), "admin", "Invoked", "/Drivers/BacnetNetwork/AHU_02/points/SupplyFanSpeed", "override", "", "85.0 %");
     auditAdd(past(140), "admin", "Login", "/Services/WebService", "", "", "192.168.0.125");
   },
   files({ file }) {

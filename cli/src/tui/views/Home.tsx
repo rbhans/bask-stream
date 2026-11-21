@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { pointWritesShort, type AgentRules } from "../../agent-rules.js";
 import { Box, Text } from "ink";
 import type { BaskStreamClient, JobSummary, Json, Proposal } from "@basidekick/baskstream";
 import { ago, alarmMessage, alarmState, fmtPoint, isUnacked, place, sparkline } from "../../format.js";
@@ -154,7 +155,7 @@ export function HomeView(props: {
           <>
             <Text wrap="truncate-end">
               {pending.length > 0 ? <><Badge text={`${pending.length} waiting for you`} color={theme.warn} /><Text>  </Text></> : <Text color={theme.good}>✓ nothing waiting   </Text>}
-              <Text color={theme.muted}>{rules.approvalRequired ? "writes need approval" : "agents write directly"} · {rules.maxChangesPerMinute ? `${String(rules.maxChangesPerMinute)}/min` : "no rate limit"}</Text>
+              <Text color={theme.muted}>{pointWritesShort(rules as AgentRules)} · {rules.maxChangesPerMinute ? `${String(rules.maxChangesPerMinute)}/min` : "no rate limit"}</Text>
             </Text>
             {pending.slice(0, 2).map((p) => (
               <Text key={p.id} wrap="truncate-end">

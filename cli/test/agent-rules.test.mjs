@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { BaskStreamClient } from "@basidekick/baskstream";
-import { directShort, directWork, mayWriteFile } from "../dist/agent-rules.js";
+import { directShort, directWork, mayWriteFile, pointMode, pointWritesText } from "../dist/agent-rules.js";
 import { startStation } from "./harness.mjs";
 
 const NET = "slot:/Drivers/BacnetNetwork";
@@ -41,6 +41,14 @@ test("what the rules leave an agent free to do is read from capabilities, and an
   // Approval off: everything goes straight through.
   assert.deepEqual(directWork({ approvalRequired: false }), { known: true, all: true, kinds: ["every change its Niagara role allows"] });
   assert.equal(mayWriteFile({ approvalRequired: false }, "^px/Home.px"), true);
+  // API 1.13: each kind has its own setting, so point writes being direct says nothing about the rest.
+  const split = { approvalRequired: false, pointWrites: "allow", unlistedPoints: "allow", direct: { pointWrites: true, files: [], discovery: false, modelEdits: false, tags: true, schedules: false, alarms: false } };
+  assert.deepEqual(directWork(split), { known: true, all: false, kinds: ["point commands", "tags"] });
+  assert.equal(mayWriteFile(split, "^px/Home.px"), false);
+  assert.equal(pointWritesText(split), "point writes go straight through");
+  assert.equal(pointWritesText({ approvalRequired: false, pointWrites: "refuse", direct: { files: [] } }), "point writes are refused");
+  assert.equal(pointMode({ approvalRequired: true }), "ask");
+  assert.equal(pointMode({ approvalRequired: false }), "allow");
   // Nothing turned on.
   assert.equal(directShort({ approvalRequired: true, direct: { files: [] } }), "nothing else direct");
   assert.equal(person.capabilities.agents.isAgent, false);

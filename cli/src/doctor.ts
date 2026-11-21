@@ -1,4 +1,4 @@
-import { directWork, type AgentRules } from "./agent-rules.js";
+import { directWork, pointWritesText, type AgentRules } from "./agent-rules.js";
 import chalk from "chalk";
 import { BaskStreamClient, BaskStreamError, StationHttp } from "@basidekick/baskstream";
 import { getProfile, type Profile } from "./config.js";
@@ -161,7 +161,7 @@ export async function runDoctor(profileName: string | undefined, stationArg: str
       print({
         name: "AI agents",
         outcome: "ok",
-        detail: `${agents.isAgent ? "this login is treated as an agent" : "this login is a person"} · ${agents.agentUsersConfigured ? "agent users configured" : "no agent users listed"} · approval ${agents.approvalRequired ? "required" : "off"}${agents.approvalRequired ? ` · agents may do by themselves: ${!work.known ? "only propose point writes (baskStream older than API 1.11)" : work.kinds.join(", ") || "nothing but propose point writes"}` : ""} · ${agents.pendingProposals ?? 0} waiting`
+        detail: `${agents.isAgent ? "this login is treated as an agent" : "this login is a person"} · ${agents.agentUsersConfigured ? "agent users configured" : "no agent users listed"} · ${pointWritesText(agents)}${!work.all ? ` · agents may do by themselves: ${!work.known ? "only propose point writes (baskStream older than API 1.11)" : work.kinds.join(", ") || "nothing but propose point writes"}` : ""} · ${agents.pendingProposals ?? 0} waiting`
       });
     }
   } catch (error) {

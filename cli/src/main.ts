@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { BaskStreamError, OPERATIONS, StationHttp, toSlotOrd, type Actor, type AlarmFilter, type BrowseNode, type JobDetail, type Json, type Proposal } from "@basidekick/baskstream";
+import { BaskStreamError, ChangeProposedError, OPERATIONS, StationHttp, toSlotOrd, type Actor, type AlarmFilter, type BrowseNode, type JobDetail, type Json, type Proposal } from "@basidekick/baskstream";
 import { configDir, getProfile, loadStore, putProfile, removeProfile, setCurrent, updateProfile } from "./config.js";
 import { alarmMessage, alarmState, csv, fmtDuration, isUnacked, fmtPoint, fmtTime, fmtValue, parseDuration, parseTime, parseValue, shortOrd, sparkline, statusColor, table } from "./format.js";
 import { confirm, promptHidden } from "./prompt.js";
@@ -18,8 +18,11 @@ import { DEMO_SITES, SITE_NAMES, type SiteName } from "./demo/sites.js";
 import { Link } from "./link.js";
 import { agentBrief, buildLayout, detectMux, launch, selfArgv, sessionExists, shq, writeShim, type LayoutName } from "./workspace.js";
 import { chooseAgentLogin, describeChoice, openAgentLogin, type AgentChoice, type AgentLogin } from "./agent-login.js";
-import { directWork, mayWriteFile, type AgentRules } from "./agent-rules.js";
+import { askedWork, directWork, mayWriteFile, pointWritesText, type AgentRules } from "./agent-rules.js";
 import type { TargetOptions } from "./px.js";
+import { exitWhenFlushed, pipeSafeConsole } from "./output.js";
+
+pipeSafeConsole();
 
 const VIEW_NAMES = ["home", "explorer", "watch", "alarms", "trends", "schedules", "query", "files", "jobs", "activity", "graphics", "logic"] as const;
 type ViewName = (typeof VIEW_NAMES)[number];
@@ -172,11 +175,13 @@ program
       const agents = caps.agents as AgentRules | undefined;
       if (agents?.isAgent) {
         rows.push(["acting as", `an AI agent${agents.actor?.name ? `: ${agents.actor.name}` : ""}${agents.actor?.onBehalfOf ? ` for ${agents.actor.onBehalfOf}` : ""}`]);
-        rows.push(["agent rules", [agents.approvalRequired ? "point writes wait for a person's approval" : "point writes go straight through", agents.reasonRequired ? "every change needs --reason" : "", agents.maxChangesPerMinute ? `${agents.maxChangesPerMinute} changes a minute` : "", agents.allowEmergency ? "" : "no emergency overrides"].filter(Boolean).join(" · ")]);
-        if (agents.approvalRequired) {
+        if (agents.profile) rows.push(["agent profile", `${agents.profile}${agents.profileOff ? chalk.yellow(` (${agents.profileOff}: nothing may be changed)`) : ""}${agents.pathPatterns ? ` · reaches ${agents.pathPatterns}` : ""}`]);
+        rows.push(["agent rules", [pointWritesText(agents), agents.reasonRequired ? "every change needs --reason" : "", agents.maxChangesPerMinute ? `${agents.maxChangesPerMinute} changes a minute` : "", agents.allowEmergency ? "" : "no emergency overrides"].filter(Boolean).join(" · ")]);
+        if (!directWork(agents).all) {
           const work = directWork(agents);
           rows.push(["may do by itself", !work.known ? `only propose point writes (this station's baskStream, API ${caps.apiVersion ?? "?"}, is older than 1.11)` : work.kinds.join(" · ") || "nothing: every change but a point-write proposal is refused"]);
         }
+        if (askedWork(agents).length) rows.push(["waits for a person", askedWork(agents).join(" · ")]);
         if (agents.bounds?.length) rows.push(["value limits", agents.bounds.join(" · ")]);
       } else if (agents) rows.push(["acting as", "a person"]);
       for (const line of metrics.split("\n")) {
@@ -456,20 +461,37 @@ const proposalPlain = (r: unknown[]): string[] => [
 
 program
   .command("proposals")
-  .description("point writes AI agents proposed, waiting for a person (--all includes the last hour's decisions)")
-  .option("--all", "include approved, rejected, failed and expired proposals")
+  .description("changes AI agents asked for, waiting for a person (--all includes the last week's decisions)")
+  .option("--all", "include approved, rejected, failed, expired and put-back proposals")
   .action((opts: { all?: boolean }, cmd: Command) =>
     withClient(cmd, async ({ client }, g) => {
       const list = await client.proposals(opts.all ? undefined : "pending");
-      if (list.length === 0 && g.output === "table") return console.log(opts.all ? "No proposals in the last hour." : "Nothing waiting.");
+      if (list.length === 0 && g.output === "table") return console.log(opts.all ? "No proposals in the last week." : "Nothing waiting.");
       emit(g, ["id", "status", "change", "point", "agent", "reason", "when"], list.map(proposalRow), list, proposalPlain);
+    })
+  );
+
+program
+  .command("explain")
+  .description("what the station would do with a change, and which setting decides, without making it (API 1.13)")
+  .argument("<change>", "the operation, e.g. write, write_file, write_tags, apply_model_changes")
+  .option("--user <name>", "ask about this Niagara user (people only; default: you)")
+  .option("--point <ord>", "with write: the point, so value limits are taken into account")
+  .option("--path <file>", "with a file change: the station file path")
+  .action((change: string, opts: { user?: string; point?: string; path?: string }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const e = await client.explainChange(change, { ...(opts.user ? { user: opts.user } : {}), ...(opts.point ? { point: opts.point } : {}), ...(opts.path ? { path: opts.path } : {}) });
+      if (g.output !== "table") return console.log(JSON.stringify(e, null, 2));
+      const word = e.outcome === "allow" ? chalk.green("allowed") : e.outcome === "ask" ? chalk.yellow("waits for a person") : chalk.red("refused");
+      console.log(`${change} by ${e.user}${e.isAgent ? ` (agent${e.profile ? `, profile ${e.profile}` : ""})` : ""}: ${word}${e.rule ? `, decided by ${e.rule}` : ""}`);
+      console.log(e.message);
     })
   );
 
 for (const decision of ["approve", "reject"] as const) {
   program
     .command(decision)
-    .description(decision === "approve" ? "approve an agent's proposal; the write runs with your permissions" : "reject an agent's proposal")
+    .description(decision === "approve" ? "approve an agent's proposal; the change is made with your permissions" : "reject an agent's proposal")
     .argument("<id>", "proposal id, e.g. P7")
     .option("--note <text>", "a note for the agent (reject)")
     .action((id: string, opts: { note?: string }, cmd: Command) =>
@@ -482,11 +504,66 @@ for (const decision of ["approve", "reject"] as const) {
         else if (!g.yes && !(await confirm(question))) throw new Error("Cancelled.");
         const result = decision === "approve" ? await client.approveProposal(proposal.id) : await client.rejectProposal(proposal.id, opts.note);
         if (g.output === "json") return console.log(JSON.stringify(result, null, 2));
-        if (result.status === "failed") throw new Error(`${result.id} was approved but the write failed: ${result.note}`);
-        console.log(`${chalk.green("✓")} ${result.id} ${result.status}.`);
+        if (result.status === "failed") throw new Error(`${result.id} was approved but the change failed: ${result.note}`);
+        console.log(`${chalk.green("✓")} ${result.id} ${result.status}.${result.status === "approved" && result.canRevert === false && result.notRevertible ? chalk.dim(` It cannot be put back: ${result.notRevertible}`) : ""}`);
       })
     );
 }
+
+program
+  .command("changes")
+  .description("every change AI agents asked for or made, newest first, kept for a week (API 1.14)")
+  .option("--status <status>", "pending, approved, applied, rejected, expired, failed or reverted")
+  .option("--kind <kind>", "points, files, discovery, modelEdits, tags, schedules or alarms")
+  .action((opts: { status?: string; kind?: string }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const list = await client.changes({ ...(opts.status ? { status: opts.status as Proposal["status"] } : {}), ...(opts.kind ? { kind: opts.kind as NonNullable<Proposal["kind"]> } : {}) });
+      if (list.length === 0 && g.output === "table") return console.log("No agent has changed or asked for anything in the last week.");
+      const row = (p: Proposal): unknown[] => [p.id, p.status === "applied" ? "made" : p.status, p.kind ?? "points", p.description, p.point,
+        p.actor?.name ?? p.agentUser, p.check && p.check.state !== "waiting" && p.check.state !== "skipped" ? `check ${p.check.state}` : "",
+        p.canRevert ? "yes" : p.status === "reverted" ? `by ${p.revertedBy ?? "?"}` : "", fmtTime(p.decidedAt ?? p.createdAt, false)];
+      emit(g, ["id", "status", "kind", "change", "target", "agent", "check", "can put back", "when"], list.map(row), list, (r) => [
+        chalk.bold(String(r[0])), r[1] === "pending" ? chalk.yellow(String(r[1])) : r[1] === "failed" ? chalk.red(String(r[1])) : r[1] === "reverted" ? chalk.dim(String(r[1])) : chalk.green(String(r[1])),
+        String(r[2]), String(r[3]), shortOrd(String(r[4]), 3), String(r[5]), String(r[6]).includes("failed") ? chalk.red(String(r[6])) : String(r[6]), String(r[7]), chalk.dim(String(r[8]))]);
+    })
+  );
+
+program
+  .command("revert")
+  .description("put an agent's change back, with your permissions (API 1.14)")
+  .argument("<id>", "change id, e.g. P7")
+  .option("--force", "put it back although the target has changed since")
+  .option("--partial", "put back what can be, when some steps cannot")
+  .action((id: string, opts: { force?: boolean; partial?: boolean }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const wanted = /^\d+$/.test(id) ? `P${id}` : id.toUpperCase();
+      const change = (await client.changes()).find((p) => p.id === wanted);
+      if (!change) throw new BaskStreamError("proposal_not_found", `No change ${wanted} that you can see.`);
+      if (!change.canRevert) throw new BaskStreamError("not_revertible", `${change.id} (${change.status}) cannot be put back${change.notRevertible ? `: ${change.notRevertible}` : "."}`);
+      if (change.notReverted?.length && g.output === "table") console.log(chalk.yellow(`These steps cannot be put back: ${change.notReverted.join("; ")}`));
+      await requireWrite(g, `Put back ${change.id}: ${change.description} on ${shortOrd(change.point, 3)}?`);
+      const result = await client.revertChange(change.id, { force: Boolean(opts.force), partial: Boolean(opts.partial), ...reasonOf(g) });
+      if (g.output === "json") return console.log(JSON.stringify(result, null, 2));
+      console.log(`${chalk.green("✓")} ${result.id} put back.`);
+    })
+  );
+
+program
+  .command("resolve")
+  .description("the point that plays a role on a piece of equipment, e.g. bask resolve Drivers/BacnetNetwork/AHU_1 discharge air temp (API 1.14)")
+  .argument("<equip>", "the equipment's ORD")
+  .argument("[role...]", "the role in words")
+  .option("--tag <name>", "a tag the point should carry (repeatable)", (value: string, all: string[]) => [...all, value], [] as string[])
+  .action((equip: string, role: string[], opts: { tag: string[] }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const found = await client.resolve(normalizeOrd(equip), { ...(role.length ? { role: role.join(" ") } : {}), ...(opts.tag.length ? { tags: opts.tag } : {}) });
+      if (g.output !== "table") return console.log(JSON.stringify(found, null, 2));
+      if (found.point) console.log(`${chalk.green("✓")} ${chalk.bold(found.point)} ${chalk.dim("(inferred from tags and names)")}`);
+      else console.log(chalk.yellow(found.matches.length ? "No match is clearly best. The closest:" : "Nothing under that equipment fits."));
+      for (const m of found.matches) console.log(`  ${m.score.toFixed(2)}  ${shortOrd(m.ord, 4)}  ${chalk.dim(m.why.join(", "))}`);
+      if (!found.point) process.exitCode = 1;
+    })
+  );
 
 program
   .command("agent-log")
@@ -567,7 +644,8 @@ program
     withClient(cmd, async ({ client }, g) => {
       const bytes = readFileSync(local);
       await requireWrite(g, `Write ${bytes.length} bytes to ${path}?`);
-      const file = await client.writeFile(path, { base64: bytes.toString("base64") }, { overwrite: Boolean(opts.overwrite), ...reasonOf(g) });
+      // Sent in pieces when it is larger than one message (API 1.14).
+      const file = await client.putFile(path, bytes, { overwrite: Boolean(opts.overwrite), ...reasonOf(g) });
       if (g.output === "json") return console.log(JSON.stringify(file, null, 2));
       console.log(`${chalk.green("✓")} ${file.created ? "Created" : "Replaced"} ${path} (${bytes.length} bytes).`);
     })
@@ -1003,7 +1081,7 @@ async function fleet(g: Globals, profiles: string[], opts: { demo?: boolean; mou
   }
 }
 
-program
+const fleetCommand = program
   .command("fleet")
   .description("watch several stations at once: a card per station with its alarms, AI activity and live values; enter opens one")
   .argument("[profiles...]", "saved profiles to show (default: every saved station)")
@@ -1112,7 +1190,7 @@ program
           lines.push(`${label} is signed in as ${chalk.bold(login.user)}; you are ${chalk.bold(info.user)}.${login.listed ? ` The station counts ${login.user} as an agent${login.approval ? ": its point writes wait for your approval" : ""}.` : ""}`);
           const rules = login.rules;
           const work = directWork(rules);
-          if (rules?.approvalRequired === false) lines.push("Approval is off on this station: what it changes, point writes included, goes straight through.");
+          if (work.all) lines.push("Approval is off on this station: what it changes, point writes included, goes straight through.");
           else if (rules && !work.known) notes.push(`This station's baskStream (API ${login.api ?? "?"}) refuses everything from an agent except point-write proposals while agentApprovalRequired is on, so ${label} cannot save graphics, run discovery or build anything here. Install baskStream API 1.11 and turn on the agentDirect settings you want, or turn approval off.`);
           else if (rules) {
             lines.push(`By itself it may change: ${work.kinds.join(", ") || "nothing"}. Its point writes wait for your approval.`);
@@ -1555,6 +1633,269 @@ nav
     })
   );
 
+// ---- Station check: a read-only punch list (docs/ROADMAP.md, E1) -----------------------------------
+
+program
+  .command("check")
+  .description("a read-only punch list for the station: points, histories, names, devices, schedules, graphics and accounts, from a set of rules (exit code 1 when there are errors)")
+  .option("--under <ord>", "check this branch only (default the whole station)")
+  .option("--rules <file>", "a JSON rule file: adds rules to the starter set, changes the ones whose id it names, or replaces the set")
+  .option("--html <file>", "also write the list as one self-contained page")
+  .action((opts: { under?: string; rules?: string; html?: string }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { loadRules } = await import("./check-rules.js");
+      const { checkCsv, checkHtml, printCheck, runCheck, summaryText } = await import("./check.js");
+      const rules = loadRules(opts.rules);
+      const spin = g.output === "table" && process.stderr.isTTY ? spinner("browsing") : undefined;
+      let result;
+      try {
+        result = await runCheck(client, rules, { under: opts.under ? normalizeOrd(opts.under) : undefined });
+      } finally {
+        spin?.stop();
+      }
+      if (result.summary.errors > 0) process.exitCode = 1;
+      if (opts.html) {
+        mkdirSync(path.dirname(path.resolve(opts.html)), { recursive: true });
+        writeFileSync(opts.html, checkHtml(result));
+        console.error(`${chalk.green("✓")} ${opts.html} (${summaryText(result)})`);
+      }
+      if (g.output === "json") return console.log(JSON.stringify(result, null, 2));
+      if (g.output === "csv") return console.log(checkCsv(result));
+      printCheck(result);
+    })
+  );
+
+// ---- Station as text: export and diff (docs/ROADMAP.md, E2 and E3) ---------------------------------
+
+program
+  .command("export")
+  .description("write a branch as text (JSON): its components with their types, the properties set on them, links, tags and relations. Two exports of an unchanged branch are identical")
+  .argument("<ord>", "the branch, e.g. slot:/Drivers/BacnetNetwork")
+  .action((ord: string, _opts, cmd: Command) =>
+    withClient(cmd, async ({ client }) => {
+      const { exportBranch, exportText } = await import("./export.js");
+      process.stdout.write(exportText(await exportBranch(client, normalizeOrd(ord))));
+    })
+  );
+
+program
+  .command("diff")
+  .description("compare two exports, an export and a live branch, two branches, or two stations: what was added, removed and changed (exit code 1 when they differ)")
+  .argument("<a>", "an export file, a branch of the station, or <profile>:<branch> for a branch on another saved station")
+  .argument("<b>", "the same")
+  .action(async (a: string, b: string, _opts, cmd: Command) => {
+    const g = globals(cmd);
+    const { diffSides } = await import("./stations.js");
+    const { diffCsv, printDiff } = await import("./diff.js");
+    // A name that is a file here is an export; profile:branch is a branch on that saved station; anything else is a branch of this one.
+    const result = await diffSides(a, b, async (profile) => (await connect(profile ?? g.profile, { actor: actorFrom(g) })).client);
+    if (!result.same) process.exitCode = 1;
+    if (g.output === "json") return console.log(JSON.stringify(result, null, 2));
+    if (g.output === "csv") return console.log(diffCsv(result));
+    printDiff(result);
+  });
+
+// ---- Apply, templates and fleets (docs/ROADMAP.md, E4 and E5) --------------------------------------
+
+program
+  .command("apply")
+  .description("write an export file back: list the changes that would make the branch on the station match the file, and make them with --yes. program: objects, protected services and platform settings are reported and never applied")
+  .argument("[file]", "an export file from bask export")
+  .option("--to <ord>", "the branch to apply it to (default: the branch the file was exported from)")
+  .option("--template <file>", "an export with named gaps, written ${name}")
+  .option("--each <csv>", "with --template: apply it once per row of this CSV file; its columns fill the gaps")
+  .option("--prune", "also delete what is on the station under the branch and not in the file")
+  .action((file: string | undefined, opts: { to?: string; template?: string; each?: string; prune?: boolean }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { applyCommand, printApply } = await import("./apply.js");
+      if (g.yes && !g.allowWrites) throw new Error("This changes the station. Add --allow-writes to permit it.");
+      const outcomes = await applyCommand(client, { file, ...opts }, { apply: !!g.yes, reason: g.reason, read: (name) => readFileSync(name, "utf8"), normalizeOrd });
+      if (outcomes.some((outcome) => !outcome.ok)) process.exitCode = 1;
+      if (g.output !== "table") return console.log(JSON.stringify(outcomes.length === 1 ? outcomes[0] : outcomes, null, 2));
+      outcomes.forEach((outcome, i) => {
+        if (i) console.log();
+        printApply(outcome);
+      });
+    })
+  );
+
+fleetCommand
+  .command("check")
+  .description("run bask check on every saved station (or the profiles named) and list where each one has errors and warnings (exit code 1 when any has errors or cannot be checked)")
+  .argument("[profiles...]", "saved profiles to check (default: every saved station)")
+  .option("--under <ord>", "check this branch only on each station")
+  .option("--rules <file>", "a JSON rule file, as for bask check")
+  .action(async (profiles: string[], opts: { under?: string; rules?: string }, cmd: Command) => {
+    const g = globals(cmd);
+    const { loadRules } = await import("./check-rules.js");
+    const { fleetCheck, fleetCheckCsv, fleetProfiles, printFleetCheck } = await import("./stations.js");
+    const result = await fleetCheck(fleetProfiles(profiles), async (profile) => (await connect(profile, { prompt: false, actor: actorFrom(g) })).client, loadRules(opts.rules), opts.under ? normalizeOrd(opts.under) : undefined);
+    if (result.failed) process.exitCode = 1;
+    if (g.output === "json") return console.log(JSON.stringify(result, null, 2));
+    if (g.output === "csv") return console.log(fleetCheckCsv(result));
+    printFleetCheck(result);
+  });
+
+fleetCommand
+  .command("diff")
+  .description("compare every saved station (or the profiles named) with a standard: a folder of export files, each compared with its own branch on each station (exit code 1 when any departs)")
+  .argument("[profiles...]", "saved profiles to compare (default: every saved station)")
+  .requiredOption("--against <dir>", "a folder of export files from bask export, or one such file")
+  .action(async (profiles: string[], opts: { against: string }, cmd: Command) => {
+    const g = globals(cmd);
+    const { fleetDiff, fleetDiffCsv, fleetProfiles, printFleetDiff } = await import("./stations.js");
+    const result = await fleetDiff(fleetProfiles(profiles), async (profile) => (await connect(profile, { prompt: false, actor: actorFrom(g) })).client, opts.against);
+    if (result.differs) process.exitCode = 1;
+    if (g.output === "json") return console.log(JSON.stringify(result, null, 2));
+    if (g.output === "csv") return console.log(fleetDiffCsv(result));
+    printFleetDiff(result);
+  });
+
+// ---- Meaning: equipment and point roles (docs/ROADMAP.md, F) ---------------------------------------
+
+const model = program
+  .command("model")
+  .description("what the station's components mean: propose equipment, point roles and what serves what for a person to review, then write the confirmed ones as tags or export them");
+
+model
+  .command("infer")
+  .description("propose which components are equipment (air handler, VAV box, plant…), what each point is for and which equipment feeds which, each with a confidence and a reason, and write them to a review file to edit. Nothing is written to the station")
+  .option("--under <ord>", "look under this component (default the whole station)")
+  .option("--out <file>", "the review file to write (default <station>-model.json); entries confirmed in it are kept")
+  .option("--no-links", "do not read the links at each point (one request a point); what serves what then comes from names and folders only")
+  .action((opts: { under?: string; out?: string; links?: boolean }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { existsSync } = await import("node:fs");
+      const { buildReview, inferModel, inferServes, modelCsv, parseReview, printModel, readEquipmentLinks, readEvidence } = await import("./model.js");
+      const under = opts.under ? normalizeOrd(opts.under) : "slot:/";
+      const station = String(client.capabilities.station ?? client.http.url.hostname);
+      const file = opts.out ?? `${station.replace(/[^\w.-]+/g, "_")}-model.json`;
+      const earlier = existsSync(file) ? parseReview(readFileSync(file, "utf8"), file) : undefined;
+      const { evidence, truncated } = await readEvidence(client, under);
+      const equipment = inferModel(evidence);
+      const joined = opts.links === false ? { links: [], truncated: false } : await readEquipmentLinks(client, evidence);
+      const review = buildReview(station, under, equipment, earlier, inferServes(equipment, joined.links, evidence));
+      mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
+      writeFileSync(file, `${JSON.stringify(review, null, 2)}\n`);
+      if (g.output === "json") console.log(JSON.stringify(review, null, 2));
+      else if (g.output === "csv") console.log(modelCsv(review));
+      else printModel(review);
+      if (truncated) console.error(chalk.yellow("Stopped at 20,000 components: narrow it with --under."));
+      if (joined.truncated) console.error(chalk.yellow("Stopped reading links at 4,000 components: what serves what may miss some. Narrow it with --under."));
+      console.error(`${chalk.green("✓")} ${file}${earlier ? " (updated; what was confirmed in it is kept)" : ""}. Edit it, set "confirmed": true on what is right, then: bask model write ${file}   or   bask model export ${file} --format haystack`);
+    })
+  );
+
+model
+  .command("export")
+  .description("write the confirmed entries of a review file as a Haystack grid (JSON) or a Brick model (Turtle)")
+  .argument("<file>", "a review file from bask model infer")
+  .addOption(new Option("--format <name>", "the model to write").choices(["haystack", "brick"]).default("haystack"))
+  .action(async (file: string, opts: { format: "haystack" | "brick" }) => {
+    const { haystackGrid, parseReview } = await import("./model.js");
+    const review = parseReview(readFileSync(file, "utf8"), file);
+    if (opts.format === "brick") {
+      const { brickTurtle } = await import("./model-write.js");
+      process.stdout.write(brickTurtle(review));
+      if (!review.equipment.some((e) => e.confirmed || (e.points ?? []).some((p) => p.confirmed))) console.error(chalk.yellow(`Nothing in ${file} is confirmed yet, so the model is empty. Set "confirmed": true on the entries that are right.`));
+      return;
+    }
+    const grid = haystackGrid(review);
+    console.log(JSON.stringify(grid, null, 2));
+    if (grid.rows.length === 0) console.error(chalk.yellow(`Nothing in ${file} is confirmed yet, so the grid is empty. Set "confirmed": true on the entries that are right.`));
+  });
+
+model
+  .command("write")
+  .description("write the confirmed entries of a review file to the station as Haystack tags and relations: lists them, and writes with --yes. An entry that is not confirmed is never written")
+  .argument("<file>", "a review file from bask model infer")
+  .action((file: string, _opts, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { parseReview } = await import("./model.js");
+      const { planModelWrite, printModelWrite, runModelWrite } = await import("./model-write.js");
+      if (g.yes && !g.allowWrites) throw new Error("This changes the station. Add --allow-writes to permit it.");
+      const plan = await planModelWrite(client, parseReview(readFileSync(file, "utf8"), file));
+      const outcome = g.yes && plan.tags.length + plan.relations.length > 0 ? await runModelWrite(client, plan, g.reason) : { ...plan, written: false };
+      if ("failures" in outcome && (outcome.failures.length || !outcome.verified)) process.exitCode = 1;
+      if (g.output !== "table") return console.log(JSON.stringify(outcome, null, 2));
+      printModelWrite(outcome);
+    })
+  );
+
+// ---- Test bench for agents: record, replay and eval (docs/ROADMAP.md, H) ----------------------------
+
+program
+  .command("record")
+  .description("turn this station into a demo site file: its structure, what every point holds now, its open alarms, schedules, and a day of histories. Read-only. bask replay plays the file back")
+  .option("--under <ord>", "record this branch only (default the whole station)")
+  .option("--out <file>", "the site file to write (default <station>-site.json)")
+  .option("--hours <n>", "hours of history to keep for each numeric point", "24")
+  .option("--interval <duration>", "one history step", "15m")
+  .option("--scramble", "replace names: words that only say what a thing is are kept, every other word becomes a made-up one, and alarm text is rebuilt")
+  .action((opts: { under?: string; out?: string; hours: string; interval: string; scramble?: boolean }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { recordStation, recordingSummary } = await import("./record.js");
+      const hours = Number(opts.hours);
+      if (!(hours > 0)) throw new Error("--hours takes a number above 0.");
+      const spin = g.output === "table" && process.stderr.isTTY ? spinner("browsing") : undefined;
+      let made;
+      try {
+        made = await recordStation(client, { under: opts.under ? normalizeOrd(opts.under) : undefined, hours, interval: parseDuration(opts.interval), scramble: opts.scramble });
+      } finally {
+        spin?.stop();
+      }
+      const file = opts.out ?? `${made.recording.station.replace(/[^\w.-]+/g, "_")}-site.json`;
+      mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
+      writeFileSync(file, `${JSON.stringify(made.recording)}\n`);
+      if (g.output === "json") console.log(JSON.stringify({ file, station: made.recording.station, scrambled: made.recording.scrambled, components: made.recording.components.length, alarms: made.recording.alarms.length, truncated: made.truncated }, null, 2));
+      if (made.truncated) console.error(chalk.yellow("Stopped at 20,000 components: narrow it with --under."));
+      console.error(`${chalk.green("✓")} ${file}: ${recordingSummary(made.recording)}. Play it back with: bask replay ${file}`);
+    })
+  );
+
+program
+  .command("replay")
+  .description("run a site file from bask record as a simulated station, and open the dashboard on it (saved as the profile demo-recorded)")
+  .argument("<file>", "a site file from bask record")
+  .option("--port <n>", "port for the station", "47910")
+  .option("--serve", "only run the station (other windows connect with -p demo-recorded)")
+  .action(async (file: string, opts: { port: string; serve?: boolean }, cmd: Command) => {
+    const { startDemoStation, DEMO_PASSWORD, DEMO_USER } = await import("./demo/station.js");
+    const { parseRecording } = await import("./demo/recorded.js");
+    const recording = parseRecording(readFileSync(file, "utf8"), file);
+    if (!opts.serve && !process.stdout.isTTY) throw new Error("bask replay opens the dashboard, which needs a terminal. Add --serve to only run the station.");
+    const station = await startDemoStation({ port: Number(opts.port), recording });
+    putProfile("demo-recorded", { station: station.url, username: DEMO_USER }, false);
+    process.env.BASKSTREAM_PASSWORD = DEMO_PASSWORD;
+    try {
+      if (opts.serve) {
+        console.log(`${chalk.green("✓")} ${station.station} at ${station.url} (user ${station.user}, password ${station.password}), profile demo-recorded. Use it with: bask -p demo-recorded <command>   ·   ctrl+c stops it.`);
+        await new Promise<void>((resolve) => (process.once("SIGINT", resolve), process.once("SIGTERM", resolve)));
+      } else await runTui({ ...globals(cmd), profile: "demo-recorded", allowWrites: true }, {});
+    } finally {
+      await station.close();
+    }
+  });
+
+program
+  .command("eval")
+  .description("run an AI agent command on a set of scored jobs on the simulated buildings, and score each from the station as the agent left it (exit code 1 when the agent could not be run)")
+  .option("--agent <command>", "the agent to run, through the shell. It gets the job on standard input and in BASK_EVAL_PROMPT; {prompt} and {task} in the command are replaced")
+  .option("--task <id...>", "only these tasks (default all)")
+  .option("--timeout <duration>", "the longest one task may take", "30m")
+  .option("--list", "list the tasks and what each asks")
+  .action(async (opts: { agent?: string; task?: string[]; timeout: string; list?: boolean }, cmd: Command) => {
+    const g = globals(cmd);
+    const { EVAL_TASKS, printEval, runEval } = await import("./eval.js");
+    if (opts.list) return void (g.output === "json" ? console.log(JSON.stringify(EVAL_TASKS.map(({ id, site, title, prompt }) => ({ id, site, title, prompt })), null, 2)) : console.log(table(["task", "site", "what it asks"], EVAL_TASKS.map((task) => [task.id, task.site, task.prompt]))));
+    // --agent is also the global option that names an agent, so a value given here arrives as that.
+    const agent = opts.agent ?? g.agent;
+    if (!agent) throw new Error('Name the agent command to test: bask eval --agent "claude -p". bask eval --list shows the tasks.');
+    const result = await runEval({ agent, tasks: opts.task, timeoutMs: parseDuration(opts.timeout), progress: g.output === "table" ? (text) => console.error(chalk.dim(text)) : undefined });
+    if (g.output !== "table") return console.log(JSON.stringify(result, null, 2));
+    printEval(result);
+  });
+
 // ---- Logic: wire sheets in text, and plans from a file ----------------------------------------------
 
 const logic = program
@@ -1720,6 +2061,16 @@ function kindColor(kind: string): (text: string) => string {
 }
 
 program.parseAsync().catch((error: unknown) => {
+  if (error instanceof ChangeProposedError) {
+    // Not made and not failed: it waits for a person. Exit code 2 says so to a script.
+    const p = error.proposal;
+    if (program.opts().output === "json") console.log(JSON.stringify({ outcome: "proposed", proposal: p }, null, 2));
+    else {
+      console.log(`${chalk.yellow("proposed")} ${chalk.bold(p.id)}: ${p.description}${p.point ? ` on ${p.point}` : ""}`);
+      console.log(chalk.dim(`Not made yet. It waits for a person to approve it (bask approve ${p.id}) until ${fmtTime(p.expiresAt, false)}. Do not send it again.`));
+    }
+    return exitWhenFlushed(2);
+  }
   if (error instanceof BaskStreamError) {
     console.error(`${chalk.red("error")} ${chalk.dim(`[${error.code}]`)} ${error.message}`);
     if (error.code === "session_expired") console.error(chalk.dim("Run: bask login <station> -u <user>"));
@@ -1729,6 +2080,6 @@ program.parseAsync().catch((error: unknown) => {
     console.error(`${chalk.red("error")} ${message}`);
     if (/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|certificate|TLS|socket hang up/i.test(message)) console.error(chalk.dim("Run bask doctor to see where it breaks."));
   }
-  process.exit(1);
+  return exitWhenFlushed(1);
 });
 

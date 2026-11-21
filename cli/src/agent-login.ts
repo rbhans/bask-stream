@@ -3,7 +3,7 @@
 // user made for it. The station then tells the two apart by user, and its agent rules follow that
 // user however it connects.
 import { StationHttp } from "@basidekick/baskstream";
-import type { AgentRules } from "./agent-rules.js";
+import { pointMode, type AgentRules } from "./agent-rules.js";
 import { getProfile, loadStore, putProfile, updateProfile } from "./config.js";
 import { promptHidden } from "./prompt.js";
 import { connect } from "./session.js";
@@ -98,7 +98,7 @@ export async function openAgentLogin(mine: string, choice: AgentChoice): Promise
     conn.client.close();
     const agents = caps.agents as AgentRules | undefined;
     updateProfile(mine, { agent: choice.profile });
-    return { ...choice, create: undefined, user: typeof caps.authenticatedUser === "string" ? caps.authenticatedUser : choice.user, listed: agents ? Boolean(agents.isAgent) : undefined, approval: agents ? agents.approvalRequired !== false : undefined, rules: agents, api: typeof caps.apiVersion === "string" ? caps.apiVersion : undefined };
+    return { ...choice, create: undefined, user: typeof caps.authenticatedUser === "string" ? caps.authenticatedUser : choice.user, listed: agents ? Boolean(agents.isAgent) : undefined, approval: agents ? pointMode(agents) === "ask" : undefined, rules: agents, api: typeof caps.apiVersion === "string" ? caps.apiVersion : undefined };
   } catch (error) {
     throw new Error(
       [
