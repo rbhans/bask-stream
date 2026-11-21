@@ -375,9 +375,6 @@ export function App(props: AppProps) {
 
   const width = Math.max(40, size.columns);
   const height = Math.max(12, size.rows);
-  const headRows = pane ? 1 : 2;
-  const bodyHeight = height - headRows - 1;
-  const rect = useMemo<Rect>(() => ({ x: 0, y: headRows, width, height: bodyHeight }), [width, bodyHeight, headRows]);
   const viewActive = !modal && !overlay;
   const host = client.http.url.host;
   const user = String(client.capabilities.authenticatedUser ?? "");
@@ -392,17 +389,34 @@ export function App(props: AppProps) {
     activity: pendingProposals ? { text: String(pendingProposals), color: theme.warn } : undefined
   };
   const fullTabs = VIEWS.reduce((n, name, i) => n + VIEW_LABEL[name].length + 4 + (badges[name] ? badges[name]!.text.length + 1 : 0) + (i ? 1 : 0), 0) <= width;
-  const tabs: { name: ViewName; text: string; from: number; to: number }[] = [];
+  // With the mouse on, tabs that don't fit on one row wrap onto several, each a whole labelled cell
+  // to click or tap. Without it they shrink to their keys, which is all the keyboard needs.
+  const tabsPerRow = mouseOn && !fullTabs ? Math.max(2, Math.floor(width / 13)) : VIEWS.length;
+  const tabCell = Math.floor(width / tabsPerRow);
+  const tabRows = pane ? 0 : Math.ceil(VIEWS.length / tabsPerRow);
+  const wrappedTabs = tabsPerRow < VIEWS.length;
+  const tabs: { name: ViewName; text: string; from: number; to: number; row: number }[] = [];
   let column = 0;
   VIEWS.forEach((name, i) => {
+    if (wrappedTabs) {
+      const badge = badges[name] ? ` ${badges[name]!.text}` : "";
+      const room = tabCell - 1 - badge.length;
+      const keyed = ` ${KEY_OF(i)} ${VIEW_LABEL[name]}`;
+      const text = (keyed.length <= room ? keyed : ` ${clip(VIEW_LABEL[name], room - 1)}`).padEnd(room);
+      tabs.push({ name, text, from: (i % tabsPerRow) * tabCell, to: ((i % tabsPerRow) + 1) * tabCell, row: Math.floor(i / tabsPerRow) });
+      return;
+    }
     const text = fullTabs || name === view ? ` ${KEY_OF(i)} ${VIEW_LABEL[name]} ` : ` ${KEY_OF(i)} `;
     const length = text.length + (badges[name] ? (fullTabs || name === view ? badges[name]!.text.length : 1) + 1 : 0) + 1;
-    tabs.push({ name, text, from: column, to: column + length });
+    tabs.push({ name, text, from: column, to: column + length, row: 0 });
     column += length;
   });
+  const headRows = 1 + tabRows;
+  const bodyHeight = height - headRows - 1;
+  const rect = useMemo<Rect>(() => ({ x: 0, y: headRows, width, height: bodyHeight }), [width, bodyHeight, headRows]);
   useMouse((e) => {
-    if (e.kind !== "down" || e.y !== 1 || pane) return;
-    const tab = tabs.find((t) => e.x >= t.from && e.x < t.to);
+    if (e.kind !== "down" || pane) return;
+    const tab = tabs.find((t) => t.row === e.y - 1 && e.x >= t.from && e.x < t.to);
     if (tab) setView(tab.name);
   }, viewActive && mouseOn);
 
@@ -454,7 +468,22 @@ export function App(props: AppProps) {
             </Text>
           ))}
         </Text>
-        {!pane && (
+        {!pane && wrappedTabs &&
+          Array.from({ length: tabRows }, (_, row) => (
+            <Text key={row} wrap="truncate-end">
+              {tabs.filter((t) => t.row === row).map(({ name, text }) => {
+                const on = view === name;
+                const badge = badges[name];
+                return (
+                  <Text key={name}>
+                    <Text color={on ? theme.onAccent : theme.muted} backgroundColor={on ? theme.accent2 : undefined} bold={on}>{text}</Text>
+                    {badge ? <Text color={on ? theme.onAccent : badge.color} backgroundColor={on ? theme.accent2 : undefined} bold>{` ${badge.text}`}</Text> : null}{" "}
+                  </Text>
+                );
+              })}
+            </Text>
+          ))}
+        {!pane && !wrappedTabs && (
           <Text wrap="truncate-end">
             {tabs.map(({ name, text }) => {
               const on = view === name;

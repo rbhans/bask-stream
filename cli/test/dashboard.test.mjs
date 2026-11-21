@@ -265,6 +265,20 @@ test("keys that arrive together each act on the screen the one before left", () 
     assert.match(frame, /▸ ◆ Services/);
   }));
 
+test("on a narrow screen with the mouse on, the tabs wrap into labelled cells to tap", () =>
+  withApp({ mouse: true }, { columns: 44, rows: 34 }, async (app) => {
+    const lines = (await app.until(/Northgate/)).split("\n");
+    // Three to a row at this width: twelve views on four rows, every one with its name.
+    for (const label of ["Home", "Explorer", "Watch", "Alarms", "Trends", "Schedules", "Query", "Files", "Jobs", "AI Activity", "Graphics", "Logic"]) assert.ok(lines.slice(1, 5).some((line) => line.includes(label)), label);
+    for (const line of lines) assert.ok(line.length <= 44, `"${line}"`);
+    // Anywhere in a cell switches to it, here the far end of Alarms (the first cell of the second row).
+    assert.match(lines[2], /^ 4 Alarms/);
+    await app.mouse("down", 12, 2);
+    await app.until(/Alarms ─+ \d open/);
+    await app.mouse("down", 20, 4);
+    await app.until(/AHU-1 and its zones/);
+  }));
+
 test("every view fits narrow windows without wrapping", async () => {
   for (const [columns, rows, pane] of [[80, 24, false], [58, 18, true], [200, 50, false]]) {
     for (const view of ["home", "explorer", "watch", "alarms", "trends", "schedules", "query", "files", "jobs", "activity"]) {
