@@ -2,12 +2,12 @@ import { EventEmitter } from "node:events";
 import { decode, encode } from "@msgpack/msgpack";
 import WebSocket from "ws";
 import { BunSocket } from "./bun-socket.js";
-import { BaskStreamError, CLIENT_ERRORS } from "./errors.js";
+import { BaskStreamError, ChangeProposedError, CLIENT_ERRORS } from "./errors.js";
 import { StationHttp, type StationHttpOptions } from "./http.js";
 import { OPERATIONS, type OperationName } from "./operations.js";
 import { toSlotOrd } from "./ords.js";
 import { snapshotPage, type PxSnapshot, type SnapshotOptions } from "./snapshot.js";
-import type { Actor, AgentLog, AlarmFilter, BrowseNode, DiscoveredItem, Discovery, FileContent, FileEntry, JobDetail, JobSummary, Json, PointSnapshot, Proposal, QueryResult, ScheduleEntry, Weekday,
+import type { Actor, AgentLog, AlarmFilter, ChangeExplanation, BrowseNode, DiscoveredItem, Discovery, FileContent, FileEntry, JobDetail, JobSummary, Json, PointSnapshot, Proposal, QueryResult, RoleMatch, ScheduleEntry, Weekday,
   GraphicsInventory, NavCheck, PxBindingCheck, PxInfo, PxNode, PxTargets, PxViewsResult } from "./types.js";
 
 export interface ClientOptions extends StationHttpOptions {
@@ -114,6 +114,12 @@ export class BaskStreamClient extends EventEmitter {
       return Promise.reject(new BaskStreamError(CLIENT_ERRORS.notConnected, "Not connected to the station.", op));
     }
     const id = `${op}-${++this.nextId}`;
+    const frame = encode({ ...fields, op, id });
+    // The station closes the connection on a request over its limit, so say so here instead.
+    const limit = Number((this.capabilities.limits as Json | undefined)?.maxMessageBytes) || 0;
+    if (limit > 0 && frame.byteLength > limit) {
+      return Promise.reject(new BaskStreamError(CLIENT_ERRORS.messageTooLarge, `This ${op} request is ${frame.byteLength} bytes, and the station takes at most ${limit} (maxMessageBytes on BASkStreamService).`, op));
+    }
     const expectsReply = (OPERATIONS as Record<string, { reply: string | null }>)[op]?.reply !== null;
     return new Promise<Json>((resolve, reject) => {
       if (expectsReply) {
@@ -124,7 +130,7 @@ export class BaskStreamClient extends EventEmitter {
         }, timeoutMs);
         this.pending.set(id, { op, resolve, reject, timer });
       }
-      ws.send(encode({ ...fields, op, id }), { binary: true }, (error) => {
+      ws.send(frame, { binary: true }, (error) => {
         if (error) {
           const entry = this.pending.get(id);
           if (entry) {
@@ -239,6 +245,41 @@ export class BaskStreamClient extends EventEmitter {
     return (await this.call("reject_proposal", note ? { proposal: id, note } : { proposal: id })).proposal as Proposal;
   }
 
+  /**
+   * Every change agents asked for or made, newest first, including the ones they made directly
+   * (API 1.14). An agent sees its own.
+   */
+  async changes(options: { status?: Proposal["status"]; kind?: NonNullable<Proposal["kind"]> } = {}): Promise<Proposal[]> {
+    return (await this.call("list_changes", options as Json)).changes as Proposal[];
+  }
+
+  /**
+   * Puts a change back, with this user's permissions (API 1.14). People only. Refused with
+   * `change_conflict` when the target has changed since, unless `force`; a change with steps that
+   * cannot be put back needs `partial`.
+   */
+  async revertChange(id: string, options: { force?: boolean; partial?: boolean; reason?: string } = {}): Promise<Proposal> {
+    return (await this.call("revert_change", { change: id, ...options })).change as Proposal;
+  }
+
+  /**
+   * The point that plays a role on a piece of equipment, from its tags and name (API 1.14):
+   * `resolve("slot:/Drivers/BacnetNetwork/AHU_1", { role: "discharge air temp" })`. Inferred;
+   * `point` is null when no match is clearly best.
+   */
+  async resolve(equip: string, want: { role?: string; tags?: string[]; limit?: number }): Promise<RoleMatch> {
+    return (await this.call("resolve", { equip: toSlotOrd(equip), ...want })) as unknown as RoleMatch;
+  }
+
+  /**
+   * What the station would do with a change, and which setting decides, without making it (API 1.13).
+   * `change` is an operation name such as "write" or "write_file". A person may pass `user` to ask
+   * about any Niagara user. Niagara roles are not judged.
+   */
+  async explainChange(change: string, fields: { user?: string; point?: string; path?: string; planId?: string } = {}): Promise<ChangeExplanation> {
+    return (await this.call("explain_change", { change, ...fields })).explanation as ChangeExplanation;
+  }
+
   /** "Agent" records from the station's audit history, newest first. */
   async agentLog(options: { since?: number; limit?: number } = {}): Promise<AgentLog> {
     return (await this.call("read_agent_log", options as Json)).log as AgentLog;
@@ -266,6 +307,29 @@ export class BaskStreamClient extends EventEmitter {
   /** Creates a station file, or replaces one with `overwrite: true`. A replaced Px, nav or image file is backed up first unless `backup: false`. */
   async writeFile(path: string, content: { text: string } | { base64: string }, options: { overwrite?: boolean; createDirs?: boolean; backup?: boolean; dryRun?: boolean; reason?: string } = {}): Promise<Json> {
     return (await this.call("write_file", { path, ...content, ...options })).file as Json;
+  }
+
+  /**
+   * Writes a station file of any size up to 16 MiB. Content that fits one message goes as
+   * `write_file`; larger content is sent in pieces (API 1.14) and committed, which is the same
+   * write with the same checks. On a station before 1.14, larger content is refused with
+   * `message_too_large`.
+   */
+  async putFile(path: string, bytes: Uint8Array, options: { overwrite?: boolean; createDirs?: boolean; backup?: boolean; reason?: string } = {}): Promise<Json> {
+    const limit = Number((this.capabilities.limits as Json | undefined)?.maxMessageBytes) || 1024 * 1024;
+    // base64 is a third larger than the bytes; leave room for the request's other fields.
+    if (bytes.byteLength * 4 / 3 + 2048 < limit) {
+      return this.writeFile(path, { base64: Buffer.from(bytes).toString("base64") }, options);
+    }
+    if (!(OPERATIONS as Record<string, unknown>).begin_upload || !((this.capabilities.operations as string[] | undefined) ?? []).includes("begin_upload")) {
+      throw new BaskStreamError(CLIENT_ERRORS.messageTooLarge, `${path} is ${bytes.byteLength} bytes, more than one message holds (${limit}), and this station cannot take a file in pieces (it needs API 1.14).`, "write_file");
+    }
+    const piece = Math.max(16 * 1024, Math.min(limit - 4096, 512 * 1024));
+    const started = await this.call("begin_upload", { path, overwrite: options.overwrite === true });
+    for (let offset = 0; offset < bytes.byteLength; offset += piece) {
+      await this.call("append_upload", { upload: started.upload, bytes: bytes.subarray(offset, Math.min(bytes.byteLength, offset + piece)) });
+    }
+    return (await this.call("commit_upload", { upload: started.upload, size: bytes.byteLength, ...options }, { timeoutMs: 120000 })).file as Json;
   }
 
   /** Deletes a station file, or a folder and its contents with `recursive: true`. */
@@ -457,7 +521,9 @@ export class BaskStreamClient extends EventEmitter {
     if (waiting && id) {
       clearTimeout(waiting.timer);
       this.pending.delete(id);
-      if (frame.op === "error") waiting.reject(new BaskStreamError(String(frame.code), String(frame.message ?? frame.code), waiting.op));
+      if (frame.op === "error" && frame.code === "change_proposed" && frame.proposal) {
+        waiting.reject(new ChangeProposedError(String(frame.message ?? frame.code), waiting.op, frame.proposal as Proposal));
+      } else if (frame.op === "error") waiting.reject(new BaskStreamError(String(frame.code), String(frame.message ?? frame.code), waiting.op));
       else waiting.resolve(frame);
       return;
     }

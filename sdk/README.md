@@ -23,7 +23,7 @@ const open = await client.alarms({ scope: "open", order: "newest" });
 ```
 
 - **Login**: Niagara's SCRAM-SHA-256 web login, verifying the station's signature. Saved cookies are reused; the password is requested only when they have expired.
-- **Requests**: `call(op, fields)` sends any of the 67 operations (generated from `spec/baskstream-protocol.json`); failures reject with `BaskStreamError` whose `code` is the protocol error code, or `timeout`, `not_connected`, `connection_closed`, `login_failed`, `session_expired`, `bad_message`. `snapshot()` adds `browser_not_found` and `snapshot_failed`.
+- **Requests**: `call(op, fields)` sends any of the 67 operations (generated from `spec/baskstream-protocol.json`); failures reject with `BaskStreamError` whose `code` is the protocol error code, or `timeout`, `not_connected`, `connection_closed`, `login_failed`, `session_expired`, `bad_message`. `message_too_large` means the request is bigger than the station's `maxMessageBytes`; it is refused before it is sent. `snapshot()` adds `browser_not_found` and `snapshot_failed`.
 - **Helpers**: `browse`, `describe`, `search`, `read`, `write`, `describeWrite`, `history`, `historyRollup`, `alarms`, `ackAlarms`, `clearAlarms`, `schedule`, `scheduleEvents`, `writeSchedule`, `subscriptionStatus`, `subscribeAlarms`.
 - **Live data**: `watch()` keeps a named subscription group: it renews the lease, re-reads after `resync_required`, and is restored after a reconnect. The client also emits `value`, `cov`, `alarm`, `model`, `resync`, `revoked` and `notice`.
 - **Staying connected**: keepalive pings; after a drop it reconnects with backoff (1 s → 30 s), logs in again if needed, and emits `disconnected`, `reconnecting`, `reconnected`.
@@ -39,16 +39,20 @@ const entry = await agent.write(point, "override", 72, { reason: "Room 204 is to
 agent.on("proposal", (p) => console.log(p.id, p.status)); // approved, rejected, expired or failed
 ```
 
-People use `proposals()`, `approveProposal(id)` and `rejectProposal(id, note)`; `agentLog()` reads the `Agent` records from the station's audit history.
+People use `proposals()`, `approveProposal(id)` and `rejectProposal(id, note)`; `agentLog()` reads the `Agent` records from the station's audit history. `explainChange("write_file", { path: "^px/Home.px" })` says what the station would do with a change and which setting decides, without making it (API 1.13). `capabilities.agents.profile` names the agent profile a session follows, if any.
 
-While approval is required, an agent's other changes (files, discovery, model plans, tags, schedules, alarms) fail with `approval_required` unless the station's `agentDirect…` setting for that kind is on. `agent.capabilities.agents.direct` (API 1.11) says what is allowed: `{ pointWrites, files, discovery, modelEdits, tags, schedules, alarms }`. An agent's model plan cannot command a writable point (`agent_use_write`); use `write`.
+From API 1.14 any kind of change can be kept for a person instead of being made. The call then rejects with `ChangeProposedError` (`code: "change_proposed"`), which carries the `proposal`: catch it, tell the person, and do not send the change again. `changes()` lists every change agents asked for or made, with `canRevert` and the `check` the station ran afterwards; `revertChange(id, { force, partial, reason })` puts one back (people only). A `write` entry may carry `expect: { point, min, max, withinMinutes }`.
+
+`putFile(path, bytes)` writes a file of any size up to 16 MiB, in pieces when it does not fit one message. `resolve(equip, { role: "discharge air temp" })` returns the point that plays a role on a piece of equipment, inferred from tags and names; `point` is null when no match is clearly best.
+
+An agent's other changes (files, discovery, model plans, tags, schedules, alarms) fail with `approval_required` unless the station's `agentDirect…` setting for that kind is on. `agent.capabilities.agents.direct` (API 1.11) says what is allowed: `{ pointWrites, files, discovery, modelEdits, tags, schedules, alarms }`, and `agents.pointWrites` (API 1.13) says whether a point command is refused, proposed or written: `refuse`, `ask` or `allow`. With `refuse`, `write` fails with `agent_writes_refused`. An agent's model plan cannot command a writable point (`agent_use_write`); use `write`.
 
 ## Seeing a page
 
 `snapshot()` takes pictures of a Px page as a person sees it in a web browser, with live values, so an app or an AI agent can check a page after changing it:
 
 ```ts
-const shot = await client.snapshot("^qag-demo/ahu.px");                                   // a Px file
+const shot = await client.snapshot("^px/ahu.px");                                   // a Px file
 const unit = await client.snapshot("slot:/Drivers/BacnetNetwork/AHU_1", { view: "Graphic" }); // a component's view
 await writeFile("ahu.png", shot.frames[0].png);
 ```

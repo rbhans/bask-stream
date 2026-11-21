@@ -299,3 +299,64 @@ test("graphics: Px, bindings, views, nav and inventory (API 1.12)", async () => 
     client.close();
   }
 });
+
+test("a change kept for a person is a ChangeProposedError; changes are listed and put back (API 1.14)", async () => {
+  const { ChangeProposedError } = await import("../dist/index.js");
+  const agent = await connect({ actor: { name: "Test agent" } });
+  const person = await connect();
+  try {
+    const kept = await agent.writeFile("^ask/note.txt", { text: "hello" }, { reason: "testing" }).then(() => null, (error) => error);
+    assert.ok(kept instanceof ChangeProposedError, String(kept));
+    assert.equal(kept.code, "change_proposed");
+    assert.equal(kept.proposal.kind, "files");
+    assert.equal(kept.proposal.status, "pending");
+    assert.equal(station.state.files.has("^ask/note.txt"), false, "nothing is written until a person approves");
+    await assert.rejects(agent.revertChange(kept.proposal.id), (error) => error.code === "agent_cannot_approve");
+    const approved = await person.approveProposal(kept.proposal.id);
+    assert.equal(approved.status, "approved");
+    assert.equal(station.state.files.get("^ask/note.txt"), "hello");
+    const listed = await person.changes({ kind: "files" });
+    assert.equal(listed[0].id, kept.proposal.id);
+    assert.equal(listed[0].canRevert, true);
+    const back = await person.revertChange(kept.proposal.id, { reason: "testing" });
+    assert.equal(back.status, "reverted");
+    assert.equal(station.state.files.has("^ask/note.txt"), false);
+    await assert.rejects(person.revertChange(kept.proposal.id), (error) => error.code === "not_revertible");
+  } finally {
+    await agent.close();
+    await person.close();
+  }
+});
+
+test("resolve asks for a point by its role (API 1.14)", async () => {
+  const client = await connect();
+  try {
+    const found = await client.resolve("station:|slot:/Drivers/Net/VAV_01", { role: "zone temp" });
+    assert.equal(found.point, "slot:/Drivers/Net/VAV_01/points/SpaceTemp");
+    assert.equal(found.inferred, true);
+    assert.equal(station.state.requests.at(-1).equip, "slot:/Drivers/Net/VAV_01", "the ORD is reduced to a slot ORD");
+    assert.equal((await client.resolve("slot:/Drivers/Net/VAV_01", { role: "temp" })).point, null, "no single clear match");
+  } finally {
+    await client.close();
+  }
+});
+
+test("putFile sends a file that fits in one request, and a larger one in pieces (API 1.14)", async () => {
+  const client = await connect();
+  try {
+    const small = await client.putFile("^up/small.txt", Buffer.from("small"));
+    assert.equal(small.size, 5);
+    assert.equal(station.state.requests.at(-1).op, "write_file");
+    // The fake station reports no begin_upload operation, so a file over the limit is refused before it is sent.
+    client.capabilities.limits = { maxMessageBytes: 4096 };
+    await assert.rejects(client.putFile("^up/big.txt", Buffer.alloc(20000, 97)), (error) => error.code === "message_too_large");
+    client.capabilities.operations = ["begin_upload", "append_upload", "commit_upload"];
+    client.capabilities.limits = { maxMessageBytes: 40000 };
+    const big = await client.putFile("^up/big.txt", Buffer.alloc(100000, 97));
+    assert.equal(big.size, 100000);
+    assert.equal(station.state.files.get("^up/big.txt").length, 100000);
+    assert.ok(station.state.requests.filter((r) => r.op === "append_upload").length >= 3);
+  } finally {
+    await client.close();
+  }
+});

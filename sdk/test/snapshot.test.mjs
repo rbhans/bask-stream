@@ -40,9 +40,9 @@ function readPng(png) {
 }
 
 test("page ORDs: Px files, components with views, and full ORDs", () => {
-  assert.equal(pxPageOrd("^qag-demo/ahu.px"), "file:^qag-demo/ahu.px");
+  assert.equal(pxPageOrd("^px/ahu.px"), "file:^px/ahu.px");
   assert.equal(pxPageOrd("file:^px/Home.px"), "file:^px/Home.px");
-  assert.equal(pxPageOrd("qag-demo/ahu.px"), "file:^qag-demo/ahu.px");
+  assert.equal(pxPageOrd("px/ahu.px"), "file:^px/ahu.px");
   assert.equal(pxPageOrd("slot:/Drivers/AHU_1", "Graphic"), "station:|slot:/Drivers/AHU_1|view:Graphic");
   assert.equal(pxPageOrd("/Drivers/AHU_1"), "station:|slot:/Drivers/AHU_1");
   assert.equal(pxPageOrd("local:|station:|slot:/Drivers/AHU_1|view:Graphic", "Other"), "station:|slot:/Drivers/AHU_1|view:Graphic");

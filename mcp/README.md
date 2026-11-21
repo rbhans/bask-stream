@@ -24,7 +24,11 @@ A new build installs over the old one; the version is `package.json`'s.
   - **`read_points`:** a driver polls a proxy point only while something subscribes to it, so a snapshot of an unpolled point comes back stale. `read_points` then subscribes it and waits up to 3 s for the first poll, and marks those values `fresh: true`. The point stays polled for two minutes.
 - **Seeing a page:** `px_snapshot` returns pictures of a Px page (`^folder/Page.px`, or a component and its view) as a web browser shows it, with live values, plus the page's title, HTTP status, failed requests and console errors. It opens the page in headless Chrome, Chromium or Edge on the computer running the server, with the server's station session (the SDK's [`snapshot()`](../sdk/README.md#seeing-a-page)), and needs one of them installed (`BASKSTREAM_BROWSER` picks one). Only what fits in the window (default 1600 × 900) is pictured, and Workbench can draw a page differently.
 - **Changes**, each with a required reason: `write_points`, `ack_alarms`, `clear_alarms`, `write_schedule`.
+- **What agents changed:** `list_changes` lists the changes agents asked for or made, with what the station found when it looked again (baskStream API 1.14).
+- **By meaning:** `resolve_point` finds the point that plays a role on a piece of equipment (API 1.14).
 - **Everything else:** `baskstream_call` runs any protocol operation.
+
+A change the station keeps for a person instead of making (API 1.14) comes back as a result with `outcome: "proposed"` and the proposal, not as an error.
 
 The server declares itself an agent on API 1.8 stations and later, under the MCP client's name, so a write can come back `proposed`.
 

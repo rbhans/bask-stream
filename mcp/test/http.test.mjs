@@ -106,7 +106,7 @@ test("with the token as a bearer header, the tools are the same as over stdio", 
   const client = await connect(server.url, { Authorization: `Bearer ${TOKEN}` }, "Claude Duet")
   clients.push(client)
   const { tools } = await client.listTools()
-  assert.equal(tools.length, 17)
+  assert.equal(tools.length, 19)
   const status = await call(client, "station_status")
   assert.equal(status.connected, true)
   assert.equal(status.agents.isAgent, true)

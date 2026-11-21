@@ -138,9 +138,47 @@ export async function startFakeStation() {
         if (!proposal) return send(ws, { op: "error", id, code: "proposal_not_found", message: `No proposal ${request.proposal}.` });
         if (proposal.status !== "pending") return send(ws, { op: "error", id, code: "proposal_closed", message: `Proposal ${proposal.id} is already ${proposal.status}.` });
         Object.assign(proposal, { status: op === "approve_proposal" ? "approved" : "rejected", decidedBy: USER, decidedAt: Date.now(), note: request.note ?? null });
+        if (proposal.status === "approved") {
+          // A kept file change is written now; either kind can then be put back.
+          if (proposal.kind === "files") state.files.set(proposal.point, proposal.request.text);
+          proposal.canRevert = true;
+        }
         state.agentLog.push({ timestamp: Date.now(), user: USER, target: proposal.point, action: proposal.action, outcome: `${proposal.status} ${proposal.id} by ${USER}`, reason: proposal.reason });
         pushProposal(proposal);
         return send(ws, { op: "proposal_result", id, proposal });
+      }
+      // API 1.14: every agent change, putting one back, and a point by its role.
+      case "list_changes": {
+        const all = [...state.proposals.values()].reverse().filter((p) => (!request.status || p.status === request.status) && (!request.kind || (p.kind ?? "points") === request.kind));
+        return send(ws, { op: "changes_result", id, changes: all.map((p) => ({ kind: "points", operation: "write", direct: false, canRevert: false, ...p })) });
+      }
+      case "revert_change": {
+        if (isAgent(ws)) return send(ws, { op: "error", id, code: "agent_cannot_approve", message: "Agents cannot put changes back; a person decides." });
+        const change = state.proposals.get(String(request.change).toUpperCase().replace(/^(\d)/, "P$1"));
+        if (!change) return send(ws, { op: "error", id, code: "proposal_not_found", message: `No change ${request.change}.` });
+        if (!change.canRevert) return send(ws, { op: "error", id, code: "not_revertible", message: `Change ${change.id} cannot be put back.` });
+        if (change.kind === "files") state.files.delete(change.point);
+        Object.assign(change, { status: "reverted", canRevert: false, revertedBy: USER, revertedAt: Date.now() });
+        state.agentLog.push({ timestamp: Date.now(), user: USER, target: change.point, action: "revert", outcome: `reverted ${change.id} by ${USER}`, reason: request.reason });
+        return send(ws, { op: "change_reverted", id, change });
+      }
+      case "resolve": {
+        const role = String(request.role ?? (request.tags ?? []).join(" ")).toLowerCase();
+        const points = [["SpaceTemp", /space|zone|room/], ["DischargeTemp", /discharge|supply/]].map(([name, words]) => ({ ord: `${request.equip}/points/${name}`, name, typeSpec: "control:NumericPoint", score: words.test(role) && /temp/.test(role) ? 0.9 : 0.2, why: ["name"] }));
+        const matches = points.filter((m) => m.score >= 0.3);
+        return send(ws, { op: "resolve_result", id, equip: request.equip, role: request.role ?? null, point: matches.length === 1 ? matches[0].ord : null, ambiguous: matches.length > 1, matches, inferred: true });
+      }
+      case "begin_upload":
+        state.upload = { path: request.path, pieces: [] };
+        return send(ws, { op: "upload_started", id, upload: "U1", path: request.path, maxBytes: 16777216, expiresAt: Date.now() + 300000 });
+      case "append_upload":
+        state.upload.pieces.push(Buffer.from(request.bytes));
+        return send(ws, { op: "upload_progress", id, upload: "U1", received: Buffer.concat(state.upload.pieces).length, expiresAt: Date.now() + 300000 });
+      case "commit_upload": {
+        const bytes = Buffer.concat(state.upload.pieces);
+        if (request.size !== undefined && request.size !== bytes.length) return send(ws, { op: "error", id, code: "upload_incomplete", message: "The upload holds a different number of bytes." });
+        state.files.set(state.upload.path, bytes.toString("utf8"));
+        return send(ws, { op: "file_written", id, file: { path: state.upload.path, size: bytes.length, created: true } });
       }
       case "query":
         if (request.bql && /\bfrom nothing\b/.test(request.bql)) return send(ws, { op: "error", id, code: "bad_query", message: "BqlException: unknown extent" });
@@ -158,6 +196,18 @@ export async function startFakeStation() {
         if (!state.files.has(request.path)) return send(ws, { op: "error", id, code: "file_not_found", message: `No such file: ${request.path}` });
         return send(ws, { op: "file_result", id, file: { path: request.path, name: request.path.split("/").pop(), directory: false, size: state.files.get(request.path).length, modified: 1, readonly: false, encoding: "text", text: state.files.get(request.path) } });
       case "write_file": {
+        // Under ^ask/ an agent's file change waits for a person (agentAskKinds names files).
+        if (isAgent(ws) && String(request.path).startsWith("^ask/") && !request.dryRun) {
+          if (!request.reason) return send(ws, { op: "error", id, code: "reason_required", message: "Agents must say why: add a 'reason' to the request." });
+          const proposal = {
+            id: `P${state.proposals.size + 1}`, status: "pending", kind: "files", operation: "write_file", direct: false, point: request.path, action: "write_file",
+            description: `write_file ${request.path} (${(request.text ?? Buffer.from(request.base64 ?? "", "base64").toString("utf8")).length} characters)`, reason: request.reason, agentUser: USER, actor: ws.actor,
+            createdAt: Date.now(), expiresAt: Date.now() + 900000, decidedBy: null, decidedAt: null, note: null, result: null, canRevert: false, request: { text: request.text ?? Buffer.from(request.base64 ?? "", "base64").toString("utf8") }
+          };
+          state.proposals.set(proposal.id, proposal);
+          pushProposal(proposal);
+          return send(ws, { op: "error", id, code: "change_proposed", outcome: "proposed", message: `This change was not made. It is waiting for a person to approve it as ${proposal.id}. Do not send it again.`, proposal });
+        }
         const exists = state.files.has(request.path);
         if (exists && !request.overwrite) return send(ws, { op: "error", id, code: "file_exists", message: `${request.path} already exists; send overwrite: true to replace it.` });
         const text = request.text ?? Buffer.from(request.base64, "base64").toString("utf8");

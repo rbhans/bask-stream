@@ -82,14 +82,39 @@ export interface Actor {
 }
 
 /** A point write an agent proposed, waiting for (or decided by) a person. */
+/** What the station would do with a change, from `explain_change` (API 1.13). */
+export interface ChangeExplanation {
+  change: string;
+  user: string;
+  isAgent: boolean;
+  /** The agent profile whose rules decided, or null for the service's own agent settings. */
+  profile: string | null;
+  outcome: "allow" | "ask" | "refuse";
+  /** The setting that decided, such as "agentPointWrites" or "writesEnabled"; null when no rule limits it. */
+  rule: string | null;
+  message: string;
+  /** With change "write" and a point: the value limit that names the point, or null. */
+  limit?: string | null;
+}
+
 export interface Proposal {
   id: string;
-  status: "pending" | "deciding" | "approved" | "rejected" | "expired" | "failed";
+  /** "applied" is a change the agent made directly; "approved" one a person approved. Both can be "reverted". */
+  status: "pending" | "deciding" | "approved" | "applied" | "rejected" | "expired" | "failed" | "reverted";
+  /** The kind of work (API 1.14). Absent from an older station, where every proposal is a point command. */
+  kind?: "points" | "files" | "discovery" | "modelEdits" | "tags" | "schedules" | "alarms";
+  /** The operation the change runs, such as "write" or "write_file". */
+  operation?: string;
+  /** True for a change the agent made without asking; only `changes()` lists those. */
+  direct?: boolean;
+  /** The target: a point, or for other kinds a component, a file path or a plan. */
   point: string;
   display?: string;
   action: string;
   value?: unknown;
   description: string;
+  /** A plan's steps, one line each. */
+  changes?: string[];
   reason?: string | null;
   agentUser: string;
   actor?: { kind: string; name?: string | null; model?: string | null; onBehalfOf?: string | null } | null;
@@ -99,6 +124,31 @@ export interface Proposal {
   decidedAt?: number | null;
   note?: string | null;
   result?: Json | null;
+  /** Whether `revertChange` can put it back now. */
+  canRevert?: boolean;
+  /** Why it cannot be put back at all. */
+  notRevertible?: string;
+  /** Steps that cannot be put back; the rest can, with `partial`. */
+  notReverted?: string[];
+  /** Said before approval: steps that could not be put back afterwards. */
+  irreversible?: string[];
+  revertedBy?: string | null;
+  revertedAt?: number | null;
+  /** What the station looked at after a point command, and what it found. */
+  check?: { point: string; min?: number; max?: number; dueAt: number; state: "waiting" | "passed" | "failed" | "unknown" | "skipped"; found?: unknown; message?: string; checkedAt?: number };
+}
+
+/** The answer of `resolve`: the point that plays a role on a piece of equipment. Inferred. */
+export interface RoleMatch {
+  equip: string;
+  role: string | null;
+  tags?: string[];
+  /** The best match when it is good and clearly ahead; null otherwise. */
+  point: string | null;
+  ambiguous: boolean;
+  matches: Array<{ ord: string; name: string; typeSpec: string; units?: string; score: number; why: string[] }>;
+  inferred: true;
+  truncated?: boolean;
 }
 
 /** One "Agent" record from the station's audit history. */
