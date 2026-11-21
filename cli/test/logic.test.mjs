@@ -291,7 +291,7 @@ test("the Logic view opens where the logic is, moves between slots, traces a val
     await app.until(/Logic · Logic\/AHU_01/);
 
     // Something an agent builds shows up by itself.
-    const plan = (await client.call("preview_model_changes", { changes: [{ action: "create", parent: LOGIC, name: "Hot", typeSpec: "kitControl:GreaterThan", ref: "hot" }, { action: "create_link", source: `${AHU}/OutdoorAirTemp`, sourceSlot: "out", target: "@hot", targetSlot: "inA" }] })).result;
+    const plan = (await client.call("preview_model_changes", { changes: [{ action: "create", parent: LOGIC, name: "Hot", typeSpec: "kitControl:GreaterThan", ref: "hot" }, { action: "create_link", name: "Link", collision: "suffix", source: `${AHU}/OutdoorAirTemp`, sourceSlot: "out", target: "@hot", targetSlot: "inA" }] })).result;
     await client.call("apply_model_changes", { planId: plan.planId, planHash: plan.planHash, idempotencyKey: "k1" });
     await app.until(/6 blocks · 10 links/, 3000);
     assert.match(app.frame(), /╭─ Hot ─+╮/);

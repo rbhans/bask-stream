@@ -689,6 +689,8 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
           const source = peek(from);
           const target = peek(to);
           const slot = String(c.targetSlot);
+          // As the module does: a link is a slot on its target and needs a name.
+          if (!c.name) throw refuse("bad_request", "Missing name");
           if (c.sourceSlot !== "out" || (source.kind !== "point" && source.kind !== "schedule")) throw refuse("invalid_slot", `Link from a point's, a block's or a schedule's "out"; ${source.name} has no "${c.sourceSlot}" to link from.`);
           if (target.logic ? !(slot in LOGIC[target.logic].ins) : !(target.writable && /^in([1-9]|1[0-6])$/.test(slot)))
             throw refuse("invalid_slot", target.logic ? `${target.name} (${target.typeSpec}) has no input "${slot}". It has: ${Object.keys(LOGIC[target.logic].ins).join(", ")}.`

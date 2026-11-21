@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { BaskStreamError, toSlotOrd, type BaskStreamClient, type Json, type Proposal } from "@basidekick/baskstream";
 import { isUnacked, place } from "../format.js";
 import { Link, type Shared } from "../link.js";
+import { namedLinks } from "../links.js";
 import { Finder } from "./Finder.js";
 import { mouseMode, useKeyPump, useKeys, useMouse } from "./input.js";
 import { Palette, type Command } from "./Palette.js";
@@ -217,7 +218,7 @@ export function App(props: AppProps) {
               showToast("Model edits are off on the station: turn on modelEditsEnabled on the BASkStreamService.", "warn");
               return resolve(false);
             }
-            const preview = (await attempt(title, () => client.call("preview_model_changes", { changes })))?.result as Json | undefined;
+            const preview = (await attempt(title, () => client.call("preview_model_changes", { changes: namedLinks(changes) })))?.result as Json | undefined;
             if (!preview) return resolve(false);
             const detail = lines ?? ((preview.changes ?? []) as Json[]).map((c) => `${String(c.action)} ${String(c.ord ?? c.name ?? "")}`);
             setModal({

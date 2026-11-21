@@ -5,6 +5,7 @@
 // and write_relations after the plans. Some things are reported and never applied: see LIMITS.
 //
 // A template is an export with named gaps (${name}); a CSV file fills them, one row per copy.
+import { namedLinks } from "./links.js";
 import chalk from "chalk";
 import { randomUUID } from "node:crypto";
 import { BaskStreamError, type BaskStreamClient, type Json } from "@basidekick/baskstream";
@@ -90,7 +91,7 @@ export async function planApply(client: BaskStreamClient, file: StationExport, t
     current = await exportBranch(client, target);
   } catch (error) {
     // No such branch yet: everything in the file is new, starting with the branch itself.
-    if (!(error instanceof BaskStreamError) || !/invalid|not_found/.test(error.code)) throw error;
+    if (!(error instanceof BaskStreamError) || !/invalid|not_found|browse_failed/.test(error.code)) throw error;
     current = { format: EXPORT_FORMAT, version: 1, root: target, components: [] };
     createsTarget = true;
   }
@@ -286,7 +287,7 @@ export async function runApply(client: BaskStreamClient, plan: ApplyPlan, option
       continue;
     }
     try {
-      const preview = (await client.call("preview_model_changes", { changes }, { timeoutMs: 120000 })).result as Json;
+      const preview = (await client.call("preview_model_changes", { changes: namedLinks(changes) }, { timeoutMs: 120000 })).result as Json;
       step.checked = true;
       // The station's own account of each change, with the references filled in.
       if (Array.isArray(preview.changes) && preview.changes.length === changes.length) step.changes = preview.changes as Json[];
@@ -326,7 +327,11 @@ export async function runApply(client: BaskStreamClient, plan: ApplyPlan, option
 /** One line for a change in a plan. */
 function changeLine(change: Json): string {
   const where = (ord: unknown) => (String(ord).startsWith("@") ? String(ord) : shortOrd(String(ord ?? ""), 3));
-  const names = Object.keys((change.properties ?? {}) as object);
+  // What bask sends is a map by name; the station's own account of a plan lists them.
+  const properties = change.properties ?? {};
+  const names = Array.isArray(properties)
+    ? properties.map((p) => (p && typeof p === "object" ? String((p as Json).name ?? (p as Json).slot ?? (p as Json).property ?? "") : String(p))).filter(Boolean)
+    : Object.keys(properties as object);
   switch (change.action) {
     case "create": return `add     ${chalk.bold(where(change.ord ?? `${String(change.parent)}/${String(change.name)}`))}  ${chalk.dim(String(change.typeSpec ?? ""))}${names.length ? chalk.dim(`  ${names.join(", ")}`) : ""}`;
     case "update": return `set     ${chalk.bold(where(change.ord))}  ${chalk.dim(names.join(", "))}`;

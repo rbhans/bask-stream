@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { namedLinks } from "./links.js";
 import chalk from "chalk";
 import { Command, Option } from "commander";
 import { randomUUID } from "node:crypto";
@@ -1992,7 +1993,7 @@ program
       }
       const changes = Array.isArray(parsed) ? parsed : (parsed as Json | null)?.changes;
       if (!Array.isArray(changes) || changes.length === 0) throw new Error(`${file} holds no changes. It should be {"changes": [...]}: bask logic guide shows one.`);
-      const plan = (await client.call("preview_model_changes", { changes: changes as Json[] }, { timeoutMs: 120000 })).result as Json;
+      const plan = (await client.call("preview_model_changes", { changes: namedLinks(changes as Json[]) }, { timeoutMs: 120000 })).result as Json;
       const listed = (plan.changes ?? []) as Json[];
       if (g.output === "table") for (const change of listed) console.log(`  ${changeLine(change)}`);
       if (!opts.apply) {

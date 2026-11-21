@@ -87,9 +87,9 @@ test("what serves what: a link through logic says which air handler, and a confi
     const plan = (await client.call("preview_model_changes", { changes: [
       { action: "create", parent: "slot:/Logic", name: "AHU_02", typeSpec: "baja:Folder", ref: "f" },
       { action: "create", parent: "@f", name: "MostOpen", typeSpec: "kitControl:Maximum", ref: "max" },
-      { action: "create_link", source: P("VAV_105/DamperPosition"), sourceSlot: "out", target: "@max", targetSlot: "inA" },
-      { action: "create_link", source: P("VAV_106/DamperPosition"), sourceSlot: "out", target: "@max", targetSlot: "inB" },
-      { action: "create_link", source: "@max", sourceSlot: "out", target: P("AHU_02/SupplyFanSpeed"), targetSlot: "in10" }
+      { action: "create_link", name: "Link", collision: "suffix", source: P("VAV_105/DamperPosition"), sourceSlot: "out", target: "@max", targetSlot: "inA" },
+      { action: "create_link", name: "Link", collision: "suffix", source: P("VAV_106/DamperPosition"), sourceSlot: "out", target: "@max", targetSlot: "inB" },
+      { action: "create_link", name: "Link", collision: "suffix", source: "@max", sourceSlot: "out", target: P("AHU_02/SupplyFanSpeed"), targetSlot: "in10" }
     ] })).result;
     await client.call("apply_model_changes", { planId: plan.planId, planHash: plan.planHash, idempotencyKey: randomUUID() });
 
