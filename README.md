@@ -13,13 +13,15 @@ The repository's own code and documentation are open source under the [Apache Li
 ## Start here
 
 1. **Put the module on a station.** The signed `baskStream-rt.jar` at the repository root is API 1.12: [install it](#install-it-on-a-station), add `BASkStreamService`, and [decide its settings](#service-settings-to-decide), including what AI agents may do.
-2. **Connect a client.** Talk to the [WebSocket protocol](docs/THIRD_PARTY_API.md) directly, use the [TypeScript SDK](#typescript-sdk), chart with the [Grafana data source](#grafana-integration), or work from a terminal with [`bask`](#bask-cli-and-dashboard), the command-line client built on the SDK.
+2. **Connect a client.** Talk to the [WebSocket protocol](docs/THIRD_PARTY_API.md) directly, use the [TypeScript SDK](#typescript-sdk), or work from a terminal with [`bask`](#bask-cli-and-dashboard), the command-line client built on the SDK.
 3. **No station yet?** [Install `bask`](#1-install) and run [`bask demo`](#2-try-it-without-a-station): a simulated building that speaks the same protocol.
 
 ## Current API highlights
 
-- The current source advertises API version `1.12`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
-- The signed `baskStream-rt.jar` at the repository root is built from this source and reports API `1.12` (see [Station setup](#station-setup)).
+- The current source advertises API version `1.14`. Clients should still call `capabilities` instead of assuming a deployed station is on the same version.
+- The signed `baskStream-rt.jar` at the repository root was built before the 1.13 changes and reports API `1.12` (see [Station setup](#station-setup)). A build of the current source makes two jars, `baskStream-rt.jar` and `baskStream-ux.jar`.
+- API 1.14 lets any kind of agent change [wait for a person](docs/AI_AGENTS.md#any-kind-of-change-can-wait-for-a-person) (`agentAskKinds`), keeps every agent change for a week so it can be [listed, checked and put back](docs/AI_AGENTS.md#changes-can-be-listed-checked-and-put-back) (`list_changes`, `revert_change`, the view's Activity tab), raises an alarm in a chosen class while a change waits, sends [files larger than one message in pieces](docs/HEADLESS_WORKBENCH.md#a-file-larger-than-one-message-api-114), and adds `resolve`, which finds the point that plays a role on a piece of equipment. See [what changed](docs/AI_AGENTS.md#what-changed-in-api-114).
+- API 1.13 gives each kind of agent work its own setting (`agentPointWrites` for point commands: refuse, ask a person, or allow), adds [agent profiles](docs/AI_AGENTS.md#profiles-different-rules-for-different-agents) (different rules, an end time and a narrower reach for chosen agent users), the `explain_change` operation, and a [settings view](docs/AI_AGENTS.md#the-settings-view) for the service in Workbench. Waiting proposals survive a restart, and a file over 48 KB now uploads. See [what changed](docs/AI_AGENTS.md#what-changed-in-api-113).
 - API 1.11 adds the `agentDirect…` settings: while an agent's point writes wait for approval, a station can let it do chosen kinds of work by itself (station files, discovery, model edits, tags, schedules, alarms). `describe_component` also returns a component's `links`, which bask's Logic view draws. See the [compatibility notes](docs/THIRD_PARTY_API.md#api-111-changes).
 - API 1.12 adds [graphics](docs/GRAPHICS.md) operations: read a Px as data and validate it against the station's modules, write it with a backup, resolve one Px's bindings on many components with suggestions for the missing ones, attach it as a view in bulk, check nav files, and take an inventory of the station's graphics with a punch list.
 - API 1.10 adds the [headless Workbench](docs/HEADLESS_WORKBENCH.md) operations: BQL and NEQL queries, the station's files (Px, nav and so on), jobs, and BACnet discovery that adds devices and points with their facets learned. With model editing (create, wire, set any property, invoke any action), a client can engineer a station without Workbench. An opt-in `securityEditsEnabled` lets model plans edit users, roles and categories.
@@ -46,7 +48,7 @@ The repository's own code and documentation are open source under the [Apache Li
 | TypeScript SDK | JavaScript/TypeScript apps (Node, Electron, tooling) that want login, reconnects and live subscriptions handled for them. | [TypeScript SDK](#typescript-sdk) |
 | `bask` CLI | Quick station checks, scripts and exports from a terminal, a full-screen live dashboard, workspaces beside an AI agent, and simulated buildings to try it on. | [bask CLI and dashboard](#bask-cli-and-dashboard) |
 | MCP server | Claude and other MCP clients as AI agents on a station: points, history, alarms, schedules, changes with reasons, and pictures of Px pages. Packed as a Claude Desktop Extension. | [mcp/README.md](mcp/README.md) |
-| Integration direction | Compatibility rules and the future adapter strategy for Grafana, REST, OpenMetrics, and exporters. | [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) |
+| Integration direction | Compatibility rules and the adapter strategy for REST, OpenMetrics, and exporters. | [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) |
 | Python tools | Bench tests, quick station checks, and scripting experiments. | [Python test tools](#python-test-tools) |
 
 ## TypeScript SDK
@@ -163,31 +165,11 @@ That agent's point writes then become proposals that a person approves in Workbe
 
 To let the agent do some kinds of work by itself while its point writes still wait for approval, turn on the matching **`agentDirect…`** setting (API 1.11): `agentDirectFiles` (station files under named paths, such as `^bask/*` for graphics), `agentDirectDiscovery`, `agentDirectModelEdits`, `agentDirectTags`, `agentDirectSchedules`, `agentDirectAlarms`. All are off by default, and a refused change names the setting that would allow it.
 
-## Grafana integration
-
-The first product integration is a read-only Grafana backend data source at [integrations/grafana/basidekick-baskstream-datasource](integrations/grafana/basidekick-baskstream-datasource). It connects Grafana directly to a Niagara station running baskStream:
-
-```text
-Grafana panel -> BaskStream data source -> Niagara login -> /stream/health -> /stream WebSocket
-```
-
-It does not require a Niagara module API change. The plugin uses the existing `/stream` operations for point search, current values, histories, and live COV updates.
-
-To get a first panel running:
-
-1. Install and enable the baskStream runtime module on the Niagara station.
-2. Create a least-privilege Niagara user for Grafana.
-3. Build and sign the Grafana plugin from `integrations/grafana/basidekick-baskstream-datasource`.
-4. Install the signed plugin into Grafana's plugin directory and restart Grafana.
-5. Add the `BaskStream` data source in Grafana.
-6. Use `History`, `Snapshot`, or `Live` query mode in panels.
-
-For private signed installs, the Grafana root URL used during signing must exactly match Grafana's configured `server.root_url`. See [integrations/grafana/basidekick-baskstream-datasource/INSTALL.md](integrations/grafana/basidekick-baskstream-datasource/INSTALL.md).
-
 ## Repository layout
 
 ```text
 baskStream-rt/                   Niagara runtime module source
+baskStream-ux/                   The service's settings view (HTML5), built as baskStream-ux.jar
 niagara-module.xml               Module descriptor the Niagara build reads
 baskStream-rt.jar                Signed module jar built from this source (API 1.12)
 LICENSE                          Apache License 2.0 for this repository's code
@@ -214,7 +196,6 @@ tools/baskstream-live-smoke.mjs
 tools/python-tools/README.md     Python bench-test tooling guide
 tools/python-tools/tools/python/
                                  Read-only Python client, CLI, and smoke test
-integrations/grafana/            Grafana integration implementation and product contract
 tools/baskstream-test.html       Lower-level standalone test harness
 tools/baskstream-test-snippet.js
                                  Browser-console station-page test snippet
@@ -298,7 +279,7 @@ The expected unsigned result is `jar is unsigned`.
 ### Install it on a station
 
 1. Install the baskStream module jar on the station host: copy it into the `modules` folder of the Niagara install the station runs on, or install it from Workbench with the platform's Software Manager.
-2. Restart Niagara so the module is available.
+2. Restart Niagara so the module is available. A build of API 1.13 or later has a second jar, `baskStream-ux.jar`: install it too on the computer that runs Workbench, for the service's **baskStream Settings** view (right-click the service → Views). The API works without it.
 3. Add `BASkStreamService` (from the `baskStream` palette) to the station's Services.
 4. Confirm the service `servletName` property is `stream`; blank values are defaulted to `stream` on startup.
 5. Verify the health endpoint responds after station login:
@@ -319,7 +300,8 @@ GET https://<station>/stream/health
 | `securityEditsEnabled` | false | Model plans that edit users, roles and categories. Never applies to agents. |
 | `auditFilesAndViews` | false | Record file writes and deletes and Px view changes made through baskStream in the audit history and station log. Off, so building a project's graphics does not fill the audit history. AI agent changes are always recorded. |
 | `agentUsers` | blank | The Niagara logins that are AI agents, such as the user you give `bask workspace --agent-user`. |
-| `agentDirectFiles`, `agentDirectDiscovery`, `agentDirectModelEdits`, `agentDirectTags`, `agentDirectSchedules`, `agentDirectAlarms` | off | Kinds of work an agent may do by itself while its point writes wait for approval. For an agent that draws graphics and brings equipment in: `agentDirectFiles` = `^bask/*` and `agentDirectDiscovery` = true. |
+| `agentPointWrites` | ask | What an agent's point command does: `refuse`, `ask` (a proposal a person approves) or `allow` (API 1.13). |
+| `agentDirectFiles`, `agentDirectDiscovery`, `agentDirectModelEdits`, `agentDirectTags`, `agentDirectSchedules`, `agentDirectAlarms` | off | Kinds of work an agent may do by itself. For an agent that draws graphics and brings equipment in: `agentDirectFiles` = `^bask/*` and `agentDirectDiscovery` = true. |
 
 The agent settings are described in [docs/AI_AGENTS.md](docs/AI_AGENTS.md#settings), and the other properties under [Network and security](#network-and-security).
 
@@ -452,7 +434,7 @@ Common blockers for real deployments:
 
 Niagara user permissions are the main access control. Every integration should have a dedicated, least-privilege station user. `allowedPathPatterns` adds another boundary, but its default, `slot:/*`, is intentionally broad for backward compatibility. Narrow it to the parts of the station an integration actually needs.
 
-Non-browser clients such as Grafana, the Python tools, and server-to-server integrations may omit the `Origin` header. baskStream allows that by default. Browser clients that send an origin are checked against the station origin and `allowedOrigins`. If every client in a deployment sends an origin, `rejectMissingOrigin` can make that check strict.
+Non-browser clients such as `bask`, the Python tools, and server-to-server integrations may omit the `Origin` header. baskStream allows that by default. Browser clients that send an origin are checked against the station origin and `allowedOrigins`. If every client in a deployment sends an origin, `rejectMissingOrigin` can make that check strict.
 
 `revalidateIntervalSec` (default 60) re-checks open sessions: it drops subscriptions the user can no longer read and closes the socket when the user is removed, disabled or expired. Set it to 0 to turn this off. The other hardening settings are opt-in so existing clients keep working. `requireAuthorizationHeader` rejects cookie-only WebSocket upgrades and `maxConnectionsPerUser` limits one Niagara account's open sockets. Check client compatibility before enabling them. `maxMessageBytes` defaults to 1 MiB.
 

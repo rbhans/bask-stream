@@ -4,9 +4,12 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import javax.baja.alarm.BAlarmRecord;
+import javax.baja.nre.annotations.Facet;
 import javax.baja.nre.annotations.NiagaraAction;
 import javax.baja.nre.annotations.NiagaraProperty;
 import javax.baja.nre.annotations.NiagaraType;
+import javax.baja.sys.BBoolean;
 import javax.baja.sys.BRelTime;
 import javax.baja.sys.BString;
 import javax.baja.sys.Context;
@@ -17,6 +20,7 @@ import javax.baja.sys.Type;
 import javax.baja.web.BWebServlet;
 import javax.baja.web.WebOp;
 import javax.baja.sys.Action;
+import javax.baja.sys.BFacets;
 
 @NiagaraType
 @NiagaraProperty(
@@ -187,49 +191,56 @@ import javax.baja.sys.Action;
   defaultValue = "",
   flags = Flags.SUMMARY
 )
-/** Agent point writes become proposals that a person approves. Other agent changes are refused unless an agentDirect setting below allows that kind. Off = agents change things directly, within the limits below. */
+/** What an agent's point command does: refuse it, ask a person (it becomes a proposal), or allow it within the limits below. */
+@NiagaraProperty(
+  name = "agentPointWrites",
+  type = "baskStream:AgentMode",
+  defaultValue = "BAgentMode.ask",
+  flags = Flags.SUMMARY
+)
+/** Replaced by agentPointWrites and the agentDirect settings (API 1.13). Turning it off sets every one of them to allow, which is what off used to mean, and turns it back on. */
 @NiagaraProperty(
   name = "agentApprovalRequired",
   type = "boolean",
   defaultValue = "true",
-  flags = Flags.SUMMARY
+  flags = Flags.HIDDEN
 )
-/** With approval required: station file paths an agent may still write and delete directly, comma separated, where * matches anything. For the graphics bask keeps: ^bask/* (blank = none). */
+/** Station file paths an agent may write and delete, comma separated, where * matches anything. For the graphics bask keeps: ^bask/* (blank = none). */
 @NiagaraProperty(
   name = "agentDirectFiles",
   type = "baja:String",
   defaultValue = "",
   flags = Flags.SUMMARY
 )
-/** With approval required: agents may still start BACnet discovery, cancel a job, and add the devices and points discovery found. */
+/** Agents may start BACnet discovery, cancel a job, and add the devices and points discovery found. */
 @NiagaraProperty(
   name = "agentDirectDiscovery",
   type = "boolean",
   defaultValue = "false",
   flags = Flags.SUMMARY
 )
-/** With approval required: agents may still apply any model plan (create, change, link, rename, move and delete components, invoke actions). Commanding a point stays a proposal. */
+/** Agents may apply any model plan (create, change, link, rename, move and delete components, invoke actions). Commanding a point follows agentPointWrites. */
 @NiagaraProperty(
   name = "agentDirectModelEdits",
   type = "boolean",
   defaultValue = "false",
   flags = Flags.SUMMARY
 )
-/** With approval required: agents may still write tags and relations. */
+/** Agents may write tags and relations. */
 @NiagaraProperty(
   name = "agentDirectTags",
   type = "boolean",
   defaultValue = "false",
   flags = Flags.SUMMARY
 )
-/** With approval required: agents may still change schedules. */
+/** Agents may change schedules. */
 @NiagaraProperty(
   name = "agentDirectSchedules",
   type = "boolean",
   defaultValue = "false",
   flags = Flags.SUMMARY
 )
-/** With approval required: agents may still acknowledge and clear alarms. */
+/** Agents may acknowledge and clear alarms. */
 @NiagaraProperty(
   name = "agentDirectAlarms",
   type = "boolean",
@@ -257,32 +268,73 @@ import javax.baja.sys.Action;
   defaultValue = "false",
   flags = Flags.SUMMARY
 )
-/** Value limit for agent writes: an ORD pattern (* matches anything) and a range, e.g. slot:/Floor1/VAV_01/ZoneSP 68..76. Points' own min/max facets always apply. */
+/** Value limits for agent writes, one rule per line: an ORD pattern (* matches anything) and a range, e.g. slot:/Floor1/VAV_01/ZoneSP 68..76. The first rule that matches a point applies. Points' own min/max facets always apply. */
+@NiagaraProperty(
+  name = "agentBounds",
+  type = "baja:String",
+  defaultValue = "",
+  flags = Flags.SUMMARY,
+  facets = @Facet(name = "BFacets.MULTI_LINE", value = "true")
+)
+/** What an agent's command does on a point that no rule in agentBounds names: allow it (as agentPointWrites says), ask a person, or refuse it. */
+@NiagaraProperty(
+  name = "agentUnlistedPoints",
+  type = "baskStream:AgentMode",
+  defaultValue = "BAgentMode.allow",
+  flags = Flags.SUMMARY
+)
+/** Replaced by agentBounds (API 1.13); a rule left here is moved there when the service starts. */
 @NiagaraProperty(
   name = "agentBound1",
   type = "baja:String",
   defaultValue = "",
-  flags = Flags.SUMMARY
+  flags = Flags.HIDDEN
 )
 @NiagaraProperty(
   name = "agentBound2",
   type = "baja:String",
   defaultValue = "",
-  flags = Flags.SUMMARY
+  flags = Flags.HIDDEN
 )
 @NiagaraProperty(
   name = "agentBound3",
   type = "baja:String",
   defaultValue = "",
-  flags = Flags.SUMMARY
+  flags = Flags.HIDDEN
 )
 @NiagaraProperty(
   name = "agentBound4",
   type = "baja:String",
   defaultValue = "",
+  flags = Flags.HIDDEN
+)
+/** Kinds of change that wait for a person instead of being refused when they are not allowed directly: any of files, discovery, modelEdits, tags, schedules, alarms. */
+@NiagaraProperty(
+  name = "agentAskKinds",
+  type = "baja:String",
+  defaultValue = "",
   flags = Flags.SUMMARY
 )
-/** Minutes a proposal waits for a person before it expires. */
+/** How many agent changes are kept, so they can be listed and put back. Waiting ones are always kept. */
+@NiagaraProperty(
+  name = "agentChangeHistory",
+  type = "int",
+  defaultValue = "200"
+)
+/** The alarm class that gets an alarm while an agent change waits for a person or a check after one has failed. Blank for no alarm. */
+@NiagaraProperty(
+  name = "agentAlarmClass",
+  type = "baja:String",
+  defaultValue = ""
+)
+/** What needs a person now: agent changes waiting, and checks that failed. Blank when there is nothing. */
+@NiagaraProperty(
+  name = "agentAttention",
+  type = "baja:String",
+  defaultValue = "",
+  flags = Flags.READONLY | Flags.TRANSIENT
+)
+/** Minutes a proposal waits for a person before it expires: up to 10080, a week. */
 @NiagaraProperty(
   name = "agentProposalMinutes",
   type = "int",
@@ -295,6 +347,13 @@ import javax.baja.sys.Action;
   type = "baja:String",
   defaultValue = "none",
   flags = Flags.READONLY | Flags.TRANSIENT | Flags.SUMMARY
+)
+/** The waiting proposals as stored text, so they are saved with the station and survive a restart. Not for editing. */
+@NiagaraProperty(
+  name = "proposalStore",
+  type = "baja:String",
+  defaultValue = "",
+  flags = Flags.READONLY | Flags.HIDDEN
 )
 /** Approves a pending agent proposal by id (e.g. P7). The write runs with your permissions. */
 @NiagaraAction(
@@ -310,7 +369,36 @@ import javax.baja.sys.Action;
   defaultValue = "BString.make(\"\")",
   flags = Flags.OPERATOR
 )
-public final class BBaskStreamService extends BWebServlet
+/** Acknowledges the alarm baskStream raised. The alarm service calls this; it is the alarm source's part of an acknowledgement. */
+@NiagaraAction(
+  name = "ackAlarm",
+  parameterType = "alarm:AlarmRecord",
+  defaultValue = "new javax.baja.alarm.BAlarmRecord()",
+  returnType = "baja:Boolean",
+  flags = Flags.HIDDEN
+)
+/** Puts an agent change back by id (e.g. P7), with your permissions. It is refused if the target has changed since. */
+@NiagaraAction(
+  name = "revertChange",
+  parameterType = "baja:String",
+  defaultValue = "BString.make(\"\")",
+  flags = Flags.OPERATOR
+)
+/** The agent changes you may see, newest first, as JSON text. Used by the settings view. */
+@NiagaraAction(
+  name = "listChanges",
+  returnType = "baja:String",
+  flags = Flags.OPERATOR | Flags.HIDDEN
+)
+/** What the station would do with a change, as JSON text. The argument is lines of name=value: change, user, point, path. Used by the settings view. */
+@NiagaraAction(
+  name = "explainChange",
+  parameterType = "baja:String",
+  defaultValue = "BString.make(\"\")",
+  returnType = "baja:String",
+  flags = Flags.OPERATOR | Flags.HIDDEN
+)
+public final class BBaskStreamService extends BWebServlet implements javax.baja.alarm.BIAlarmSource
 {
   public static final Logger LOG = Logger.getLogger(BBaskStreamService.class.getName());
   private static final AtomicReference<BBaskStreamService> ACTIVE = new AtomicReference<BBaskStreamService>();
@@ -323,8 +411,8 @@ public final class BBaskStreamService extends BWebServlet
 
 //region /*+ ------------ BEGIN BAJA AUTO GENERATED CODE ------------ +*/
 //@formatter:off
-/*@ $com.basidekick.baskstream.BBaskStreamService(2552492295)1.0$ @*/
-/* Generated Thu Nov 12 22:39:28 MST 2026 by Slot-o-Matic (c) Tridium, Inc. 2012-2026 */
+/*@ $com.basidekick.baskstream.BBaskStreamService(2335572940)1.0$ @*/
+/* Generated Sat Nov 21 14:26:37 MST 2026 by Slot-o-Matic (c) Tridium, Inc. 2012-2026 */
 
   //region Property "writesEnabled"
 
@@ -959,26 +1047,52 @@ public final class BBaskStreamService extends BWebServlet
 
   //endregion Property "agentUsers"
 
+  //region Property "agentPointWrites"
+
+  /**
+   * Slot for the {@code agentPointWrites} property.
+   * What an agent's point command does: refuse it, ask a person (it becomes a proposal), or allow it within the limits below.
+   * @see #getAgentPointWrites
+   * @see #setAgentPointWrites
+   */
+  public static final Property agentPointWrites = newProperty(Flags.SUMMARY, BAgentMode.ask, null);
+
+  /**
+   * Get the {@code agentPointWrites} property.
+   * What an agent's point command does: refuse it, ask a person (it becomes a proposal), or allow it within the limits below.
+   * @see #agentPointWrites
+   */
+  public BAgentMode getAgentPointWrites() { return (BAgentMode)get(agentPointWrites); }
+
+  /**
+   * Set the {@code agentPointWrites} property.
+   * What an agent's point command does: refuse it, ask a person (it becomes a proposal), or allow it within the limits below.
+   * @see #agentPointWrites
+   */
+  public void setAgentPointWrites(BAgentMode v) { set(agentPointWrites, v, null); }
+
+  //endregion Property "agentPointWrites"
+
   //region Property "agentApprovalRequired"
 
   /**
    * Slot for the {@code agentApprovalRequired} property.
-   * Agent point writes become proposals that a person approves. Other agent changes are refused unless an agentDirect setting below allows that kind. Off = agents change things directly, within the limits below.
+   * Replaced by agentPointWrites and the agentDirect settings (API 1.13). Turning it off sets every one of them to allow, which is what off used to mean, and turns it back on.
    * @see #getAgentApprovalRequired
    * @see #setAgentApprovalRequired
    */
-  public static final Property agentApprovalRequired = newProperty(Flags.SUMMARY, true, null);
+  public static final Property agentApprovalRequired = newProperty(Flags.HIDDEN, true, null);
 
   /**
    * Get the {@code agentApprovalRequired} property.
-   * Agent point writes become proposals that a person approves. Other agent changes are refused unless an agentDirect setting below allows that kind. Off = agents change things directly, within the limits below.
+   * Replaced by agentPointWrites and the agentDirect settings (API 1.13). Turning it off sets every one of them to allow, which is what off used to mean, and turns it back on.
    * @see #agentApprovalRequired
    */
   public boolean getAgentApprovalRequired() { return getBoolean(agentApprovalRequired); }
 
   /**
    * Set the {@code agentApprovalRequired} property.
-   * Agent point writes become proposals that a person approves. Other agent changes are refused unless an agentDirect setting below allows that kind. Off = agents change things directly, within the limits below.
+   * Replaced by agentPointWrites and the agentDirect settings (API 1.13). Turning it off sets every one of them to allow, which is what off used to mean, and turns it back on.
    * @see #agentApprovalRequired
    */
   public void setAgentApprovalRequired(boolean v) { setBoolean(agentApprovalRequired, v, null); }
@@ -989,7 +1103,7 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Slot for the {@code agentDirectFiles} property.
-   * With approval required: station file paths an agent may still write and delete directly, comma separated, where * matches anything. For the graphics bask keeps: ^bask/* (blank = none).
+   * Station file paths an agent may write and delete, comma separated, where * matches anything. For the graphics bask keeps: ^bask/* (blank = none).
    * @see #getAgentDirectFiles
    * @see #setAgentDirectFiles
    */
@@ -997,14 +1111,14 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Get the {@code agentDirectFiles} property.
-   * With approval required: station file paths an agent may still write and delete directly, comma separated, where * matches anything. For the graphics bask keeps: ^bask/* (blank = none).
+   * Station file paths an agent may write and delete, comma separated, where * matches anything. For the graphics bask keeps: ^bask/* (blank = none).
    * @see #agentDirectFiles
    */
   public String getAgentDirectFiles() { return getString(agentDirectFiles); }
 
   /**
    * Set the {@code agentDirectFiles} property.
-   * With approval required: station file paths an agent may still write and delete directly, comma separated, where * matches anything. For the graphics bask keeps: ^bask/* (blank = none).
+   * Station file paths an agent may write and delete, comma separated, where * matches anything. For the graphics bask keeps: ^bask/* (blank = none).
    * @see #agentDirectFiles
    */
   public void setAgentDirectFiles(String v) { setString(agentDirectFiles, v, null); }
@@ -1015,7 +1129,7 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Slot for the {@code agentDirectDiscovery} property.
-   * With approval required: agents may still start BACnet discovery, cancel a job, and add the devices and points discovery found.
+   * Agents may start BACnet discovery, cancel a job, and add the devices and points discovery found.
    * @see #getAgentDirectDiscovery
    * @see #setAgentDirectDiscovery
    */
@@ -1023,14 +1137,14 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Get the {@code agentDirectDiscovery} property.
-   * With approval required: agents may still start BACnet discovery, cancel a job, and add the devices and points discovery found.
+   * Agents may start BACnet discovery, cancel a job, and add the devices and points discovery found.
    * @see #agentDirectDiscovery
    */
   public boolean getAgentDirectDiscovery() { return getBoolean(agentDirectDiscovery); }
 
   /**
    * Set the {@code agentDirectDiscovery} property.
-   * With approval required: agents may still start BACnet discovery, cancel a job, and add the devices and points discovery found.
+   * Agents may start BACnet discovery, cancel a job, and add the devices and points discovery found.
    * @see #agentDirectDiscovery
    */
   public void setAgentDirectDiscovery(boolean v) { setBoolean(agentDirectDiscovery, v, null); }
@@ -1041,7 +1155,7 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Slot for the {@code agentDirectModelEdits} property.
-   * With approval required: agents may still apply any model plan (create, change, link, rename, move and delete components, invoke actions). Commanding a point stays a proposal.
+   * Agents may apply any model plan (create, change, link, rename, move and delete components, invoke actions). Commanding a point follows agentPointWrites.
    * @see #getAgentDirectModelEdits
    * @see #setAgentDirectModelEdits
    */
@@ -1049,14 +1163,14 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Get the {@code agentDirectModelEdits} property.
-   * With approval required: agents may still apply any model plan (create, change, link, rename, move and delete components, invoke actions). Commanding a point stays a proposal.
+   * Agents may apply any model plan (create, change, link, rename, move and delete components, invoke actions). Commanding a point follows agentPointWrites.
    * @see #agentDirectModelEdits
    */
   public boolean getAgentDirectModelEdits() { return getBoolean(agentDirectModelEdits); }
 
   /**
    * Set the {@code agentDirectModelEdits} property.
-   * With approval required: agents may still apply any model plan (create, change, link, rename, move and delete components, invoke actions). Commanding a point stays a proposal.
+   * Agents may apply any model plan (create, change, link, rename, move and delete components, invoke actions). Commanding a point follows agentPointWrites.
    * @see #agentDirectModelEdits
    */
   public void setAgentDirectModelEdits(boolean v) { setBoolean(agentDirectModelEdits, v, null); }
@@ -1067,7 +1181,7 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Slot for the {@code agentDirectTags} property.
-   * With approval required: agents may still write tags and relations.
+   * Agents may write tags and relations.
    * @see #getAgentDirectTags
    * @see #setAgentDirectTags
    */
@@ -1075,14 +1189,14 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Get the {@code agentDirectTags} property.
-   * With approval required: agents may still write tags and relations.
+   * Agents may write tags and relations.
    * @see #agentDirectTags
    */
   public boolean getAgentDirectTags() { return getBoolean(agentDirectTags); }
 
   /**
    * Set the {@code agentDirectTags} property.
-   * With approval required: agents may still write tags and relations.
+   * Agents may write tags and relations.
    * @see #agentDirectTags
    */
   public void setAgentDirectTags(boolean v) { setBoolean(agentDirectTags, v, null); }
@@ -1093,7 +1207,7 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Slot for the {@code agentDirectSchedules} property.
-   * With approval required: agents may still change schedules.
+   * Agents may change schedules.
    * @see #getAgentDirectSchedules
    * @see #setAgentDirectSchedules
    */
@@ -1101,14 +1215,14 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Get the {@code agentDirectSchedules} property.
-   * With approval required: agents may still change schedules.
+   * Agents may change schedules.
    * @see #agentDirectSchedules
    */
   public boolean getAgentDirectSchedules() { return getBoolean(agentDirectSchedules); }
 
   /**
    * Set the {@code agentDirectSchedules} property.
-   * With approval required: agents may still change schedules.
+   * Agents may change schedules.
    * @see #agentDirectSchedules
    */
   public void setAgentDirectSchedules(boolean v) { setBoolean(agentDirectSchedules, v, null); }
@@ -1119,7 +1233,7 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Slot for the {@code agentDirectAlarms} property.
-   * With approval required: agents may still acknowledge and clear alarms.
+   * Agents may acknowledge and clear alarms.
    * @see #getAgentDirectAlarms
    * @see #setAgentDirectAlarms
    */
@@ -1127,14 +1241,14 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Get the {@code agentDirectAlarms} property.
-   * With approval required: agents may still acknowledge and clear alarms.
+   * Agents may acknowledge and clear alarms.
    * @see #agentDirectAlarms
    */
   public boolean getAgentDirectAlarms() { return getBoolean(agentDirectAlarms); }
 
   /**
    * Set the {@code agentDirectAlarms} property.
-   * With approval required: agents may still acknowledge and clear alarms.
+   * Agents may acknowledge and clear alarms.
    * @see #agentDirectAlarms
    */
   public void setAgentDirectAlarms(boolean v) { setBoolean(agentDirectAlarms, v, null); }
@@ -1219,26 +1333,78 @@ public final class BBaskStreamService extends BWebServlet
 
   //endregion Property "agentAllowEmergency"
 
+  //region Property "agentBounds"
+
+  /**
+   * Slot for the {@code agentBounds} property.
+   * Value limits for agent writes, one rule per line: an ORD pattern (* matches anything) and a range, e.g. slot:/Floor1/VAV_01/ZoneSP 68..76. The first rule that matches a point applies. Points' own min/max facets always apply.
+   * @see #getAgentBounds
+   * @see #setAgentBounds
+   */
+  public static final Property agentBounds = newProperty(Flags.SUMMARY, "", BFacets.make(BFacets.MULTI_LINE, true));
+
+  /**
+   * Get the {@code agentBounds} property.
+   * Value limits for agent writes, one rule per line: an ORD pattern (* matches anything) and a range, e.g. slot:/Floor1/VAV_01/ZoneSP 68..76. The first rule that matches a point applies. Points' own min/max facets always apply.
+   * @see #agentBounds
+   */
+  public String getAgentBounds() { return getString(agentBounds); }
+
+  /**
+   * Set the {@code agentBounds} property.
+   * Value limits for agent writes, one rule per line: an ORD pattern (* matches anything) and a range, e.g. slot:/Floor1/VAV_01/ZoneSP 68..76. The first rule that matches a point applies. Points' own min/max facets always apply.
+   * @see #agentBounds
+   */
+  public void setAgentBounds(String v) { setString(agentBounds, v, null); }
+
+  //endregion Property "agentBounds"
+
+  //region Property "agentUnlistedPoints"
+
+  /**
+   * Slot for the {@code agentUnlistedPoints} property.
+   * What an agent's command does on a point that no rule in agentBounds names: allow it (as agentPointWrites says), ask a person, or refuse it.
+   * @see #getAgentUnlistedPoints
+   * @see #setAgentUnlistedPoints
+   */
+  public static final Property agentUnlistedPoints = newProperty(Flags.SUMMARY, BAgentMode.allow, null);
+
+  /**
+   * Get the {@code agentUnlistedPoints} property.
+   * What an agent's command does on a point that no rule in agentBounds names: allow it (as agentPointWrites says), ask a person, or refuse it.
+   * @see #agentUnlistedPoints
+   */
+  public BAgentMode getAgentUnlistedPoints() { return (BAgentMode)get(agentUnlistedPoints); }
+
+  /**
+   * Set the {@code agentUnlistedPoints} property.
+   * What an agent's command does on a point that no rule in agentBounds names: allow it (as agentPointWrites says), ask a person, or refuse it.
+   * @see #agentUnlistedPoints
+   */
+  public void setAgentUnlistedPoints(BAgentMode v) { set(agentUnlistedPoints, v, null); }
+
+  //endregion Property "agentUnlistedPoints"
+
   //region Property "agentBound1"
 
   /**
    * Slot for the {@code agentBound1} property.
-   * Value limit for agent writes: an ORD pattern (* matches anything) and a range, e.g. slot:/Floor1/VAV_01/ZoneSP 68..76. Points' own min/max facets always apply.
+   * Replaced by agentBounds (API 1.13); a rule left here is moved there when the service starts.
    * @see #getAgentBound1
    * @see #setAgentBound1
    */
-  public static final Property agentBound1 = newProperty(Flags.SUMMARY, "", null);
+  public static final Property agentBound1 = newProperty(Flags.HIDDEN, "", null);
 
   /**
    * Get the {@code agentBound1} property.
-   * Value limit for agent writes: an ORD pattern (* matches anything) and a range, e.g. slot:/Floor1/VAV_01/ZoneSP 68..76. Points' own min/max facets always apply.
+   * Replaced by agentBounds (API 1.13); a rule left here is moved there when the service starts.
    * @see #agentBound1
    */
   public String getAgentBound1() { return getString(agentBound1); }
 
   /**
    * Set the {@code agentBound1} property.
-   * Value limit for agent writes: an ORD pattern (* matches anything) and a range, e.g. slot:/Floor1/VAV_01/ZoneSP 68..76. Points' own min/max facets always apply.
+   * Replaced by agentBounds (API 1.13); a rule left here is moved there when the service starts.
    * @see #agentBound1
    */
   public void setAgentBound1(String v) { setString(agentBound1, v, null); }
@@ -1252,7 +1418,7 @@ public final class BBaskStreamService extends BWebServlet
    * @see #getAgentBound2
    * @see #setAgentBound2
    */
-  public static final Property agentBound2 = newProperty(Flags.SUMMARY, "", null);
+  public static final Property agentBound2 = newProperty(Flags.HIDDEN, "", null);
 
   /**
    * Get the {@code agentBound2} property.
@@ -1275,7 +1441,7 @@ public final class BBaskStreamService extends BWebServlet
    * @see #getAgentBound3
    * @see #setAgentBound3
    */
-  public static final Property agentBound3 = newProperty(Flags.SUMMARY, "", null);
+  public static final Property agentBound3 = newProperty(Flags.HIDDEN, "", null);
 
   /**
    * Get the {@code agentBound3} property.
@@ -1298,7 +1464,7 @@ public final class BBaskStreamService extends BWebServlet
    * @see #getAgentBound4
    * @see #setAgentBound4
    */
-  public static final Property agentBound4 = newProperty(Flags.SUMMARY, "", null);
+  public static final Property agentBound4 = newProperty(Flags.HIDDEN, "", null);
 
   /**
    * Get the {@code agentBound4} property.
@@ -1314,11 +1480,115 @@ public final class BBaskStreamService extends BWebServlet
 
   //endregion Property "agentBound4"
 
+  //region Property "agentAskKinds"
+
+  /**
+   * Slot for the {@code agentAskKinds} property.
+   * Kinds of change that wait for a person instead of being refused when they are not allowed directly: any of files, discovery, modelEdits, tags, schedules, alarms.
+   * @see #getAgentAskKinds
+   * @see #setAgentAskKinds
+   */
+  public static final Property agentAskKinds = newProperty(Flags.SUMMARY, "", null);
+
+  /**
+   * Get the {@code agentAskKinds} property.
+   * Kinds of change that wait for a person instead of being refused when they are not allowed directly: any of files, discovery, modelEdits, tags, schedules, alarms.
+   * @see #agentAskKinds
+   */
+  public String getAgentAskKinds() { return getString(agentAskKinds); }
+
+  /**
+   * Set the {@code agentAskKinds} property.
+   * Kinds of change that wait for a person instead of being refused when they are not allowed directly: any of files, discovery, modelEdits, tags, schedules, alarms.
+   * @see #agentAskKinds
+   */
+  public void setAgentAskKinds(String v) { setString(agentAskKinds, v, null); }
+
+  //endregion Property "agentAskKinds"
+
+  //region Property "agentChangeHistory"
+
+  /**
+   * Slot for the {@code agentChangeHistory} property.
+   * How many agent changes are kept, so they can be listed and put back. Waiting ones are always kept.
+   * @see #getAgentChangeHistory
+   * @see #setAgentChangeHistory
+   */
+  public static final Property agentChangeHistory = newProperty(0, 200, null);
+
+  /**
+   * Get the {@code agentChangeHistory} property.
+   * How many agent changes are kept, so they can be listed and put back. Waiting ones are always kept.
+   * @see #agentChangeHistory
+   */
+  public int getAgentChangeHistory() { return getInt(agentChangeHistory); }
+
+  /**
+   * Set the {@code agentChangeHistory} property.
+   * How many agent changes are kept, so they can be listed and put back. Waiting ones are always kept.
+   * @see #agentChangeHistory
+   */
+  public void setAgentChangeHistory(int v) { setInt(agentChangeHistory, v, null); }
+
+  //endregion Property "agentChangeHistory"
+
+  //region Property "agentAlarmClass"
+
+  /**
+   * Slot for the {@code agentAlarmClass} property.
+   * The alarm class that gets an alarm while an agent change waits for a person or a check after one has failed. Blank for no alarm.
+   * @see #getAgentAlarmClass
+   * @see #setAgentAlarmClass
+   */
+  public static final Property agentAlarmClass = newProperty(0, "", null);
+
+  /**
+   * Get the {@code agentAlarmClass} property.
+   * The alarm class that gets an alarm while an agent change waits for a person or a check after one has failed. Blank for no alarm.
+   * @see #agentAlarmClass
+   */
+  public String getAgentAlarmClass() { return getString(agentAlarmClass); }
+
+  /**
+   * Set the {@code agentAlarmClass} property.
+   * The alarm class that gets an alarm while an agent change waits for a person or a check after one has failed. Blank for no alarm.
+   * @see #agentAlarmClass
+   */
+  public void setAgentAlarmClass(String v) { setString(agentAlarmClass, v, null); }
+
+  //endregion Property "agentAlarmClass"
+
+  //region Property "agentAttention"
+
+  /**
+   * Slot for the {@code agentAttention} property.
+   * What needs a person now: agent changes waiting, and checks that failed. Blank when there is nothing.
+   * @see #getAgentAttention
+   * @see #setAgentAttention
+   */
+  public static final Property agentAttention = newProperty(Flags.READONLY | Flags.TRANSIENT, "", null);
+
+  /**
+   * Get the {@code agentAttention} property.
+   * What needs a person now: agent changes waiting, and checks that failed. Blank when there is nothing.
+   * @see #agentAttention
+   */
+  public String getAgentAttention() { return getString(agentAttention); }
+
+  /**
+   * Set the {@code agentAttention} property.
+   * What needs a person now: agent changes waiting, and checks that failed. Blank when there is nothing.
+   * @see #agentAttention
+   */
+  public void setAgentAttention(String v) { setString(agentAttention, v, null); }
+
+  //endregion Property "agentAttention"
+
   //region Property "agentProposalMinutes"
 
   /**
    * Slot for the {@code agentProposalMinutes} property.
-   * Minutes a proposal waits for a person before it expires.
+   * Minutes a proposal waits for a person before it expires: up to 10080, a week.
    * @see #getAgentProposalMinutes
    * @see #setAgentProposalMinutes
    */
@@ -1326,14 +1596,14 @@ public final class BBaskStreamService extends BWebServlet
 
   /**
    * Get the {@code agentProposalMinutes} property.
-   * Minutes a proposal waits for a person before it expires.
+   * Minutes a proposal waits for a person before it expires: up to 10080, a week.
    * @see #agentProposalMinutes
    */
   public int getAgentProposalMinutes() { return getInt(agentProposalMinutes); }
 
   /**
    * Set the {@code agentProposalMinutes} property.
-   * Minutes a proposal waits for a person before it expires.
+   * Minutes a proposal waits for a person before it expires: up to 10080, a week.
    * @see #agentProposalMinutes
    */
   public void setAgentProposalMinutes(int v) { setInt(agentProposalMinutes, v, null); }
@@ -1365,6 +1635,32 @@ public final class BBaskStreamService extends BWebServlet
   public void setPendingProposals(String v) { setString(pendingProposals, v, null); }
 
   //endregion Property "pendingProposals"
+
+  //region Property "proposalStore"
+
+  /**
+   * Slot for the {@code proposalStore} property.
+   * The waiting proposals as stored text, so they are saved with the station and survive a restart. Not for editing.
+   * @see #getProposalStore
+   * @see #setProposalStore
+   */
+  public static final Property proposalStore = newProperty(Flags.READONLY | Flags.HIDDEN, "", null);
+
+  /**
+   * Get the {@code proposalStore} property.
+   * The waiting proposals as stored text, so they are saved with the station and survive a restart. Not for editing.
+   * @see #proposalStore
+   */
+  public String getProposalStore() { return getString(proposalStore); }
+
+  /**
+   * Set the {@code proposalStore} property.
+   * The waiting proposals as stored text, so they are saved with the station and survive a restart. Not for editing.
+   * @see #proposalStore
+   */
+  public void setProposalStore(String v) { setString(proposalStore, v, null); }
+
+  //endregion Property "proposalStore"
 
   //region Action "approveProposal"
 
@@ -1401,6 +1697,78 @@ public final class BBaskStreamService extends BWebServlet
   public void rejectProposal(BString parameter) { invoke(rejectProposal, parameter, null); }
 
   //endregion Action "rejectProposal"
+
+  //region Action "ackAlarm"
+
+  /**
+   * Slot for the {@code ackAlarm} action.
+   * Acknowledges the alarm baskStream raised. The alarm service calls this; it is the alarm source's part of an acknowledgement.
+   * @see #ackAlarm(BAlarmRecord parameter)
+   */
+  public static final Action ackAlarm = newAction(Flags.HIDDEN, new javax.baja.alarm.BAlarmRecord(), null);
+
+  /**
+   * Invoke the {@code ackAlarm} action.
+   * Acknowledges the alarm baskStream raised. The alarm service calls this; it is the alarm source's part of an acknowledgement.
+   * @see #ackAlarm
+   */
+  public BBoolean ackAlarm(BAlarmRecord parameter) { return (BBoolean)invoke(ackAlarm, parameter, null); }
+
+  //endregion Action "ackAlarm"
+
+  //region Action "revertChange"
+
+  /**
+   * Slot for the {@code revertChange} action.
+   * Puts an agent change back by id (e.g. P7), with your permissions. It is refused if the target has changed since.
+   * @see #revertChange(BString parameter)
+   */
+  public static final Action revertChange = newAction(Flags.OPERATOR, BString.make(""), null);
+
+  /**
+   * Invoke the {@code revertChange} action.
+   * Puts an agent change back by id (e.g. P7), with your permissions. It is refused if the target has changed since.
+   * @see #revertChange
+   */
+  public void revertChange(BString parameter) { invoke(revertChange, parameter, null); }
+
+  //endregion Action "revertChange"
+
+  //region Action "listChanges"
+
+  /**
+   * Slot for the {@code listChanges} action.
+   * The agent changes you may see, newest first, as JSON text. Used by the settings view.
+   * @see #listChanges()
+   */
+  public static final Action listChanges = newAction(Flags.OPERATOR | Flags.HIDDEN, null);
+
+  /**
+   * Invoke the {@code listChanges} action.
+   * The agent changes you may see, newest first, as JSON text. Used by the settings view.
+   * @see #listChanges
+   */
+  public BString listChanges() { return (BString)invoke(listChanges, null, null); }
+
+  //endregion Action "listChanges"
+
+  //region Action "explainChange"
+
+  /**
+   * Slot for the {@code explainChange} action.
+   * What the station would do with a change, as JSON text. The argument is lines of name=value: change, user, point, path. Used by the settings view.
+   * @see #explainChange(BString parameter)
+   */
+  public static final Action explainChange = newAction(Flags.OPERATOR | Flags.HIDDEN, BString.make(""), null);
+
+  /**
+   * Invoke the {@code explainChange} action.
+   * What the station would do with a change, as JSON text. The argument is lines of name=value: change, user, point, path. Used by the settings view.
+   * @see #explainChange
+   */
+  public BString explainChange(BString parameter) { return (BString)invoke(explainChange, parameter, null); }
+
+  //endregion Action "explainChange"
 
   //region Type
 
@@ -1467,10 +1835,75 @@ public final class BBaskStreamService extends BWebServlet
     ensureServletNameDefault();
     super.serviceStarted();
     ensureServletNameDefault();
+    migrateAgentRules();
     runtime = new BaskStreamWebSocketRuntime(this);
+    runtime.getAgents().restoreProposals();
     ACTIVE.set(this);
     setRuntimeMetrics(0, 0);
     configOk();
+  }
+
+  @Override
+  public void changed(Property property, Context context)
+  {
+    super.changed(property, context);
+    if (!isRunning() || property == null) return;
+    String name = property.getName();
+    if ("agentApprovalRequired".equals(name) || name.startsWith("agentBound") && !"agentBounds".equals(name))
+      migrateAgentRules();
+  }
+
+  /**
+   * Carries the agent settings of a station saved before API 1.13 over to the ones read now, so
+   * its agents may do exactly what they could before.
+   *
+   * agentApprovalRequired off used to make every kind of change direct, whatever the agentDirect
+   * settings said. That becomes each setting saying allow, and the old switch goes back on. A rule
+   * in agentBound1..4 moves to a line of agentBounds.
+   */
+  private void migrateAgentRules()
+  {
+    try
+    {
+      Property approval = getProperty("agentApprovalRequired");
+      Property pointWrites = getProperty("agentPointWrites");
+      if (approval != null && pointWrites != null && !getBoolean(approval))
+      {
+        set(pointWrites, BAgentMode.make("allow"), null);
+        Property files = getProperty("agentDirectFiles");
+        if (files != null) setString(files, "^*", null);
+        for (String direct : new String[] { "agentDirectDiscovery", "agentDirectModelEdits", "agentDirectTags",
+            "agentDirectSchedules", "agentDirectAlarms" })
+        {
+          Property p = getProperty(direct);
+          if (p != null) setBoolean(p, true, null);
+        }
+        setBoolean(approval, true, null);
+        LOG.info("baskStream: agentApprovalRequired was off, which let agents make every kind of change. "
+            + "agentPointWrites and the agentDirect settings now say so themselves; review them on BASkStreamService.");
+      }
+
+      Property bounds = getProperty("agentBounds");
+      if (bounds == null) return;
+      StringBuilder moved = new StringBuilder(getString(bounds).trim());
+      boolean any = false;
+      for (int i = 1; i <= BaskStreamAgents.BOUND_RULES; i++)
+      {
+        Property old = getProperty("agentBound" + i);
+        if (old == null) continue;
+        String rule = getString(old).trim();
+        if (rule.length() == 0) continue;
+        if (moved.length() > 0) moved.append('\n');
+        moved.append(rule);
+        setString(old, "", null);
+        any = true;
+      }
+      if (any) setString(bounds, moved.toString(), null);
+    }
+    catch (RuntimeException e)
+    {
+      LOG.log(Level.WARNING, "baskStream could not carry over the older agent settings", e);
+    }
   }
 
   @Override
@@ -1583,6 +2016,139 @@ public final class BBaskStreamService extends BWebServlet
     if (p != null && !text.equals(getString(p))) setString(p, text, null);
   }
 
+  void storeProposals(String text)
+  {
+    Property p = getProperty("proposalStore");
+    if (p != null && !text.equals(getString(p))) setString(p, text, null);
+  }
+
+  String storedProposals()
+  {
+    Property p = getProperty("proposalStore");
+    return p == null ? "" : getString(p);
+  }
+
+  // ---- The notice a station can route ----------------------------------------------------------
+
+  private javax.baja.util.BUuid noticeAlarm;
+  private String noticeClass = "";
+  private boolean noticeAcked;
+
+  /**
+   * Shows what needs a person on {@code agentAttention}, and keeps one alarm open in
+   * {@code agentAlarmClass} for as long as there is something. The alarm goes back to normal when
+   * nothing is left. With no alarm class, or no alarm service, only the property is set.
+   */
+  synchronized void agentNotice(String text)
+  {
+    try
+    {
+      Property shown = getProperty("agentAttention");
+      if (shown != null && !text.equals(getString(shown))) setString(shown, text, null);
+      Property classSlot = getProperty("agentAlarmClass");
+      String alarmClass = classSlot == null ? "" : getString(classSlot).trim();
+      boolean want = text.length() > 0 && alarmClass.length() > 0;
+      if (want == (noticeAlarm != null)) return;
+      javax.baja.alarm.BAlarmService alarms = javax.baja.alarm.BAlarmService.getService();
+      javax.baja.alarm.BAlarmRecord record = new javax.baja.alarm.BAlarmRecord(want ? javax.baja.util.BUuid.make() : noticeAlarm);
+      record.setSource(javax.baja.naming.BOrdList.make(getNavOrd()));
+      record.setAlarmClass(want ? alarmClass : noticeClass);
+      record.setSourceState(want ? javax.baja.alarm.BSourceState.offnormal : javax.baja.alarm.BSourceState.normal);
+      record.setAlarmTransition(javax.baja.alarm.BSourceState.offnormal);
+      record.setAlarmData(BFacets.make(javax.baja.alarm.BAlarmRecord.MSG_TEXT,
+          BString.make(want ? text : "No agent change is waiting for a person.")));
+      if (!want)
+      {
+        record.setNormalTime(javax.baja.sys.BAbsTime.make());
+        if (noticeAcked) record.setAckState(javax.baja.alarm.BAckState.acked);
+      }
+      alarms.routeAlarm(record);
+      noticeAcked = false;
+      noticeAlarm = want ? record.getUuid() : null;
+      noticeClass = want ? alarmClass : "";
+    }
+    catch (Exception e)
+    {
+      LOG.log(Level.FINE, "baskStream could not raise or clear the agent alarm", e);
+    }
+  }
+
+  /**
+   * The alarm service hands an acknowledgement to the alarm's source, which marks the record and
+   * routes it again. Remembered, so the record that later says "normal" is still acknowledged.
+   */
+  public javax.baja.sys.BBoolean doAckAlarm(javax.baja.alarm.BAlarmRecord ackRequest)
+  {
+    try
+    {
+      ackRequest.setAckState(javax.baja.alarm.BAckState.acked);
+      ackRequest.setAckTime(javax.baja.sys.BAbsTime.make());
+      javax.baja.alarm.BAlarmService.getService().routeAlarm(ackRequest);
+      synchronized (this)
+      {
+        if (noticeAlarm != null && noticeAlarm.equals(ackRequest.getUuid())) noticeAcked = true;
+      }
+      return javax.baja.sys.BBoolean.TRUE;
+    }
+    catch (Exception e)
+    {
+      LOG.log(Level.FINE, "baskStream could not acknowledge the agent alarm", e);
+      return javax.baja.sys.BBoolean.FALSE;
+    }
+  }
+
+  /** Workbench action: put an agent change back, with the invoking user's permissions. */
+  public void doRevertChange(BString id, Context cx)
+  {
+    BaskStreamWebSocketRuntime current = runtime;
+    if (current == null) throw new IllegalStateException("BASkStreamService is not running.");
+    try
+    {
+      requireWritesEnabled();
+      current.getAgents().revert(id == null ? "" : id.getString(), "Put back from the service", false, false, cx, null);
+    }
+    catch (BaskStreamProtocolException e)
+    {
+      throw new IllegalStateException(e.getMessage());
+    }
+  }
+
+  /** The agent changes the invoking user may see, as JSON text. */
+  public BString doListChanges(Context cx)
+  {
+    BaskStreamWebSocketRuntime current = runtime;
+    return BString.make(BaskStreamJson.write(current == null ? new java.util.ArrayList<Object>() : current.getAgents().listFor(cx)));
+  }
+
+  /** What the station would do with a change, as JSON text; an error comes back as {"error": "..."}. */
+  public BString doExplainChange(BString argument, Context cx)
+  {
+    java.util.Map<String, Object> answer = new java.util.LinkedHashMap<String, Object>();
+    BaskStreamWebSocketRuntime current = runtime;
+    try
+    {
+      if (current == null) throw new IllegalStateException("BASkStreamService is not running.");
+      java.util.Map<String, Object> request = new java.util.LinkedHashMap<String, Object>();
+      // The view sends "name=value" lines; none of the values holds a line break.
+      for (String line : argument.getString().split("\n"))
+      {
+        int eq = line.indexOf('=');
+        if (eq > 0 && line.substring(eq + 1).trim().length() > 0) request.put(line.substring(0, eq).trim(), line.substring(eq + 1).trim());
+      }
+      String asker = cx == null || cx.getUser() == null ? null : cx.getUser().getUsername();
+      answer = current.getAgents().explain(asker, current.getAgents().isAgentUser(asker), request);
+    }
+    catch (BaskStreamProtocolException e)
+    {
+      answer.put("error", e.getMessage());
+    }
+    catch (RuntimeException e)
+    {
+      answer.put("error", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+    }
+    return BString.make(BaskStreamJson.write(answer));
+  }
+
   /** Workbench action: approve a proposal; the write runs with the invoking user's permissions. */
   public void doApproveProposal(BString id, Context cx)
   {
@@ -1605,7 +2171,7 @@ public final class BBaskStreamService extends BWebServlet
           ? current.getAgents().approve(id == null ? "" : id.getString(), cx, null)
           : current.getAgents().reject(id == null ? "" : id.getString(), null, cx, null);
       if ("failed".equals(result.get("status")))
-        throw new IllegalStateException("The proposed write failed: " + result.get("note"));
+        throw new IllegalStateException("The proposed change failed: " + result.get("note"));
     }
     catch (BaskStreamProtocolException e)
     {

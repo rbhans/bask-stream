@@ -1,6 +1,6 @@
 {
   "protocol": "baskStream",
-  "apiVersion": "1.12",
+  "apiVersion": "1.14",
   "encoding": "msgpack",
   "transport": {
     "path": "/stream",
@@ -669,6 +669,26 @@
             "type": "string",
             "maxLength": 300,
             "description": "Why the change is made. Required for agent sessions when agentRequireReason is on (the default); recorded in the station's audit history."
+          },
+          "expect": {
+            "type": "object",
+            "description": "For an agent's command (API 1.14): what the station should find afterwards. It reads the point again after withinMinutes and records passed or failed on the change (list_changes). Without it, the commanded point is read after a minute and must be readable and not in fault.",
+            "properties": {
+              "point": {
+                "type": "string",
+                "description": "The point to read. Default: the commanded point."
+              },
+              "min": {
+                "type": "number"
+              },
+              "max": {
+                "type": "number"
+              },
+              "withinMinutes": {
+                "type": "integer",
+                "description": "1 to 1440. Default 1."
+              }
+            }
           }
         },
         "required": []
@@ -3119,7 +3139,7 @@
       }
     },
     "list_proposals": {
-      "summary": "Proposals this session may see, newest first: an agent sees its own; a person sees those whose point they can read. Pending, and decided within the last hour.",
+      "summary": "Changes that waited or are waiting for a person, newest first: an agent sees its own; a person sees point commands for points they can read and every other kind. Kept for a week. Since API 1.14 a proposal can be any kind of change, not only a point command; list_changes adds the ones agents made directly.",
       "gate": "none",
       "reply": "proposals_result",
       "request": {
@@ -3132,7 +3152,8 @@
               "approved",
               "rejected",
               "expired",
-              "failed"
+              "failed",
+              "reverted"
             ],
             "description": "Only proposals in this state."
           }
@@ -3147,7 +3168,7 @@
       }
     },
     "approve_proposal": {
-      "summary": "Approve a pending proposal: the proposed write runs now with the approver's Niagara permissions. Refused for agent sessions and agent users.",
+      "summary": "Approve a pending proposal: the proposed change is made now with the approver's Niagara permissions, held to the agent's narrower reach if its profile has one. A model plan is previewed again as the approver and applied only if it would do what the agent's preview showed (stale_plan otherwise). Refused for agent sessions and agent users.",
       "gate": "writes",
       "reply": "proposal_result",
       "request": {
@@ -3196,6 +3217,121 @@
       "response": {
         "keys": [
           "proposal"
+        ]
+      }
+    },
+    "list_changes": {
+      "summary": "Every change agents asked for or made, newest first: waiting for a person, approved, made by the agent directly, rejected, expired, failed or put back. Kept for a week, up to agentChangeHistory entries. An agent sees its own; a person sees point commands for points they can read and every other kind.",
+      "gate": "none",
+      "reply": "changes_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "applied",
+              "rejected",
+              "expired",
+              "failed",
+              "reverted"
+            ],
+            "description": "Only changes in this state."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "points",
+              "files",
+              "discovery",
+              "modelEdits",
+              "tags",
+              "schedules",
+              "alarms"
+            ],
+            "description": "Only changes of this kind of work."
+          }
+        },
+        "required": []
+      },
+      "response": {
+        "keys": [
+          "changes"
+        ]
+      }
+    },
+    "revert_change": {
+      "summary": "Put a change back: the old value at the same priority level, the old file, the old schedule, the old tags, or the reverse of a plan's steps. It runs with the caller's Niagara permissions and is itself recorded. Refused with change_conflict when the target has changed since, unless force is set; refused with not_revertible when nothing was kept to put back. Refused for agent sessions and agent users.",
+      "gate": "writes",
+      "reply": "change_reverted",
+      "request": {
+        "type": "object",
+        "properties": {
+          "change": {
+            "type": "string",
+            "description": "Change id, e.g. P7 (or 7)."
+          },
+          "force": {
+            "type": "boolean",
+            "description": "Put it back although the target has changed since."
+          },
+          "partial": {
+            "type": "boolean",
+            "description": "Put back what can be, when some steps cannot (the change lists them in notReverted)."
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "Why the change is made. Recorded in the station's audit history."
+          }
+        },
+        "required": [
+          "change"
+        ]
+      },
+      "response": {
+        "keys": [
+          "change"
+        ]
+      }
+    },
+    "explain_change": {
+      "summary": "What the station would do with a change, and which setting decides, without making it, recording it or counting it against the rate limit. Niagara roles are not judged. A person may ask about any user; an agent only about itself.",
+      "gate": "none",
+      "reply": "change_explained",
+      "request": {
+        "type": "object",
+        "properties": {
+          "change": {
+            "type": "string",
+            "description": "The operation to ask about, such as write, write_file or apply_model_changes."
+          },
+          "user": {
+            "type": "string",
+            "description": "The Niagara user to ask about. Default: this session's user."
+          },
+          "point": {
+            "type": "string",
+            "description": "With change write: the point, so value limits and agentUnlistedPoints are taken into account."
+          },
+          "path": {
+            "type": "string",
+            "description": "With a file change: the station file path."
+          },
+          "planId": {
+            "type": "string",
+            "description": "With apply_model_changes: the plan, so a discovery plan is judged as discovery."
+          }
+        },
+        "required": [
+          "change"
+        ]
+      },
+      "response": {
+        "keys": [
+          "explanation"
         ]
       }
     },
@@ -3402,6 +3538,118 @@
         },
         "required": [
           "path"
+        ]
+      },
+      "response": {
+        "keys": [
+          "file"
+        ]
+      }
+    },
+    "begin_upload": {
+      "summary": "Open an upload for a file larger than one message. The write is tried first without content, so a path this user may not write, or an existing file without overwrite, is refused before any piece is sent. Nothing on the station changes until commit_upload. Pieces are held in memory for this session, 16 MiB at most, and dropped after 5 minutes without a piece.",
+      "gate": "none",
+      "reply": "upload_started",
+      "request": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path such as ^images/plan.png."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "The commit will replace an existing file."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "response": {
+        "keys": [
+          "upload",
+          "path",
+          "maxBytes",
+          "expiresAt"
+        ]
+      }
+    },
+    "append_upload": {
+      "summary": "Add one piece to an open upload, in order.",
+      "gate": "none",
+      "reply": "upload_progress",
+      "request": {
+        "type": "object",
+        "properties": {
+          "upload": {
+            "type": "string",
+            "description": "The id begin_upload returned."
+          },
+          "bytes": {
+            "type": "string",
+            "contentEncoding": "binary",
+            "description": "The piece as MessagePack binary. Exactly one of bytes or base64."
+          },
+          "base64": {
+            "type": "string",
+            "description": "The piece as base64."
+          }
+        },
+        "required": [
+          "upload"
+        ]
+      },
+      "response": {
+        "keys": [
+          "upload",
+          "received",
+          "expiresAt"
+        ]
+      }
+    },
+    "commit_upload": {
+      "summary": "Write the pieces of an upload as a file. From here it is a write_file with the upload's content: the same gate, agent rules, backup, audit record and reply. For an agent whose file changes wait for a person, the content has to fit a waiting change (256 KB).",
+      "gate": "writes",
+      "agentDirect": "agentDirectFiles",
+      "reply": "file_written",
+      "request": {
+        "type": "object",
+        "properties": {
+          "upload": {
+            "type": "string",
+            "description": "The id begin_upload returned."
+          },
+          "size": {
+            "type": "integer",
+            "description": "The size the client sent. The commit is refused with upload_incomplete when the upload holds a different number of bytes."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Replace an existing file; otherwise file_exists.",
+            "default": false
+          },
+          "createDirs": {
+            "type": "boolean",
+            "description": "Create missing parent folders.",
+            "default": true
+          },
+          "backup": {
+            "type": "boolean",
+            "description": "Copy the old file under ^bask/backups before replacing it. Default true for .px, .nav and image files, false otherwise."
+          },
+          "dryRun": {
+            "type": "boolean",
+            "description": "Check and report without writing.",
+            "default": false
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why; required for agent sessions when agentRequireReason is on."
+          }
+        },
+        "required": [
+          "upload"
         ]
       },
       "response": {
@@ -3893,6 +4141,50 @@
           "inventory"
         ]
       }
+    },
+    "resolve": {
+      "summary": "The point that plays a role on a piece of equipment, without knowing its ORD. Points under equip are scored by the tags they carry and by how well their name matches the role (the binding suggestions' matcher, with common BAS abbreviations). point is the best match when it scores 0.6 or more and is 0.1 clear of the next; otherwise it is null, ambiguous is true and the matches are listed. The answer is inferred: confirm it before depending on it.",
+      "gate": "none",
+      "reply": "resolve_result",
+      "request": {
+        "type": "object",
+        "properties": {
+          "equip": {
+            "type": "string",
+            "description": "The equipment's ORD, such as slot:/Drivers/BacnetNetwork/AHU_1."
+          },
+          "role": {
+            "type": "string",
+            "description": "The role in words, such as \"discharge air temp\"."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tag names the point should carry, such as [\"discharge\", \"air\", \"temp\", \"sensor\"]. A dictionary prefix (hs:) is ignored."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Matches to return, 1 to 25. Default 5."
+          }
+        },
+        "required": [
+          "equip"
+        ]
+      },
+      "response": {
+        "keys": [
+          "equip",
+          "role",
+          "tags",
+          "point",
+          "ambiguous",
+          "matches",
+          "inferred",
+          "truncated"
+        ]
+      }
     }
   },
   "notices": {
@@ -4004,15 +4296,19 @@
       "scope": "request"
     },
     "agent_value_out_of_bounds": {
-      "meaning": "Agent value is outside the point's min/max facets or the matching agentBoundN rule.",
+      "meaning": "Agent value is outside the point's min/max facets or the matching rule in agentBounds.",
       "scope": "entry"
+    },
+    "agent_writes_refused": {
+      "meaning": "Agents may not command points: agentPointWrites is refuse (the whole request), or no rule in agentBounds names the point and agentUnlistedPoints is refuse (that entry).",
+      "scope": "request"
     },
     "alarm_failed": {
       "meaning": "AlarmService unavailable or alarm database/read failure; also a per-uuid entry for unexpected ack/clear failures.",
       "scope": "request"
     },
     "approval_required": {
-      "meaning": "While agentApprovalRequired is on, an agent's change other than a point write is refused unless the agentDirect setting for that kind of change allows it; the message names the setting.",
+      "meaning": "An agent's change other than a point write is refused: the agentDirect setting for that kind of change does not allow it and agentAskKinds does not name the kind; the message names the setting.",
       "scope": "request"
     },
     "auth_required": {
@@ -4033,6 +4329,18 @@
     },
     "browse_failed": {
       "meaning": "Unexpected failure resolving a browse/describe target.",
+      "scope": "request"
+    },
+    "change_conflict": {
+      "meaning": "The target has changed again since the change, so putting it back as recorded would overwrite newer work. Send force: true to do it anyway.",
+      "scope": "request"
+    },
+    "change_failed": {
+      "meaning": "A kept change or its reverse failed when it was run; the message says why.",
+      "scope": "request"
+    },
+    "change_proposed": {
+      "meaning": "Not a failure of the request, and not done either: an agent's change was kept for a person to approve (its kind is in agentAskKinds). The reply carries outcome: \"proposed\" and the proposal. Do not send the change again.",
       "scope": "request"
     },
     "children_present": {
@@ -4068,7 +4376,7 @@
       "scope": "request"
     },
     "file_too_large": {
-      "meaning": "File is larger than maxBytes or the 4 MiB read limit.",
+      "meaning": "File is larger than maxBytes or the 4 MiB read limit, or an upload would pass 16 MiB.",
       "scope": "request"
     },
     "forbidden_action": {
@@ -4183,6 +4491,10 @@
       "meaning": "Slot name already exists (collision=fail) or no suffix could be allocated.",
       "scope": "request"
     },
+    "not_revertible": {
+      "meaning": "The change cannot be put back: nothing was kept to restore, or some of its steps cannot be reversed and partial was not set.",
+      "scope": "request"
+    },
     "not_writable": {
       "meaning": "Target is not a Niagara writable point or its type is unsupported.",
       "scope": "entry"
@@ -4209,6 +4521,10 @@
     },
     "plan_not_found": {
       "meaning": "Plan unknown, expired, or owned by another user.",
+      "scope": "request"
+    },
+    "plan_partial": {
+      "meaning": "An approved plan stopped part way. Read the station before trying anything else; nothing is retried.",
       "scope": "request"
     },
     "proposal_closed": {
@@ -4293,6 +4609,18 @@
     },
     "unsupported_op": {
       "meaning": "Operation name is not in the protocol.",
+      "scope": "request"
+    },
+    "upload_incomplete": {
+      "meaning": "The upload holds a different number of bytes than the commit's size. It stays open.",
+      "scope": "request"
+    },
+    "upload_limit": {
+      "meaning": "The session already has two uploads open.",
+      "scope": "request"
+    },
+    "upload_not_found": {
+      "meaning": "No such upload in this session; it may have lapsed after 5 minutes without a piece.",
       "scope": "request"
     },
     "view_conflict": {

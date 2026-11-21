@@ -61,7 +61,7 @@ check(not re.search(r'apiVersion\\"\s*:\s*\\?"\d', java('BBaskStreamService')) a
 agents = java('BaskStreamAgents')
 direct = dict(re.findall(r'DIRECT_SETTINGS\.put\("([a-z_]+)", "(agentDirect[A-Za-z]+)"\)', agents))
 changing = {name for name in names if gates[name] == 'writes'} | {'apply_model_changes'}
-expected = changing - {'write', 'approve_proposal', 'reject_proposal'}
+expected = changing - {'write', 'approve_proposal', 'reject_proposal', 'revert_change'}
 check(set(direct) == expected, f'agentDirect kinds vs changing operations: missing {sorted(expected - set(direct))}, '
                                f'extra {sorted(set(direct) - expected)}')
 service_properties = set(re.findall(r'name = "([A-Za-z0-9]+)"', (src / 'BBaskStreamService.java').read_text()))

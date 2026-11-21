@@ -59,16 +59,20 @@ final class BaskStreamRequests
 
   /**
    * An agent's write: each point is checked against the agent limits, then either becomes a
-   * proposal a person approves (agentApprovalRequired, the default) or is written directly.
+   * proposal a person approves or is written directly. {@code agentPointWrites} decides which
+   * ("ask", the default, or "allow"; "refuse" stops the request before it gets here). A point no
+   * value limit rule names follows {@code agentUnlistedPoints} instead when that is stricter.
    * Entries carry {@code outcome}: "proposed" or "written".
    */
   private List<Object> agentWrite(Map<String, Object> request) throws BaskStreamProtocolException
   {
     BaskStreamAgents agents = runtime.getAgents();
     BaskStreamWriteResolver writer = runtime.getWriteResolver();
-    String reason = agents.reason(request);
-    boolean propose = agents.approvalRequired();
-    BaskStreamAgents.Limits limits = agents.limits();
+    BaskStreamAgents.Rules rules = agents.rulesFor(session);
+    String reason = agents.reason(rules, request);
+    boolean proposeAll = BaskStreamAgents.ASK.equals(rules.pointWrites());
+    String unlisted = rules.unlistedPoints();
+    BaskStreamAgents.Limits limits = rules.limits();
     List<Object> results = new ArrayList<Object>();
     for (Map<String, Object> spec : writer.specs(request))
     {
@@ -78,7 +82,14 @@ final class BaskStreamRequests
       {
         Map<String, Object> summary = writer.checkAgentWrite(pointOrd, spec, context, limits);
         String action = String.valueOf(summary.get("action"));
-        if (propose)
+        boolean listed = Boolean.TRUE.equals(summary.get("listed"));
+        if (!listed && BaskStreamAgents.REFUSE.equals(unlisted))
+        {
+          agents.record(session, pointOrd, action, BaskStreamAgents.describeWrite(summary), reason, "refused", "agent_writes_refused");
+          throw new BaskStreamProtocolException("agent_writes_refused",
+              "No value limit rule names this point, and agentUnlistedPoints is refuse. A person can add a rule for it on " + rules.where() + ", or make this change themselves.");
+        }
+        if (proposeAll || (!listed && BaskStreamAgents.ASK.equals(unlisted)))
         {
           BaskStreamAgents.Proposal proposal = agents.propose(session, pointOrd, spec, summary, reason);
           Map<String, Object> entry = new LinkedHashMap<String, Object>();
@@ -91,8 +102,11 @@ final class BaskStreamRequests
         else
         {
           agents.takeChangeSlot(session, action, pointOrd, reason);
+          Map<String, Object> draft = agents.changes().undoBefore("write", spec, context);
           Map<String, Object> entry = writer.writeSingle(pointOrd, spec, context);
           entry.put("outcome", "written");
+          // Listed with the approved changes, so it can be put back the same way.
+          entry.put("change", agents.made(session, "write", pointOrd, spec, summary, reason, draft, entry, context).id);
           agents.record(session, pointOrd, action, BaskStreamAgents.describeWrite(summary), reason, "written", null);
           results.add(entry);
         }
@@ -157,11 +171,36 @@ final class BaskStreamRequests
     session.send(response);
   }
 
+  /** Every change agents asked for or made, newest first: waiting, approved, made directly, put back. */
+  void handleListChanges(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("changes_result", id);
+    response.put("changes", runtime.getAgents().list(session, runtime.getCodec().optionalString(request, "status"),
+        runtime.getCodec().optionalString(request, "kind"), true));
+    session.send(response);
+  }
+
+  void handleRevertChange(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("change_reverted", id);
+    response.put("change", runtime.getAgents().revert(runtime.getCodec().requireString(request, "change"),
+        BaskStreamAgents.optionalReason(request), Boolean.TRUE.equals(request.get("force")), Boolean.TRUE.equals(request.get("partial")),
+        context, session));
+    session.send(response);
+  }
+
   void handleRejectProposal(String id, Map<String, Object> request) throws BaskStreamProtocolException
   {
     Map<String, Object> response = session.baseMessage("proposal_result", id);
     response.put("proposal", runtime.getAgents().reject(runtime.getCodec().requireString(request, "proposal"),
         runtime.getCodec().optionalString(request, "note"), context, session));
+    session.send(response);
+  }
+
+  void handleExplainChange(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("change_explained", id);
+    response.put("explanation", runtime.getAgents().explain(session, request));
     session.send(response);
   }
 
@@ -240,6 +279,37 @@ final class BaskStreamRequests
   {
     Map<String, Object> response = session.baseMessage("file_written", id);
     response.put("file", runtime.getFileResolver().write(request, context));
+    session.send(response);
+  }
+
+  /**
+   * Opens an upload for a file sent in pieces. The write is tried first without content, so a path
+   * this user may not write, or a file that exists without overwrite, is refused before any piece is sent.
+   */
+  void handleBeginUpload(String id, Map<String, Object> request, BaskStreamUploads uploads) throws BaskStreamProtocolException
+  {
+    runtime.getService().requireWritesEnabled();
+    Map<String, Object> trial = new LinkedHashMap<String, Object>(request);
+    trial.put("text", "");
+    trial.put("dryRun", Boolean.TRUE);
+    Map<String, Object> shown = runtime.getFileResolver().write(trial, context);
+    Map<String, Object> response = session.baseMessage("upload_started", id);
+    response.putAll(uploads.begin(String.valueOf(shown.get("path")), System.currentTimeMillis()));
+    session.send(response);
+  }
+
+  void handleAppendUpload(String id, Map<String, Object> request, BaskStreamUploads uploads) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("upload_progress", id);
+    response.putAll(uploads.append(request, System.currentTimeMillis()));
+    session.send(response);
+  }
+
+  /** The point that plays a role on a piece of equipment, by its tags and its name. */
+  void handleResolve(String id, Map<String, Object> request) throws BaskStreamProtocolException
+  {
+    Map<String, Object> response = session.baseMessage("resolve_result", id);
+    response.putAll(runtime.getGraphicsResolver().resolveRole(request, context));
     session.send(response);
   }
 

@@ -16,8 +16,6 @@ final class BaskStreamCodec
 {
   private static final Charset UTF_8 = Charset.forName("UTF-8");
   private static final int MAX_PAYLOAD_BYTES = 1024 * 1024;
-  private static final int MAX_STRING_BYTES = 64 * 1024;
-  private static final int MAX_BINARY_BYTES = 64 * 1024;
   private static final int MAX_CONTAINER_SIZE = 5000;
   private static final int MAX_NESTING_DEPTH = 64;
 
@@ -147,7 +145,7 @@ final class BaskStreamCodec
       case 0xc5:
         return readBinary(in, in.readUnsignedShort());
       case 0xc6:
-        return readBinary(in, safeLength(in.readInt(), MAX_BINARY_BYTES, "binary"));
+        return readBinary(in, in.readInt());
       case 0xca:
         return Double.valueOf(in.readFloat());
       case 0xcb:
@@ -178,7 +176,7 @@ final class BaskStreamCodec
       case 0xda:
         return readString(in, in.readUnsignedShort());
       case 0xdb:
-        return readString(in, safeLength(in.readInt(), MAX_STRING_BYTES, "string"));
+        return readString(in, in.readInt());
       case 0xdc:
         return readArray(in, safeLength(in.readUnsignedShort(), MAX_CONTAINER_SIZE, "array"), depth + 1);
       case 0xdd:
@@ -194,7 +192,9 @@ final class BaskStreamCodec
 
   private byte[] readBinary(DataInputStream in, int length) throws IOException, BaskStreamProtocolException
   {
-    safeLength(length, MAX_BINARY_BYTES, "binary");
+    // No longer than what is left of the frame, whose size maxMessageBytes already limits. A fixed
+    // 64 KiB cap here made any request with a longer string fail to decode, so it got no reply.
+    safeLength(length, in.available(), "binary");
     byte[] bytes = new byte[length];
     in.readFully(bytes);
     return bytes;
@@ -233,7 +233,7 @@ final class BaskStreamCodec
 
   private String readString(DataInputStream in, int length) throws IOException, BaskStreamProtocolException
   {
-    safeLength(length, MAX_STRING_BYTES, "string");
+    safeLength(length, in.available(), "string");
     byte[] bytes = new byte[length];
     in.readFully(bytes);
     return new String(bytes, UTF_8);
@@ -420,7 +420,7 @@ final class BaskStreamCodec
     }
     if (length > max)
     {
-      throw new BaskStreamProtocolException("bad_request", "MessagePack " + type + " length exceeds maximum size.");
+      throw new BaskStreamProtocolException("bad_request", "MessagePack " + type + " length exceeds what the message holds or allows.");
     }
     return length;
   }

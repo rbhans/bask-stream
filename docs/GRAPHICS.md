@@ -15,7 +15,7 @@ A Px refers to other things in five ways, and every reply that lists references 
 | `link` | A widget's `hyperlink` | `hyperlink="file:^px/Floor2.px"` |
 | `file` | Any other property naming a file or module resource, such as an image or logo | `image="module://icons/x16/home.png"` |
 | `include` | A PxInclude's `ord` | `<PxInclude ord="file:^px/header.px"/>` |
-| `view` | A web widget's JavaScript view, `view:Module:Name` | `js="view:QAGcharts:LineChartWidget"` |
+| `view` | A web widget's JavaScript view, `view:Module:Name` | `js="view:myCharts:LineChartWidget"` |
 
 `binding` and `ordProperty` are the data a widget shows; the others are files and pages.
 
@@ -62,7 +62,7 @@ Relative bindings are not checked here, since they depend on the component; use 
 
 Validates first, exactly as `validate_px` does, and refuses a Px with errors (`px_invalid`, with the first few in the message); warnings do not block it. Then it writes the file as `write_file` would (`overwrite`, `createDirs`, `dryRun`, `reason`), backing up a file it replaces (see below). Send the Px as `text` or `tree`. Reply `px_written` with `file` (as `write_file`'s reply, with `backup` when a copy was kept) and `validation`.
 
-For agents, `write_px` is a file change: `agentDirectFiles` decides where they may write while approval is required.
+For agents, `write_px` is a file change: `agentDirectFiles` decides where they may write.
 
 ### Backups
 
@@ -135,7 +135,7 @@ Adds a Px view (a `baja:PxView` slot with `pxFile` set, and `media` taken from t
 
 Each component needs admin write, as Workbench requires for adding views. Changes are recorded only with `auditFilesAndViews` on (see [Records](#records)). Reply `px_views_result` with `views`: `{path, view, remove, default, dryRun?, summary, results, truncated}`; `summary` counts each `action` (`added`, `updated`, `unchanged`, `removed`, `conflict`, `failed`), and each result is `{ord, action, view?, views?, default?, defaultSet?, code?, message?}`.
 
-For agents, attaching a view is a model edit: `agentDirectModelEdits` decides whether they may do it directly while approval is required.
+For agents, attaching a view is a model edit: `agentDirectModelEdits` decides whether they may do it.
 
 ## `check_nav`
 

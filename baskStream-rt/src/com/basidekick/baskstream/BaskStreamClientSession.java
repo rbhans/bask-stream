@@ -222,11 +222,19 @@ final class BaskStreamClientSession
     bound.put("approve_proposal", (id, op, request) -> requests.handleApproveProposal(id, request));
     bound.put("reject_proposal", (id, op, request) -> requests.handleRejectProposal(id, request));
     bound.put("read_agent_log", (id, op, request) -> requests.handleReadAgentLog(id, request));
+    bound.put("explain_change", (id, op, request) -> requests.handleExplainChange(id, request));
+    bound.put("list_changes", (id, op, request) -> requests.handleListChanges(id, request));
+    bound.put("revert_change", (id, op, request) -> requests.handleRevertChange(id, request));
     bound.put("query", (id, op, request) -> requests.handleQuery(id, request));
     bound.put("list_files", (id, op, request) -> requests.handleListFiles(id, request));
     bound.put("read_file", (id, op, request) -> requests.handleReadFile(id, request));
     bound.put("write_file", (id, op, request) -> requests.handleWriteFile(id, request));
     bound.put("delete_file", (id, op, request) -> requests.handleDeleteFile(id, request));
+    bound.put("begin_upload", (id, op, request) -> requests.handleBeginUpload(id, request, uploads));
+    bound.put("append_upload", (id, op, request) -> requests.handleAppendUpload(id, request, uploads));
+    // Reached as write_file: processFrame joins the pieces before the checks run.
+    bound.put("commit_upload", (id, op, request) -> requests.handleWriteFile(id, request));
+    bound.put("resolve", (id, op, request) -> requests.handleResolve(id, request));
     bound.put("list_jobs", (id, op, request) -> requests.handleListJobs(id, request));
     bound.put("read_job", (id, op, request) -> requests.handleReadJob(id, request));
     bound.put("cancel_job", (id, op, request) -> requests.handleCancelJob(id, request));
@@ -266,13 +274,23 @@ final class BaskStreamClientSession
     String id = null;
     try
     {
+      // An agent profile's narrower reach applies to everything this request resolves.
+      BaskStreamAccessPolicy.enterScope(runtime.getAgents().pathScope(this));
       Map<String, Object> request = runtime.getCodec().decodeMessage(payload, runtime.getService().getMaxMessageBytesValue());
       String op = runtime.getCodec().requireString(request, "op");
       id = runtime.getCodec().optionalString(request, "id");
+      requestId = id;
+      lastReply = null;
       requestOp = op;
       requestStartedAt = System.currentTimeMillis();
       runtime.getMetrics().requests.incrementAndGet();
 
+      if ("commit_upload".equals(op))
+      {
+        // From here on it is a write_file with the upload's content: same gate, same agent rules, same reply.
+        request = uploads.commit(request, System.currentTimeMillis());
+        op = "write_file";
+      }
       BaskStreamOperations.Operation operation = BaskStreamOperations.get(op);
       RequestHandler handler = operation == null ? null : handlers.get(op);
       if (handler == null)
@@ -300,7 +318,7 @@ final class BaskStreamClientSession
     }
     catch (BaskStreamProtocolException e)
     {
-      sendError(id, e.getCode(), e.getMessage());
+      sendError(id, e.getCode(), e.getMessage(), e.getDetails());
     }
     catch (Exception e)
     {
@@ -309,7 +327,37 @@ final class BaskStreamClientSession
     }
     finally
     {
+      runtime.getAgents().changeFailed();
+      BaskStreamAccessPolicy.exitScope();
       requestStartedAt = 0L;
+      requestId = null;
+      lastReply = null;
+    }
+  }
+
+  /** Files this session is sending in pieces. */
+  private final BaskStreamUploads uploads = new BaskStreamUploads();
+
+  /** The id of the request being handled, and the reply sent for it, for the record of an agent's change. */
+  private volatile String requestId;
+  private volatile Map<String, Object> lastReply;
+
+  Map<String, Object> lastReply()
+  {
+    return lastReply;
+  }
+
+  /** Runs event delivery under the same narrower reach a request from this session gets. */
+  void scoped(Runnable work)
+  {
+    try
+    {
+      BaskStreamAccessPolicy.enterScope(runtime.getAgents().pathScope(this));
+      work.run();
+    }
+    finally
+    {
+      BaskStreamAccessPolicy.exitScope();
     }
   }
 
@@ -344,6 +392,7 @@ final class BaskStreamClientSession
     {
       return;
     }
+    uploads.clear();
 
     // Never wait here. close() can run on Niagara event threads, the shared scheduler, or
     // Jetty threads, sometimes while holding this session's send lock. Waiting for the worker
@@ -608,10 +657,22 @@ final class BaskStreamClientSession
 
   void sendError(String id, String code, String message)
   {
-    runtime.getMetrics().errors.incrementAndGet();
+    sendError(id, code, message, null);
+  }
+
+  /** An error reply; {@code details} adds fields beside code and message, such as a proposal. */
+  void sendError(String id, String code, String message, Map<String, Object> details)
+  {
+    // A change that now waits for a person is answered as an error so that no client takes it for done.
+    if (!"change_proposed".equals(code)) runtime.getMetrics().errors.incrementAndGet();
     Map<String, Object> error = baseMessage("error", id);
     error.put("code", code);
     error.put("message", message);
+    if (details != null)
+    {
+      for (Map.Entry<String, Object> entry : details.entrySet())
+        if (!error.containsKey(entry.getKey())) error.put(entry.getKey(), entry.getValue());
+    }
     send(error);
   }
 
@@ -621,6 +682,8 @@ final class BaskStreamClientSession
     {
       return;
     }
+    String replyTo = requestId;
+    if (replyTo != null && replyTo.equals(message.get("id"))) lastReply = message;
 
     try
     {

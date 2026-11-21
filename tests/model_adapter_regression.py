@@ -142,6 +142,7 @@ class BComplex extends BValue {
   Property getProperty(String n){return props.get(n);}Slot getSlot(String n){return actions.containsKey(n)?actions.get(n):props.get(n);}Action getAction(String n){return actions.get(n);}
   BValue get(Property p){return values.get(p.name);}BValue get(String n){return values.get(n);}
   void set(Property p,BValue v,Context cx){values.put(p.name,v);if(v instanceof BComplex){((BComplex)v).name=p.name;((BComplex)v).parent=this;}}
+  void set(String n,Object v){}
   int getFlags(Slot p){return p.flags;}BFacets getSlotFacets(Slot p){return p.facets;}
   void setFlags(Slot p,int v,Context cx){p.flags=v;}void setFacets(Slot p,BFacets f,Context cx){p.facets=f;}
   Slot[] getSlotsArray(){return props.values().toArray(new Slot[0]);}Property[] getPropertiesArray(){return props.values().toArray(new Property[0]);}
@@ -171,11 +172,12 @@ class BComponent extends BComplex {
   void setPendingMove(boolean v){pending=v;}LinkCheck checkLink(BComponent c,Slot a,Slot b,Context cx){return new LinkCheck();}
   BLink makeLink(BComponent c,Slot a,Slot b,Context cx){return new BLink();}
   BValue invoke(Action a,BValue v,Context cx){invocations++;return null;}BValue getActionParameterDefault(Action a){return null;}
+  BLink[] getLinks(){return new BLink[0];}Property add(String n,BValue v){return add(n,v,null);}
   Knob[] getKnobs(){return new Knob[0];}RelationKnob[] getRelationKnobs(){return new RelationKnob[0];}
 }
 class BBaskStreamService extends BComponent {
   {type=new Type("baskStream:BaskStreamService");}
-  boolean writes=true;boolean writesAllowed(){return writes;}boolean modelEditsAllowed(){return writes;}
+  boolean writes=true;boolean securityEditsAllowed(){return false;}boolean writesAllowed(){return writes;}boolean modelEditsAllowed(){return writes;}
   void requireModelEditsEnabled()throws Exception{if(!writes)throw BaskStreamModelPlans.error("writes_disabled","off");}
   int getMaxMessageBytesValue(){return 1048576;}void audit(String e,String detail){Sys.events.add(e+detail);}
 }
@@ -197,13 +199,14 @@ class BOrd {
 }
 class OrdTarget {String path;BObject value;BComplex owner;Property p;OrdTarget(String s,BValue v,BComplex o,Property prop){path=s;value=v;owner=o;p=prop;}BObject get(){return value;}boolean canRead(){return !Sys.readDenied.contains(path);}boolean canWrite(){return !Sys.denied.contains(path);}boolean canInvoke(){return true;}Permissions getPermissionsForTarget(){Permissions p=new Permissions();p.admin=!Sys.adminDenied.contains(path);return p;}BComponent getComponent(){if(value instanceof BComponent)return (BComponent)value;BComplex c=owner;while(c!=null&&!(c instanceof BComponent))c=c.parent;return (BComponent)c;} }
 class Permissions {boolean admin=true;boolean hasAdminWrite(){return admin;}}
-class Flags {static boolean isReadonly(BComplex c,Slot p){return (p.flags&1)!=0;}static boolean isTransient(BComplex c,Slot p){return false;}static boolean isAsync(BComponent c,Action a){return false;}static boolean isConfirmRequired(BComplex c,Slot s){return (s.flags&4096)!=0;}}
+class Flags {static final int READONLY=1;static boolean isReadonly(BComplex c,Slot p){return (p.flags&1)!=0;}static boolean isTransient(BComplex c,Slot p){return false;}static boolean isAsync(BComponent c,Action a){return false;}static boolean isConfirmRequired(BComplex c,Slot s){return (s.flags&4096)!=0;}}
 class CopyHints {Context cx;boolean keepHandles,swizzleHandles;}
 interface IPropertyValidator {void validateSet(BComplex c,Property p,BValue v,Context cx);}
 class LinkCheck {boolean isValid(){return true;}String getInvalidReason(){return "invalid";}}
-class BLink extends BComplex {static final Type TYPE=new Type("baja:Link");}
+class BLink extends BComplex {static final Type TYPE=new Type("baja:Link");BComponent getSourceComponent(){return null;}String getSourceSlotName(){return "";}String getTargetSlotName(){return "";}boolean getEnabled(){return true;}}
+interface BIWritablePoint {}
 class StubbornComponent extends BComponent {void set(Property p,BValue v,Context cx){if("adapter".equals(p.name)&&cx!=null)return;super.set(p,v,cx);} }
-class BPassword extends BSimple {BPassword(String v){super(v);} }
+class BPassword extends BSimple {static final Type TYPE=new Type("baja:Password");BPassword(String v){super(v);}static BPassword make(String v){return new BPassword(v);} }
 class BRelation extends BComplex {static final Type TYPE=new Type("baja:Relation");}
 interface Knob {BComponent getTargetComponent();String getSourceSlotName();String getTargetSlotName();}
 interface RelationKnob {BComponent getRelationComponent();String getRelationId();}

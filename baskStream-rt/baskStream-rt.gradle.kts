@@ -39,7 +39,7 @@ moduleManifest {
   preferredSymbol.set("bsStream")
   vendor.set("BASidekick")
   vendorVersion.set("1.0")
-  bajaVersion.set("4.10") // Match QAGCharts' cross-Niagara compatibility floor.
+  bajaVersion.set("4.10") // The oldest Niagara this module is meant to load on.
   description.set("baskStream external API service")
 }
 

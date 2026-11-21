@@ -190,7 +190,12 @@ final class BaskStreamAlarmStream
     session.events.submit(() -> deliverAlarm(record));
   }
 
-  private void deliverAlarm(BAlarmRecord record)
+  private void deliverAlarm(final BAlarmRecord record)
+  {
+    session.scoped(() -> deliverAlarmInScope(record));
+  }
+
+  private void deliverAlarmInScope(BAlarmRecord record)
   {
     if (session.closed.get())
     {

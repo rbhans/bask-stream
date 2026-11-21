@@ -6,8 +6,59 @@ import java.util.regex.Pattern;
 
 final class BaskStreamAccessPolicy
 {
+  /**
+   * A narrower reach for the request this thread is handling: the path patterns of the session's
+   * agent profile. Set by the session around each request and each event it delivers, so every
+   * check below applies it without being handed the session.
+   */
+  private static final ThreadLocal<List<Pattern>> SCOPE = new ThreadLocal<List<Pattern>>();
+
   private BaskStreamAccessPolicy()
   {
+  }
+
+  /** Narrows this thread to the given patterns until {@link #exitScope()}; blank leaves it as it is. */
+  static void enterScope(String patterns)
+  {
+    if (patterns == null || patterns.trim().length() == 0)
+    {
+      SCOPE.remove();
+      return;
+    }
+    // In a profile, "slot:/A/B/*" means B and everything under it: an agent given a branch has to be
+    // able to open the branch itself. The service's own allowedPathPatterns keeps its exact matching.
+    StringBuilder widened = new StringBuilder(patterns);
+    for (String piece : patterns.split("[\\r\\n,;]+"))
+    {
+      String trimmed = piece.trim();
+      if (trimmed.endsWith("/*") && trimmed.length() > 2)
+      {
+        widened.append('\n').append(trimmed.substring(0, trimmed.length() - 2));
+      }
+    }
+    SCOPE.set(parsePatterns(widened.toString()));
+  }
+
+  static void exitScope()
+  {
+    SCOPE.remove();
+  }
+
+  private static boolean inScope(String ord)
+  {
+    List<Pattern> scope = SCOPE.get();
+    if (scope == null)
+    {
+      return true;
+    }
+    for (Pattern pattern : scope)
+    {
+      if (pattern.matcher(ord).matches())
+      {
+        return true;
+      }
+    }
+    return false;
   }
 
   static boolean isAllowed(BBaskStreamService service, String ord)
@@ -24,7 +75,7 @@ final class BaskStreamAccessPolicy
     {
       if (pattern.matcher(ord).matches())
       {
-        return true;
+        return inScope(ord);
       }
     }
     return false;
@@ -36,6 +87,10 @@ final class BaskStreamAccessPolicy
    */
   static boolean isDefaultWideOpen(BBaskStreamService service)
   {
+    if (SCOPE.get() != null)
+    {
+      return false;
+    }
     String configured = service.getAllowedPathPatterns();
     return configured == null
         || configured.trim().length() == 0

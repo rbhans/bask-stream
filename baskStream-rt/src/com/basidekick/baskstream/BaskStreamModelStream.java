@@ -284,7 +284,12 @@ final class BaskStreamModelStream
     session.events.submit(() -> deliverModelEvent(source, eventId, slot, value));
   }
 
-  private void deliverModelEvent(BComponent source, int eventId, String slot, BValue value)
+  private void deliverModelEvent(final BComponent source, final int eventId, final String slot, final BValue value)
+  {
+    session.scoped(() -> deliverModelEventInScope(source, eventId, slot, value));
+  }
+
+  private void deliverModelEventInScope(BComponent source, int eventId, String slot, BValue value)
   {
     if (session.closed.get() || !canReadModelComponent(source))
     {
@@ -313,7 +318,12 @@ final class BaskStreamModelStream
     session.events.submit(() -> deliverModelChanged(affected));
   }
 
-  private void deliverModelChanged(Set<String> affected)
+  private void deliverModelChanged(final Set<String> affected)
+  {
+    session.scoped(() -> deliverModelChangedInScope(affected));
+  }
+
+  private void deliverModelChangedInScope(Set<String> affected)
   {
     if (session.closed.get()) return;
     Set<String> bases = new LinkedHashSet<String>();

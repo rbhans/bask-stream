@@ -2,5 +2,7 @@
 <!-- Types -->
 <types>
   <!--com.basidekick.baskstream-->
+  <type class="com.basidekick.baskstream.BAgentMode" name="AgentMode"/>
+  <type class="com.basidekick.baskstream.BAgentProfile" name="AgentProfile"/>
   <type class="com.basidekick.baskstream.BBaskStreamService" name="BaskStreamService"/>
 </types>

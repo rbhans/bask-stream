@@ -719,6 +719,137 @@ final class BaskStreamGraphicsResolver
     return out;
   }
 
+  /**
+   * The point that plays a role on a piece of equipment: "the discharge air temperature of AHU-1"
+   * without knowing its ORD. Points under {@code equip} are scored by the tags they carry
+   * ({@code tags}, by name, in any dictionary) and by how well their name matches {@code role}
+   * (the same matcher as the binding suggestions, with the usual BAS abbreviations). {@code point}
+   * is the best match when it is good and clearly ahead of the next; otherwise it is null and the
+   * matches are for a person or an agent to choose from.
+   */
+  Map<String, Object> resolveRole(Map<String, Object> request, Context context) throws BaskStreamProtocolException
+  {
+    Object equipValue = request.get("equip") instanceof String ? request.get("equip") : request.get("ord");
+    if (!(equipValue instanceof String) || ((String) equipValue).trim().length() == 0)
+      throw new BaskStreamProtocolException("bad_request", "Field 'equip' is required: the ORD of the equipment, such as slot:/Drivers/BacnetNetwork/AHU_1.");
+    String role = request.get("role") instanceof String ? ((String) request.get("role")).trim() : "";
+    List<String> wantTags = new ArrayList<String>();
+    if (request.get("tags") instanceof List)
+      for (Object tag : (List<?>) request.get("tags"))
+        if (tag instanceof String && ((String) tag).trim().length() > 0)
+        {
+          String name = ((String) tag).trim();
+          wantTags.add(name.indexOf(':') >= 0 ? name.substring(name.indexOf(':') + 1) : name);
+        }
+    if (role.length() == 0 && wantTags.isEmpty())
+      throw new BaskStreamProtocolException("bad_request", "Give a 'role' (words, such as \"discharge air temp\") or 'tags' (names, such as [\"discharge\", \"air\", \"temp\", \"sensor\"]).");
+    Resolution found = resolve((String) equipValue, null, context);
+    if (!found.ok() || found.component == null)
+    {
+      String why = "Equipment " + equipValue + " is " + found.status + (found.reason == null ? "." : ": " + found.reason + ".");
+      if ("forbidden".equals(found.status)) throw new BaskStreamProtocolException("forbidden_point", why);
+      throw new BaskStreamProtocolException("invalid_point", why);
+    }
+    BComponent equip;
+    try
+    {
+      equip = BOrd.make(found.component).resolve(service, context).getComponent();
+    }
+    catch (Exception e)
+    {
+      throw new BaskStreamProtocolException("invalid_point", "Equipment " + equipValue + " could not be opened.");
+    }
+    String base = found.component;
+    List<String> wantTokens = role.length() == 0 ? tokens(String.join(" ", wantTags)) : tokens(role);
+    long deadline = System.currentTimeMillis() + 5000L;
+    List<Object[]> scored = new ArrayList<Object[]>();
+    List<BComponent> stack = new ArrayList<BComponent>();
+    stack.add(equip);
+    int visited = 0;
+    boolean cut = false;
+    while (!stack.isEmpty())
+    {
+      if (visited >= 3000 || System.currentTimeMillis() > deadline)
+      {
+        cut = true;
+        break;
+      }
+      BComponent current = stack.remove(stack.size() - 1);
+      visited++;
+      BComponent[] kids;
+      try
+      {
+        kids = current.getChildComponents();
+      }
+      catch (RuntimeException e)
+      {
+        continue;
+      }
+      for (BComponent kid : kids)
+      {
+        if (!readable(kid, context)) continue;
+        String slot = kid.getSlotPath() == null ? null : kid.getSlotPath().toString();
+        if (slot == null) continue;
+        if (!(kid instanceof BControlPoint))
+        {
+          if (slot.split("/").length - found.component.split("/").length < 7) stack.add(kid);
+          continue;
+        }
+        String plain = SlotPath.unescape(kid.getName());
+        double name = nameScore(wantTokens, role.length() == 0 ? String.join(" ", wantTags) : role, tokens(plain), plain);
+        double tagScore = -1;
+        List<String> why = new ArrayList<String>();
+        if (!wantTags.isEmpty())
+        {
+          Set<String> have = new HashSet<String>();
+          try
+          {
+            for (javax.baja.tag.Tag tag : kid.tags()) have.add(tag.getId().getName());
+          }
+          catch (RuntimeException e)
+          {
+            // A failing tag dictionary leaves the name to decide.
+          }
+          int hit = 0;
+          for (String want : wantTags) if (have.contains(want)) hit++;
+          tagScore = (double) hit / wantTags.size();
+          why.add("tags " + hit + " of " + wantTags.size());
+        }
+        why.add("name " + round(name));
+        double score = tagScore < 0 ? name : tagScore >= 1 ? 0.8 + 0.2 * name : 0.6 * tagScore + 0.4 * name;
+        if (score < 0.3) continue;
+        String units = units(kid);
+        if (units != null) why.add("units " + units);
+        Map<String, Object> wire = new LinkedHashMap<String, Object>();
+        wire.put("ord", slot);
+        wire.put("name", kid.getDisplayName(context));
+        wire.put("typeSpec", kid.getType().toString());
+        if (units != null) wire.put("units", units);
+        wire.put("score", Double.valueOf(round(score)));
+        wire.put("why", why);
+        scored.add(new Object[] { Double.valueOf(score), wire });
+      }
+    }
+    Collections.sort(scored, (a, b) -> Double.compare((Double) b[0], (Double) a[0]));
+    int limit = request.get("limit") instanceof Number ? Math.max(1, Math.min(25, ((Number) request.get("limit")).intValue())) : 5;
+    List<Object> matches = new ArrayList<Object>();
+    for (int i = 0; i < scored.size() && i < limit; i++) matches.add(scored.get(i)[1]);
+    double best = scored.isEmpty() ? 0 : ((Double) scored.get(0)[0]).doubleValue();
+    double next = scored.size() < 2 ? 0 : ((Double) scored.get(1)[0]).doubleValue();
+    boolean sure = best >= 0.6 && best - next >= 0.1;
+    Map<String, Object> result = new LinkedHashMap<String, Object>();
+    result.put("equip", base);
+    result.put("role", role.length() == 0 ? null : role);
+    if (!wantTags.isEmpty()) result.put("tags", wantTags);
+    result.put("point", sure ? ((Map<?, ?>) scored.get(0)[1]).get("ord") : null);
+    result.put("ambiguous", Boolean.valueOf(!sure && !scored.isEmpty()));
+    result.put("matches", matches);
+    // Inferred from tags and names; a person confirms it before anything depends on it.
+    result.put("inferred", Boolean.TRUE);
+    if (cut) result.put("truncated", Boolean.TRUE);
+    return result;
+  }
+
   private static String family(String typeSpec)
   {
     String lower = typeSpec.toLowerCase(Locale.ROOT);

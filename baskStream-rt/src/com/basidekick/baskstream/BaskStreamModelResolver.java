@@ -263,7 +263,15 @@ final class BaskStreamModelResolver
     for (BaskStreamModelPlans.Step step : prep.steps) diffs.add(step.diff);
     if (new BaskStreamCodec().encodeMessage(map("changes", diffs)).length > service.getMaxMessageBytesValue() / 2)
       throw error("model_limit", "Preview is too large; submit a smaller batch.");
-    return plans.preview(principal(cx), prep.steps, prep::check, audit(cx), System.currentTimeMillis());
+    Map<String, Object> plan = plans.preview(principal(cx), prep.steps, prep::check, audit(cx), System.currentTimeMillis());
+    plans.remember((String)plan.get("planId"), new ArrayList<Object>(changes));
+    return plan;
+  }
+
+  /** A preview this user has not applied yet: its change specs, differences and kind. Null when there is none. */
+  Map<String, Object> waitingPlan(Object planId, Context cx)
+  {
+    return planId instanceof String ? plans.waiting(principal(cx), (String)planId, System.currentTimeMillis()) : null;
   }
 
   Map<String, Object> apply(Map<String, Object> request, Context cx) throws Exception

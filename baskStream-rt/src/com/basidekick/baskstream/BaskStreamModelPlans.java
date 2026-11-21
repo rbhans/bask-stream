@@ -32,6 +32,8 @@ final class BaskStreamModelPlans
     String id, user, hash, key, state = "preview";
     /** Where the plan came from, when that matters: "discovery" for one add_discovered built. */
     String kind;
+    /** The change specs the preview was made from, so a person can run the same plan later. */
+    Object request;
     long expires;
     Check check;
     List<Step> steps;
@@ -145,6 +147,25 @@ final class BaskStreamModelPlans
     try { audit.record("model_apply_finished", p.id, map("state", p.state, "results", p.results)); }
     catch (Exception e) { /* Per-step outcomes remain retrievable even if final audit fails. */ }
     synchronized (this) { return wire(p); }
+  }
+
+  /** Keeps the change specs a preview was built from. An unknown id is ignored. */
+  synchronized void remember(String id, Object request)
+  {
+    Plan p = plans.get(id);
+    if (p != null) p.request = request;
+  }
+
+  /**
+   * An unapplied preview of this user's, as a waiting change keeps it: the change specs it was
+   * built from, its differences and where it came from. Null when there is no such preview.
+   */
+  synchronized Map<String, Object> waiting(String user, String id, long now)
+  {
+    expire(now);
+    Plan p = plans.get(id);
+    if (p == null || !p.user.equals(user) || !"preview".equals(p.state) || p.request == null) return null;
+    return map("changes", p.request, "diffs", diffs(p), "kind", p.kind);
   }
 
   /** Notes where a previewed plan came from. An unknown id is ignored. */

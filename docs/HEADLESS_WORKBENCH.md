@@ -47,9 +47,23 @@ The station file space, `^`: Px pages, nav files, images, HTML and so on. Paths 
 - `write_file` refuses to replace an existing file (`file_exists`) unless `overwrite: true`.
 - Replacing a `.px`, `.nav` or image file first copies the old one to `^bask/backups/<time>/<path>` (API 1.12); `backup: false` skips the copy and `backup: true` keeps one for any other file. If the copy cannot be made, nothing is replaced.
 - `delete_file` refuses a folder with contents unless `recursive: true`, and never deletes more than 500 entries in one request.
-- A written file is limited by the service's `maxMessageBytes` (1 MiB by default), since it travels in one request.
+- A file written with `write_file` is limited by the service's `maxMessageBytes` (1 MiB by default), since it travels in one request. A larger one goes [in pieces](#a-file-larger-than-one-message-api-114).
 - Writes and deletes are recorded in the station log and the audit history (`file_write`, `file_delete`) only while the service's `auditFilesAndViews` is on; it is off by default (API 1.12; see [GRAPHICS.md](GRAPHICS.md#records)). An AI agent's changes always leave their `Agent` record.
 - Errors: `forbidden_file`, `file_not_found`, `file_exists`, `file_too_large`, `file_failed`.
+
+### A file larger than one message (API 1.14)
+
+A request is limited by `maxMessageBytes` (1 MiB by default), and base64 makes content a third larger. Larger files go in pieces:
+
+| Operation | Fields | Reply |
+| --- | --- | --- |
+| `begin_upload` | `path`; optional `overwrite` | `upload_started`: `upload` (an id), `path`, `maxBytes` (16 MiB), `expiresAt`. The write is tried first without content, so a path the user may not write, or an existing file without `overwrite`, is refused here |
+| `append_upload` | `upload`, and `bytes` (MessagePack binary) or `base64` | `upload_progress`: `received`, `expiresAt` |
+| `commit_upload` | `upload`; optional `size`, and `write_file`'s `overwrite`, `createDirs`, `backup`, `reason` | `file_written`, exactly as `write_file` |
+
+- Pieces are held in memory for the session until the commit, 16 MiB at most, two uploads at a time. An upload with no piece for 5 minutes is dropped, as is everything when the session closes. Nothing on the station changes before the commit.
+- `commit_upload` is a `write_file` with the joined content: the same gate, agent rules, backup, audit record and reply. With `size`, a commit whose upload holds a different number of bytes is refused with `upload_incomplete` and the upload stays open.
+- The SDK's `putFile(path, bytes)` and `bask put` choose between one request and pieces by size.
 
 A Px page written with `write_file` is a file like any other and is not checked. `write_px` checks it first, and the other graphics operations read, check and attach Px files: see [GRAPHICS.md](GRAPHICS.md).
 
@@ -104,7 +118,7 @@ Other drivers return `discovery_unsupported` from `discover`. Their discovery ca
 
 ## AI agents
 
-While `agentApprovalRequired` is on, an agent's `write_file` and `delete_file` are allowed only under the paths in `agentDirectFiles`, and `discover`, `cancel_job` and applying an `add_discovered` plan only with `agentDirectDiscovery` (API 1.11). Otherwise they return `approval_required`. Reads, queries, listing and previews are always allowed. See [AI_AGENTS.md](AI_AGENTS.md#what-an-agent-may-do-by-itself).
+An agent's `write_file` and `delete_file` are allowed only under the paths in `agentDirectFiles`, and `discover`, `cancel_job` and applying an `add_discovered` plan only with `agentDirectDiscovery` (API 1.11; before API 1.13 this held only while `agentApprovalRequired` was on). Otherwise they return `approval_required`, or, when their kind is in `agentAskKinds`, wait for a person (API 1.14). Reads, queries, listing and previews are always allowed. See [AI_AGENTS.md](AI_AGENTS.md#what-an-agent-may-do-by-itself).
 
 ## Users, roles and categories
 

@@ -2,7 +2,11 @@
 <bajaObjectGraph version="1.0">
 <p m="b=baja" t="b:UnrestrictedFolder">
 
-<p n="BASkStreamService" m="bsStream=baskStream" t="bsStream:BaskStreamService"/>
+<!-- A service dropped from the palette starts with changes off; a person turns them on. Services already on a station keep what they have. -->
+<p n="BASkStreamService" m="bsStream=baskStream" t="bsStream:BaskStreamService">
+  <p n="writesEnabled" v="false"/>
+</p>
+<p n="AgentProfile" t="bsStream:AgentProfile"/>
 
 </p>
 </bajaObjectGraph>

@@ -487,6 +487,9 @@ final class BaskStreamScheduleResolver
     Map<String, Object> wire = new LinkedHashMap<String, Object>();
     wire.put("start", time.getStart() == null ? null : formatTime(time.getStart(), context));
     wire.put("finish", time.getFinish() == null ? null : formatTime(time.getFinish(), context));
+    // The same times as write_schedule takes them, so an entry that was read can be written back.
+    wire.put("startTime", clock(time.getStart(), false));
+    wire.put("finishTime", clock(time.getFinish(), true));
     wire.put("effectiveValue", valueToWire(time.getEffectiveValue(), context));
     wire.put("display", time.toString(context));
     return wire;
@@ -558,6 +561,15 @@ final class BaskStreamScheduleResolver
     wire.put("displayValue", displayValue);
     wire.put("status", status);
     return wire;
+  }
+
+  /** "HH:MM" or "HH:MM:SS" on the 24-hour clock; a finish at midnight is the end of the day, "24:00". */
+  private static String clock(BTime time, boolean finish)
+  {
+    if (time == null) return null;
+    if (finish && time.getHour() == 0 && time.getMinute() == 0 && time.getSecond() == 0) return "24:00";
+    String text = String.format("%02d:%02d", time.getHour(), time.getMinute());
+    return time.getSecond() == 0 ? text : text + String.format(":%02d", time.getSecond());
   }
 
   private static String formatTime(BTime time, Context context)

@@ -146,7 +146,7 @@ Exit: no class over about 600 lines, and Jetty imports appear only in the adapte
 ### Phase 5: clients
 
 - Build the TypeScript SDK: connect/login, request/response matching, reconnect, lease renewal, typed errors, `truncated`/`changed` handling, and model plan helpers.
-- Move the companion app to the SDK. The Grafana front end can use it too; the Go backend follows the spec.
+- Move the companion app to the SDK.
 - MCP: removed from this repository (2026-09-29), then back as `mcp/` (2026-11-18): a thin layer over the SDK, which its build bundles from `sdk/src`.
 - Python: keep one small smoke-test script unless there is a Python audience.
 

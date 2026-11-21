@@ -140,14 +140,17 @@ final class BaskStreamFileResolver
     }
     Object text = request.get("text");
     Object base64 = request.get("base64");
-    if ((text instanceof String) == (base64 instanceof String))
+    // 'bytes' is the content of an upload sent in pieces (commit_upload), or binary content sent as it is.
+    Object raw = request.get("bytes");
+    if ((text instanceof String ? 1 : 0) + (base64 instanceof String ? 1 : 0) + (raw instanceof byte[] ? 1 : 0) != 1)
     {
       throw new BaskStreamProtocolException("bad_request", "Send the content as exactly one of 'text' or 'base64'.");
     }
     byte[] bytes;
     try
     {
-      bytes = text instanceof String ? ((String) text).getBytes(StandardCharsets.UTF_8) : Base64.getDecoder().decode((String) base64);
+      bytes = raw instanceof byte[] ? (byte[]) raw
+          : text instanceof String ? ((String) text).getBytes(StandardCharsets.UTF_8) : Base64.getDecoder().decode((String) base64);
     }
     catch (IllegalArgumentException e)
     {

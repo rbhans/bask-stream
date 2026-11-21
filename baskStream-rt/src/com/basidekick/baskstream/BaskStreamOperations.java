@@ -95,6 +95,10 @@ final class BaskStreamOperations
     add("list_proposals", Gate.NONE);
     add("approve_proposal", Gate.WRITES);
     add("reject_proposal", Gate.WRITES);
+    // Every agent change, and putting one back (API 1.14). Reverting runs the reverse change.
+    add("list_changes", Gate.NONE);
+    add("revert_change", Gate.WRITES);
+    add("explain_change", Gate.NONE);
     add("read_agent_log", Gate.NONE);
     // Headless Workbench (API 1.10): queries, station files, jobs and driver discovery.
     add("query", Gate.NONE);
@@ -102,6 +106,11 @@ final class BaskStreamOperations
     add("read_file", Gate.NONE);
     add("write_file", Gate.WRITES);
     add("delete_file", Gate.WRITES);
+    // A file larger than one message, sent in pieces (API 1.14). Only the commit changes the station;
+    // it is dispatched as write_file, so it meets the same checks.
+    add("begin_upload", Gate.NONE);
+    add("append_upload", Gate.NONE);
+    add("commit_upload", Gate.WRITES);
     add("list_jobs", Gate.NONE);
     add("read_job", Gate.NONE);
     add("cancel_job", Gate.WRITES);
@@ -118,6 +127,8 @@ final class BaskStreamOperations
     add("attach_px_view", Gate.WRITES);
     add("check_nav", Gate.NONE);
     add("graphics_inventory", Gate.NONE);
+    // Meaning (API 1.14): the point that plays a role on a piece of equipment.
+    add("resolve", Gate.NONE);
   }
 
   private static void add(String name, Gate gate)

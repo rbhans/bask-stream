@@ -1041,8 +1041,12 @@ Optional controls for AI agents: actor context, a `reason` on changes, rate and 
 
 - `declare_actor` says who is behind the session (agent or person, name, model, on behalf of). Reply `actor_declared` with the rules that apply; `capabilities.agents` carries the same block. Declaring is one-way: once a session has declared itself an agent, declaring `kind: "person"` is refused with `agent_cannot_undeclare`.
 - `dryRun: true` is accepted only by the operations that honour it (`ack_alarm(s)`, `clear_alarm(s)`, `write_schedule`, `write_file`, `delete_file`, `write_px`, `attach_px_view`). On any other changing operation it is refused with `bad_request`, so it can never make a real change that looks like a dry run.
-- `list_proposals` lists proposals the session may see.
-- `approve_proposal` runs a proposed write with the approver's permissions; `reject_proposal` declines it. People only.
+- `list_proposals` lists the changes that waited or are waiting for a person. Since API 1.14 a proposal can be any kind of change, not only a point command.
+- `approve_proposal` makes a proposed change with the approver's permissions; `reject_proposal` declines it. People only.
+- `list_changes` lists every change agents asked for or made, including the ones they made directly, with what the check afterwards found and whether each can be put back (API 1.14).
+- `revert_change` puts a change back, with the caller's permissions. People only (API 1.14).
+- A change an agent may not make directly, whose kind is in `agentAskKinds`, is answered with the error code `change_proposed` and the `proposal`. It is an error so that no client takes the change for done.
+- `explain_change` says what the station would do with a change and which setting decides, without making it (API 1.13).
 - `read_agent_log` returns the `Agent` records baskStream adds to the station's audit history.
 - Change operations accept a `reason`. For agent sessions, `write` entries carry `outcome` (`proposed` with a `proposal`, or `written`).
 - `proposal_cov` notices report proposals as they are created and decided.
@@ -1053,6 +1057,7 @@ Queries, station files, jobs and driver discovery, for clients that engineer a s
 
 - `query` runs one read-only BQL select or NEQL tag query and returns a table or a list of entities.
 - `list_files`, `read_file`, `write_file` and `delete_file` work on the station file space (`^`), such as Px and nav files.
+- `begin_upload`, `append_upload` and `commit_upload` send a file larger than one message in pieces, up to 16 MiB. The commit is a `write_file` with the joined content (API 1.14).
 - `list_jobs`, `read_job` and `cancel_job` follow station jobs; `read_job` includes the job's log and results.
 - `discover` starts a driver's discovery job (BACnet devices on a network, or a device's points).
 - `add_discovered` turns chosen discovery results into a model plan preview, with facets learned from the device.
@@ -1071,6 +1076,10 @@ Px files, their bindings and views, and nav files, for clients that build or che
 - `graphics_inventory` lists every Px and nav file, every view and what links them, with a punch list of what is broken or unused; `checkBindings: true` also resolves each view's bindings on its component.
 - `capabilities.px` reports what is available.
 
+### Meaning
+
+- `resolve` returns the point that plays a role on a piece of equipment, from its tags and its name, so a client can ask for "the discharge air temperature of AHU-1" without an ORD (API 1.14). The answer is inferred and says how sure it is.
+
 ## Error Codes
 
 Failures arrive in two ways. A **request** error fails the whole request with an `error` message carrying `code` and `message`. An **entry** error appears inside a batch result (per point, alarm, tag target and so on) with `ok: false`, while the other entries still succeed. Clients should branch on `code`, never on `message`. This table is generated from `spec/baskstream-protocol.json`.
@@ -1082,14 +1091,18 @@ Failures arrive in two ways. A **request** error fails the whole request with an
 | `agent_priority_blocked` | entry | Agent used an emergency (level 1) action while agentAllowEmergency is off. |
 | `agent_rate_limited` | entry | Agent user exceeded agentMaxChangesPerMinute, or has too many pending proposals; request or entry. |
 | `agent_use_write` | request | An agent's model plan tried to command a writable point (invoke set, override or auto, or set a priority input or the fallback). Agents command points with write, where approval and value limits apply. |
-| `agent_value_out_of_bounds` | entry | Agent value is outside the point's min/max facets or the matching agentBoundN rule. |
+| `agent_value_out_of_bounds` | entry | Agent value is outside the point's min/max facets or the matching rule in agentBounds. |
+| `agent_writes_refused` | request | Agents may not command points: agentPointWrites is refuse (the whole request), or no rule in agentBounds names the point and agentUnlistedPoints is refuse (that entry). |
 | `alarm_failed` | request | AlarmService unavailable or alarm database/read failure; also a per-uuid entry for unexpected ack/clear failures. |
-| `approval_required` | request | While agentApprovalRequired is on, an agent's change other than a point write is refused unless the agentDirect setting for that kind of change allows it; the message names the setting. |
+| `approval_required` | request | An agent's change other than a point write is refused: the agentDirect setting for that kind of change does not allow it and agentAskKinds does not name the kind; the message names the setting. |
 | `auth_required` | request | No authenticated Niagara user at the WebSocket handshake; the socket is closed (1008), no frame is sent. |
 | `bad_query` | request | Niagara rejected the BQL or NEQL text, the query is too long or contains a pipe character, or it did not return a table. |
 | `bad_reference` | request | Model @ref does not identify an earlier create/clone, or a ref is duplicated. |
 | `bad_request` | request | Malformed request or field (type, range, missing field, MessagePack decoding); also per-item in write/tag results. |
 | `browse_failed` | request | Unexpected failure resolving a browse/describe target. |
+| `change_conflict` | request | The target has changed again since the change, so putting it back as recorded would overwrite newer work. Send force: true to do it anyway. |
+| `change_failed` | request | A kept change or its reverse failed when it was run; the message says why. |
+| `change_proposed` | request | Not a failure of the request, and not done either: an agent's change was kept for a person to approve (its kind is in agentAskKinds). The reply carries outcome: "proposed" and the proposal. Do not send the change again. |
 | `children_present` | request | Deleting a component with children requires recursive=true. |
 | `confirm_required` | request | The model plan invokes an action Niagara marks confirm-required; resend the change with confirm: true. |
 | `cycle` | request | Cannot move a component into its own subtree. |
@@ -1098,7 +1111,7 @@ Failures arrive in two ways. A **request** error fails the whole request with an
 | `file_exists` | request | write_file target exists and overwrite was not true. |
 | `file_failed` | request | The file system reported an error while reading, writing or deleting. |
 | `file_not_found` | request | No such file or folder. |
-| `file_too_large` | request | File is larger than maxBytes or the 4 MiB read limit. |
+| `file_too_large` | request | File is larger than maxBytes or the 4 MiB read limit, or an upload would pass 16 MiB. |
 | `forbidden_action` | entry | User cannot invoke the write action slot on the point; also request-level for model invoke without invoke+admin-write. |
 | `forbidden_alarm` | entry | Missing operator write (ack) or admin write (force-clear) on the alarm class. |
 | `forbidden_component` | request | Model target outside allowedPathPatterns, unreadable, or lacking admin write. |
@@ -1127,6 +1140,7 @@ Failures arrive in two ways. A **request** error fails the whole request with an
 | `model_edits_disabled` | request | modelEditsEnabled is false on the service; also a step result if flipped mid-apply. |
 | `model_limit` | request | Model size bounds exceeded (slots, branch, snapshot, nesting, preview size, dependencies). |
 | `name_conflict` | request | Slot name already exists (collision=fail) or no suffix could be allocated. |
+| `not_revertible` | request | The change cannot be put back: nothing was kept to restore, or some of its steps cannot be reversed and partial was not set. |
 | `not_writable` | entry | Target is not a Niagara writable point or its type is unsupported. |
 | `plan_closed` | request | Plan is not in preview state (cannot apply or cancel). |
 | `plan_conflict` | request | Overlapping property or structural edits in one plan; use separate previews. |
@@ -1134,6 +1148,7 @@ Failures arrive in two ways. A **request** error fails the whole request with an
 | `plan_limit` | request | Plan ledger is full (32 plans). |
 | `plan_mismatch` | request | planHash does not match the stored plan. |
 | `plan_not_found` | request | Plan unknown, expired, or owned by another user. |
+| `plan_partial` | request | An approved plan stopped part way. Read the station before trying anything else; nothing is retried. |
 | `proposal_closed` | request | Proposal is no longer pending: already decided or expired. |
 | `proposal_not_found` | request | No such proposal (ids do not survive a station restart). |
 | `protected_component` | request | The baskStream service and its descendants cannot be edited remotely; protected services too, except users, roles and categories for people while securityEditsEnabled is on. |
@@ -1155,6 +1170,9 @@ Failures arrive in two ways. A **request** error fails the whole request with an
 | `unknown_type` | request | describe_component_types baseType not found. |
 | `unsupported_action` | entry | Write action unsupported by the point; also request-level for an unknown model action. |
 | `unsupported_op` | request | Operation name is not in the protocol. |
+| `upload_incomplete` | request | The upload holds a different number of bytes than the commit's size. It stays open. |
+| `upload_limit` | request | The session already has two uploads open. |
+| `upload_not_found` | request | No such upload in this session; it may have lapsed after 5 minutes without a piece. |
 | `view_conflict` | entry | The component already has a slot of that name that is not a Px view. |
 | `write_cancelled` | entry | Session closed or thread interrupted before the write invocation. |
 | `write_failed` | entry | Unexpected runtime failure writing a point, or enum point without an enum range. |
@@ -1360,6 +1378,37 @@ Recommended client approach:
 The `metadata` block is additive and request-controlled. Clients can ignore it or omit it and continue using `ord`, `slotPath`, `name`, `typeSpec`, `features`, `operations`, and point read/write payloads.
 
 Third-party clients should not require every metadata subfield to be populated. Different protocols and station models expose different evidence.
+
+### API 1.14 changes
+
+`apiVersion` advanced from `1.13` to `1.14`. See [AI_AGENTS.md](AI_AGENTS.md#what-changed-in-api-114).
+
+- **Any kind of change can wait for a person.** New setting `agentAskKinds` (on the service and on each profile) names the kinds that wait instead of being refused: `files`, `discovery`, `modelEdits`, `tags`, `schedules`, `alarms`. Such a request is answered with error code `change_proposed`, `outcome: "proposed"` and the `proposal`. Nothing changes for a station that leaves the setting blank.
+- A proposal gains `kind`, `operation`, `direct`, `changes`, `canRevert`, `notRevertible`, `notReverted`, `irreversible`, `revertedBy`, `revertedAt` and `check`. `point` is the change's target, which for other kinds is a component, a file path or a plan.
+- New operations `list_changes` and `revert_change`. Changes are kept for a week (`agentChangeHistory` entries), with the station, so a change made before a restart can still be put back after it.
+- **Changed:** an agent's own `write_file` and `write_px` keep the old content under `^bask/backups` unless the request says `backup: false`, so the write can be put back.
+- A `write` by an agent may carry `expect` (`point`, `min`, `max`, `withinMinutes`). The station reads the point again and records `passed` or `failed` on the change. A direct agent write entry gains `change`, its id in `list_changes`.
+- `agentProposalMinutes` may now be up to 10080 (a week).
+- New settings `agentAlarmClass` (an alarm while a change waits or a check has failed) and `agentChangeHistory`; new read-only property `agentAttention`.
+- New operations `begin_upload`, `append_upload`, `commit_upload` and `resolve`.
+- `capabilities.agents` gains `kinds` (each kind of work as `refuse`, `ask` or `allow`) and `filesElsewhere` (what happens to a station file outside the paths in `direct.files`).
+- Schedule entries, in `read_schedule` and in `write_schedule`'s before and after, gain `startTime` and `finishTime` on the 24-hour clock (`07:00`, and `24:00` for the end of the day), which is what `write_schedule` takes. `start` and `finish` stay in the station's display format.
+- New error codes `change_proposed`, `not_revertible`, `change_conflict`, `change_failed`, `plan_partial`, `upload_limit`, `upload_not_found`, `upload_incomplete`.
+- A service dropped from the palette now starts with `writesEnabled` off. Services already on a station are not changed.
+
+### API 1.13 changes
+
+`apiVersion` advanced from `1.12` to `1.13`. Agent rules only; see [AI_AGENTS.md](AI_AGENTS.md#what-changed-in-api-113).
+
+- New service properties `agentPointWrites` (`refuse`, `ask` or `allow`; default `ask`), `agentBounds` (value limits, one per line) and `agentUnlistedPoints` (default `allow`). `agentApprovalRequired` and `agentBound1`–`agentBound4` are hidden and carried over when the service starts.
+- **Changed:** the `agentDirect…` settings now always decide their kind of change. Before, they were ignored while `agentApprovalRequired` was off. A station saved with it off is given the equivalent settings at start, so its agents may do what they could before.
+- `capabilities.agents` gains `pointWrites` and `unlistedPoints`. `approvalRequired` is now true exactly when `pointWrites` is `ask`; a client that read `approvalRequired: false` as "every change is direct" should read `direct` instead.
+- New error code `agent_writes_refused`.
+- **Agent profiles.** A `baskStream:AgentProfile` under the service gives the Niagara users it lists their own rules, an optional end time and an optional narrower reach, in place of the service's agent settings. `capabilities.agents` gains `profile`, `profileOff` and `pathPatterns`.
+- New operation `explain_change`.
+- Waiting proposals are stored with the station, so they survive a restart when the station was saved after they were made.
+- **Fixed:** a request holding a string or binary value over 64 KiB got no reply, so a file over about 48 KB could not be written. Such values are now limited only by `maxMessageBytes`.
+- The module gains a second part, `baskStream-ux.jar`, with a settings view for the service. The API does not need it.
 
 ### API 1.12 changes
 

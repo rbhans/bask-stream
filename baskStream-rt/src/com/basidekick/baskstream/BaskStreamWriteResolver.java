@@ -190,9 +190,71 @@ final class BaskStreamWriteResolver
   }
 
   /**
+   * The write that would put a point back as it is now, worked out before a command is made: the
+   * old fallback for "set", the old value at the same priority level for an override (or "auto"
+   * when the level was empty). Null when there is nothing to put back or it cannot be read.
+   */
+  Map<String, Object> undoSpec(String pointOrd, Map<String, Object> spec, Context context)
+  {
+    try
+    {
+      BaskStreamPointResolver.ResolvedPoint point = pointResolver.resolve(pointOrd, context);
+      BComponent component = writableComponent(point.getTarget());
+      if (!(component instanceof BIWritablePoint)) return null;
+      String action = normalizeAction(optionalString(spec, "action"));
+      boolean emergency = action.startsWith("emergency");
+      Map<String, Object> undo = new LinkedHashMap<String, Object>();
+      undo.put("point", pointOrd);
+      if ("set".equals(action))
+      {
+        Object value = levelValue(componentValue(component, "fallback"));
+        if (value == null) return null;
+        undo.put("action", "set");
+        undo.put("value", value);
+        return undo;
+      }
+      Object value = levelValue(((BIWritablePoint) component).getInStatusValue(emergency ? BPriorityLevel.level_1 : BPriorityLevel.level_8));
+      if (value == null)
+      {
+        if (action.endsWith("auto")) return null;
+        undo.put("action", emergency ? "emergency_auto" : "auto");
+      }
+      else
+      {
+        undo.put("action", emergency ? "emergency_override" : "override");
+        undo.put("value", value);
+      }
+      return undo;
+    }
+    catch (Exception e)
+    {
+      return null;
+    }
+  }
+
+  /** The plain value held in a priority input or fallback, or null when it is empty. */
+  private static Object levelValue(Object input)
+  {
+    if (!(input instanceof BIStatusValue)) return null;
+    BStatusValue statusValue = ((BIStatusValue) input).getStatusValue();
+    if (statusValue == null || statusValue.getStatus() == null || statusValue.getStatus().isNull()) return null;
+    BValue value = statusValue.getValueValue();
+    if (value instanceof BNumber) return Double.valueOf(((BNumber) value).getDouble());
+    if (value instanceof BBoolean) return Boolean.valueOf(((BBoolean) value).getBoolean());
+    if (value instanceof BEnum) return Long.valueOf(((BEnum) value).getOrdinal());
+    return value == null ? null : value.toString();
+  }
+
+  /** The point as it reads now, for a check after a change. */
+  Map<String, Object> peek(String pointOrd, Context context) throws BaskStreamProtocolException
+  {
+    return pointResolver.snapshot(pointResolver.resolve(pointOrd, context), context).toWire();
+  }
+
+  /**
    * Checks an agent's point write without making it: the point resolves and is invokable for this
    * user, the action and value are valid, emergency (level 1) actions are allowed, and a numeric
-   * value is inside the point's min/max facets and the first matching {@code agentBoundN} rule.
+   * value is inside the point's min/max facets and the first matching value limit rule.
    * Returns the summary that proposals and audit records show.
    */
   Map<String, Object> checkAgentWrite(String pointOrd, Map<String, Object> spec, Context context, BaskStreamAgents.Limits limits)
@@ -221,6 +283,9 @@ final class BaskStreamWriteResolver
           "Agents cannot use emergency (level 1) actions unless agentAllowEmergency is on.");
     }
     Object value = invocation.name.endsWith("auto") ? null : spec.get("value");
+    // The first value limit rule that names this point, whatever kind of point it is.
+    BaskStreamAgents.Bound bound = limits.boundFor(pointOrd,
+        component.getSlotPath() == null ? null : component.getSlotPath().toString());
     if (component instanceof BNumericWritable && value != null)
     {
       double number = requireDouble(value);
@@ -237,8 +302,6 @@ final class BaskStreamWriteResolver
         throw new BaskStreamProtocolException("agent_value_out_of_bounds",
             "Value " + number + " is outside the point's limits (" + min + " to " + max + ").");
       }
-      BaskStreamAgents.Bound bound = limits.boundFor(pointOrd,
-          component.getSlotPath() == null ? null : component.getSlotPath().toString());
       if (bound != null && (number < bound.min || number > bound.max))
       {
         throw new BaskStreamProtocolException("agent_value_out_of_bounds",
@@ -257,6 +320,8 @@ final class BaskStreamWriteResolver
     summary.put("action", invocation.name);
     summary.put("value", value);
     summary.put("description", description.toString());
+    // Read by agentWrite for agentUnlistedPoints; proposals and records do not show it.
+    summary.put("listed", Boolean.valueOf(bound != null));
     return summary;
   }
 

@@ -1,0 +1,10 @@
+<!-- Module Include File -->
+<!-- Types -->
+<types>
+  <!--com.basidekick.baskstream.ux-->
+  <type class="com.basidekick.baskstream.ux.BBaskStreamSettings" name="BaskStreamSettings">
+    <agent requiredPermissions="r">
+      <on type="baskStream:BaskStreamService"/>
+    </agent>
+  </type>
+</types>
