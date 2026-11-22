@@ -52,7 +52,7 @@ test("a recording played back is the station it was made from: tree, values, ala
     assert.deepEqual([...sent].filter((op) => !RECORD_OPERATIONS.includes(op)), []);
     assert.deepEqual({ audit: original.station.state.audit.length, writes: original.station.state.counters.writes }, before);
     assert.deepEqual([recording.format, recording.version, recording.station, recording.scrambled, recording.hours], ["bask-site", 1, "Northgate", false, 24]);
-    assert.match(recordingSummary(recording), /^\d+ components, 83 points \(6\d with 24 hours of history\), 3 schedules, 7 open alarms$/);
+    assert.match(recordingSummary(recording), /^\d+ components, 84 points \(6\d with 24 hours of history\), 3 schedules, 7 open alarms$/);
 
     const played = await replay(parseRecording(JSON.stringify(recording), "site.json"));
     try {

@@ -60,7 +60,8 @@ export interface SiteContext {
   weekdays(entries: any[], weekend?: any[]): Record<string, any[]>;
   wave(base: number, amp: number, periodMin: number, seed: number): (t: number) => number;
   outdoor(t: number): number;
-  raise(source: string, message: string, o?: { cls?: string; priority?: number; state?: string; ago?: number; acked?: boolean }): any;
+  /** With `normalAgo` (milliseconds) the alarm is one from the past: back to normal then, acknowledged and closed. */
+  raise(source: string, message: string, o?: { cls?: string; priority?: number; state?: string; ago?: number; acked?: boolean; normalAgo?: number }): any;
   propose(ord: string, action: string, value: unknown, reason: string, at?: number, minutes?: number): any;
   decide(proposal: any, status: string, by: string, at?: number, note?: string | null): void;
   agentRecord(at: number, user: string, target: string, action: string, fields: Record<string, unknown>): any;
@@ -112,6 +113,7 @@ const graphics = (file: SiteContext["file"], key: keyof typeof DEMO_GRAPHICS, ho
 
 const MIN = 60000;
 const HOUR = 3600000;
+const DAY = 24 * HOUR;
 const px = (title: string, ords: string[] = []) =>
   `<?xml version="1.0" encoding="UTF-8"?>\n<px version="1.0" media="workbench:WbPxMedia">\n<import>\n  <module name="bajaui"/>\n  <module name="kitPx"/>\n</import>\n<content>\n<CanvasPane name="content" viewSize="1280.0,720.0">\n  <Label layout="40,30,400,40" text="${title}"/>\n${ords.map((ord, i) => `  <BoundLabel layout="40,${90 + i * 40},220,30">\n    <BoundLabelBinding ord="station:|${ord}"/>\n  </BoundLabel>\n`).join("")}</CanvasPane>\n</content>\n</px>\n`;
 const nav = (pages: string[]) => `<?xml version="1.0" encoding="UTF-8"?>\n<nav version='1.0'>\n<node name='Home' ord='file:^px/Home.px' icon='module://icons/x16/home.png'>\n${pages.map((p) => `  <node name='${p.replace(/_/g, " ")}' ord='file:^px/${p}.px'/>\n`).join("")}</node>\n</nav>\n`;
@@ -134,6 +136,12 @@ const comesAndGoes = (c: SiteContext, source: string, message: string, normal: s
 
 // ---- Northgate: an office building ----------------------------------------------------------------
 
+/**
+ * Northgate's fault, with a cause that can be found: this many minutes ago someone halved the most
+ * air VAV_105 may deliver. Its airflow has sat at the new limit since, and the room has run hot.
+ */
+const STARVED_AGO = 4 * 24 * 60 + 137;
+
 const northgate: Site = {
   key: "northgate",
   station: "Northgate",
@@ -144,10 +152,13 @@ const northgate: Site = {
   bounds: ["*/ZoneSetpoint 65..78", "*/SupplyAirSetpoint 50..62"],
   watch: ["AHU_01/SupplyAirTemp", "AHU_01/SupplyFanSpeed", "AHU_01/OutdoorAirTemp", "VAV_101/ZoneTemp", "VAV_105/ZoneTemp", "VAV_105/ZoneSetpoint", "CHW_Plant/ChwSupplyTemp", "CHW_Plant/ChwFlow"],
   tree(c) {
-    const { add, num, numW, bool, enumW, device, wave, outdoor, point, nodes, schedules, weekdays, block, link } = c;
+    const { add, num, numW, bool, enumW, device, wave, outdoor, point, nodes, schedules, weekdays, block, link, net } = c;
     let seed = 1;
+    // What serves what is on the station as Haystack relations, held by the equipment that is fed.
+    const fedBy = (id: string, source: string) => [{ id, to: `${net}/${source}` }];
+    const starvedAt = Date.now() - STARVED_AGO * MIN;
     for (const [i, ahu] of ["AHU_01", "AHU_02"].entries()) {
-      const p = device(ahu, 1001 + i, `192.168.10.${11 + i}`, { tags: ["hs:ahu", "hs:equip"] });
+      const p = device(ahu, 1001 + i, `192.168.10.${11 + i}`, { tags: ["hs:ahu", "hs:equip"], relations: fedBy("hs:chilledWaterRef", "CHW_Plant") });
       num(p, "SupplyAirTemp", "°F", wave(55, 1.4, 22 + i * 5, seed++));
       num(p, "ReturnAirTemp", "°F", wave(74, 0.9, 45, seed++));
       num(p, "MixedAirTemp", "°F", wave(63, 2.6, 35, seed++));
@@ -162,10 +173,20 @@ const northgate: Site = {
     }
     for (let i = 1; i <= 8; i += 1) {
       const hot = i === 5;
-      const p = device(`VAV_10${i}`, 2000 + i, `MSTP 2:${10 + i}`, { down: i === 7, tags: ["hs:vav", "hs:equip"] });
-      num(p, "ZoneTemp", "°F", wave(hot ? 78.6 : 72 + (i % 3) * 0.6, hot ? 0.5 : 1.1, 30 + i * 3, seed++), { alarm: hot });
+      const p = device(`VAV_10${i}`, 2000 + i, `MSTP 2:${10 + i}`, { down: i === 7, tags: ["hs:vav", "hs:equip"], relations: fedBy("hs:airRef", i <= 4 ? "AHU_01" : "AHU_02") });
+      const [zoneSeed, flowSeed] = [seed++, seed++];
+      const flow = wave(420 + i * 25, 130, 18 + i, flowSeed);
+      if (hot) {
+        // The room was like the others until the box was starved; it took three quarters of an hour to warm up.
+        const [was, is] = [wave(72.6, 1.1, 30 + i * 3, zoneSeed), wave(78.6, 0.5, 30 + i * 3, zoneSeed)];
+        num(p, "ZoneTemp", "°F", (t: number) => was(t) + (is(t) - was(t)) * Math.min(1, Math.max(0, (t - starvedAt) / (45 * MIN))), { alarm: true });
+      } else num(p, "ZoneTemp", "°F", wave(72 + (i % 3) * 0.6, 1.1, 30 + i * 3, zoneSeed));
       numW(p, "ZoneSetpoint", "°F", 72);
-      num(p, "Airflow", "cfm", wave(420 + i * 25, 130, 18 + i, seed++), { precision: 0 });
+      if (hot) {
+        const pinned = wave(304, 8, 18 + i, flowSeed);
+        num(p, "Airflow", "cfm", (t: number) => (t < starvedAt ? flow(t) : Math.min(310, pinned(t))), { precision: 0 });
+        numW(p, "MaxAirflow", "cfm", 310, { precision: 0, hasHistory: false });
+      } else num(p, "Airflow", "cfm", flow, { precision: 0 });
       numW(p, "DamperPosition", "%", 45, { sim: wave(48, 20, 18 + i, seed++), precision: 0 });
       numW(p, "ReheatValve", "%", 0, { sim: (t: number) => Math.max(0, wave(4, 14, 50, 40 + i)(t)), precision: 0 });
       enumW(p, "OccupancyMode", ["occupied", "unoccupied", "standby"], i === 6 ? "standby" : "occupied");
@@ -230,6 +251,11 @@ const northgate: Site = {
     raise(point("AHU_01/DuctStaticPressure"), "Duct static pressure returned to normal", { priority: 120, state: "normal", ago: 49 * MIN });
     raise(point("VAV_103/Airflow"), "Airflow below minimum for 10 minutes", { priority: 110, ago: 3 * HOUR, acked: true });
     raise(point("AHU_02/SupplyFanSpeed"), "Point overridden for more than 8 hours", { cls: "maintenance", priority: 200, state: "alert", ago: 8 * HOUR });
+    // The week before, in the alarm history: each of these went back to normal and was acknowledged.
+    raise(point("AHU_01/MixedAirTemp"), "Mixed air temperature low: freeze protection warning", { cls: "critical", priority: 25, ago: 6 * DAY + 5 * HOUR, normalAgo: 6 * DAY + 4 * HOUR });
+    raise(point("VAV_105/ZoneTemp"), "Zone temperature high: 76.3 °F (limit 76.0 °F)", { cls: "critical", priority: 40, ago: (STARVED_AGO - 70) * MIN, normalAgo: (STARVED_AGO - 70) * MIN - 9 * HOUR });
+    raise(point("CHW_Plant/ChwFlow"), "Chilled water flow low: 352 gpm", { cls: "maintenance", priority: 150, state: "alert", ago: 2 * DAY + 7 * HOUR, normalAgo: 2 * DAY + 6 * HOUR });
+    raise(point("VAV_105/ZoneTemp"), "Zone temperature high: 78.1 °F (limit 76.0 °F)", { cls: "critical", priority: 40, ago: DAY + 3 * HOUR, normalAgo: 17 * HOUR });
   },
   history({ propose, decide, auditAdd, agentRecord, point, who, agentUser, past }) {
     let p = propose(point("VAV_102/ZoneSetpoint"), "override", 71, "Room 102 has read 74.9 °F for 40 minutes against a 72 °F setpoint; lowering 1 °F while the afternoon load passes.", past(1310), 60);
@@ -255,6 +281,15 @@ const northgate: Site = {
     // The override on AHU-2's fan that nobody released: sixteen hours old.
     auditAdd(past(962), "admin", "Invoked", "/Drivers/BacnetNetwork/AHU_02/points/SupplyFanSpeed", "override", "", "85.0 %");
     auditAdd(past(140), "admin", "Login", "/Services/WebService", "", "", "192.168.0.125");
+    // The week before. The change that starved VAV_105 was made by a person, at the box's own point.
+    const day = 24 * 60;
+    auditAdd(past(6 * day + 200), "admin", "Changed", "/Drivers/BacnetNetwork/AHU_01/points/SupplyAirSetpoint", "fallback", "54.0 °F", "55.0 °F");
+    agentRecord(past(5 * day + 95), agentUser, "slot:/Drivers/BacnetNetwork/CHW_Plant", "write_tags", { outcome: "completed", ...who, change: "add hs:chilledWaterPlant, hs:equip", reason: "Tagging the chilled water plant so the plant hierarchy picks it up, as asked." });
+    auditAdd(past(5 * day + 95), agentUser, "Changed", "/Drivers/BacnetNetwork/CHW_Plant", "tag:hs:chilledWaterPlant", "", "M");
+    auditAdd(past(STARVED_AGO), "operator", "Changed", "/Drivers/BacnetNetwork/VAV_105/points/MaxAirflow", "fallback", "620 cfm", "310 cfm");
+    auditAdd(past(3 * day + 400), "admin", "Invoked", "/Drivers/BacnetNetwork/AHU_01/points/SupplyFanSpeed", "override", "", "60.0 %");
+    auditAdd(past(3 * day + 265), "admin", "Invoked", "/Drivers/BacnetNetwork/AHU_01/points/SupplyFanSpeed", "auto");
+    auditAdd(past(2 * day + 30), "operator", "Login", "/Services/WebService", "", "", "192.168.0.131");
   },
   files({ file }) {
     file("^px/Home.px", '<?xml version="1.0" encoding="UTF-8"?>\n<px version="1.0" media="workbench:WbPxMedia">\n<import>\n  <module name="bajaui"/>\n  <module name="kitPx"/>\n</import>\n<content>\n<CanvasPane name="content" viewSize="1280.0,720.0">\n  <Label layout="40,30,400,40" text="Northgate Office"/>\n  <BoundLabel layout="40,90,220,30">\n    <BoundLabelBinding ord="station:|slot:/Drivers/BacnetNetwork/AHU_01/points/SupplyAirTemp"/>\n  </BoundLabel>\n</CanvasPane>\n</content>\n</px>\n', 200);
@@ -335,14 +370,17 @@ const riverside: Site = {
     let seed = 11;
     for (const [i, ahu] of ["AHU_OR", "AHU_Patient"].entries()) {
       const p = device(ahu, 1101 + i, `10.20.1.${21 + i}`, { tags: ["hs:ahu", "hs:equip"] });
-      num(p, "SupplyAirTemp", "°F", wave(i ? 56 : 62, 0.8, 24, seed++));
+      // For bask test: supply air follows its setpoint a few seconds after the setpoint is commanded.
+      num(p, "SupplyAirTemp", "°F", wave(i ? 56 : 62, 0.8, 24, seed++), { follows: { ord: `${p}/SupplyAirSetpoint`, lagMs: 4000, as: (setpoint: number, own: number) => own + (setpoint - (i ? 56 : 62)) } });
       num(p, "SupplyAirHumidity", "%RH", wave(i ? 50 : 46, 3.5, 40, seed++));
       num(p, "ReturnAirTemp", "°F", wave(70, 0.7, 45, seed++));
       numW(p, "SupplyAirSetpoint", "°F", i ? 56 : 62);
       numW(p, "SupplyFanSpeed", "%", 80, { sim: wave(82 - i * 12, 4, 30, seed++) });
       numW(p, "HumidifierValve", "%", 20, { sim: (t: number) => Math.max(0, wave(22, 16, 36, 60 + i)(t)), precision: 0 });
       num(p, "HepaFilterDP", "inH₂O", wave(i ? 0.9 : 1.62, 0.05, 90, seed++), { precision: 2, alarm: !i });
-      bool(p, "SupplyFanStatus", ["On", "Off"], true);
+      // For bask test: AHU_OR's fan status proves a moment after its speed is commanded. AHU_Patient's
+      // does not follow at all (it reads On whatever the fan does): the fault a checkout is there to find.
+      bool(p, "SupplyFanStatus", ["On", "Off"], true, i ? {} : { follows: { ord: `${p}/SupplyFanSpeed`, lagMs: 1500, as: (speed: number) => speed > 0 } });
     }
     for (let i = 1; i <= 3; i += 1) {
       const humid = i === 2;

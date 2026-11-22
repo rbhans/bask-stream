@@ -6,6 +6,7 @@ import { render } from "ink";
 import { BaskStreamClient } from "@basidekick/baskstream";
 import { App } from "../dist/tui/App.js";
 import { Fleet } from "../dist/tui/Fleet.js";
+import { Deck } from "../dist/deck/Deck.js";
 import { Gallery } from "../dist/tui/symbols/Gallery.js";
 import { Link } from "../dist/link.js";
 import { DEMO_SITES, startDemoStation } from "../dist/demo/station.js";
@@ -77,6 +78,11 @@ export async function startFleet(sites = ["northgate", "riverside", "harbor", "s
 /** Mounts the dashboard on a `columns` x `rows` screen. */
 export function mount(client, props = {}, size = {}) {
   return show(React.createElement(App, { client, profileName: "demo", allowWrites: false, ...props }), size);
+}
+
+/** Mounts the map screen (still: no tear, decode or glitch, so frames are the same every time). */
+export function mountDeck(client, props = {}, size = {}) {
+  return show(React.createElement(Deck, { client, profileName: "demo", allowWrites: false, still: true, ...props }), size);
 }
 
 /** Mounts the all-stations view. */

@@ -8,7 +8,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
-import { OPERATIONS, toSlotOrd } from "@basidekick/baskstream"
+import { OPERATIONS, toSlotOrd, explain, readLog, valuesAt, parseTime, parseCheckout, rehearseCheckout, runCheckout } from "@basidekick/baskstream"
 import { Station, SETUP } from "./station.mjs"
 import { Watches, polled } from "./watches.mjs"
 import { httpSettings, serveHttp } from "./http.mjs"
@@ -253,6 +253,60 @@ tool("px_snapshot", {
     ],
   }
 }), { content: true })
+
+tool("why_point", {
+  title: "Why a point reads what it does",
+  description: "What is driving a point's value, as facts: what commands it, when it turned, what was changed beside it, and what feeds its unit. Give `at` to ask about a moment in the past.",
+  inputSchema: {
+    point: z.string().min(2).max(2000).describe("The point's slot ORD."),
+    at: z.string().max(60).optional().describe("A past moment: 3h, 2d, or an ISO date and time. Leave out for now."),
+    since: z.string().max(60).default("7d").describe("How far back to look: 24h, 7d or an ISO date."),
+  },
+  annotations: READ,
+}, ({ point, at, since }) => station.use((client) => {
+  const until = at ? parseTime(at) : Date.now()
+  return explain(client, toSlotOrd(point), { ...(at ? { at: until } : {}), windowMs: until - parseTime(since, until) })
+}))
+
+tool("what_happened", {
+  title: "What happened",
+  description: "Changes by people and by AI agents, overrides, alarms and what agents asked for, in one list, newest first. Give `under` for one component and everything below it.",
+  inputSchema: {
+    under: z.string().max(2000).optional().describe("Only what happened to this component or anything under it (a slot ORD)."),
+    since: z.string().max(60).default("24h").describe("Start: 24h, 7d or an ISO date."),
+    until: z.string().max(60).optional().describe("End (default now)."),
+    limit: z.number().int().min(1).max(1000).default(200),
+  },
+  annotations: READ,
+}, ({ under, since, until, limit }) => station.use((client) => readLog(client, { ...(under ? { under: toSlotOrd(under) } : {}), since: parseTime(since), ...(until ? { until: parseTime(until) } : {}), limit })))
+
+tool("values_at", {
+  title: "Values at a past moment",
+  description: "What points read at a moment in the past, from each point's history: the last record at or before it. A point without a history says so.",
+  inputSchema: {
+    points: z.array(z.string().min(2).max(2000)).min(1).max(100).describe("Slot ORDs of the points."),
+    at: z.string().max(60).describe("The moment: 3h, 2d, or an ISO date and time."),
+  },
+  annotations: READ,
+}, ({ points, at }) => station.use(async (client) => {
+  const moment = parseTime(at)
+  const found = await valuesAt(client, points.map(toSlotOrd), moment)
+  return { at: moment, points: [...found].map(([ord, value]) => ({ ord, ...value })) }
+}))
+
+tool("run_checkout", {
+  title: "Run a checkout",
+  description: "A checkout from a plain markdown document: command each output, wait for the feedback to prove it, record the result, always release. Without `run: true` it is a rehearsal that commands nothing and says what would happen. A run commands the station's points, under the station's agent rules.",
+  inputSchema: {
+    document: z.string().min(10).max(100000).describe("The checkout document (markdown)."),
+    run: z.boolean().default(false).describe("true commands the points; false (the default) only rehearses."),
+    reason: z.string().max(500).optional().describe("Why, for a run."),
+    keepGoing: z.boolean().default(false).describe("Carry on after a command the station refuses."),
+  },
+}, ({ document, run, reason, keepGoing }) => station.use((client) => {
+  const checkout = parseCheckout(document, "checkout.md")
+  return run ? runCheckout(client, checkout, { reason, keepGoing }) : rehearseCheckout(client, checkout)
+}))
 
 // ---- Changes -------------------------------------------------------------------------------------
 

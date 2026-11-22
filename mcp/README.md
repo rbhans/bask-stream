@@ -19,7 +19,8 @@ A new build installs over the old one; the version is `package.json`'s.
 
 ## Tools
 
-- **Reads**, marked read-only: `station_status`, `find_points`, `browse`, `describe_point`, `read_points`, `watch_points` (a long poll, for callers that can only poll), `point_history`, `list_alarms`, `read_schedule`, `list_proposals`, `read_agent_log`.
+- **Reads**, marked read-only: `station_status`, `find_points`, `browse`, `describe_point`, `read_points`, `watch_points` (a long poll, for callers that can only poll), `point_history`, `list_alarms`, `read_schedule`, `list_proposals`, `read_agent_log`, `why_point` (what is driving a point), `what_happened` (changes, overrides, alarms and AI activity in one list), `values_at` (readings at a past moment).
+- **Checkouts:** `run_checkout` rehearses a checkout document, and commands the points only with `run: true`.
   - **`station_status`:** asks the station for its agent rules each time, so it shows a change to approval right away.
   - **`read_points`:** a driver polls a proxy point only while something subscribes to it, so a snapshot of an unpolled point comes back stale. `read_points` then subscribes it and waits up to 3 s for the first poll, and marks those values `fresh: true`. The point stays polled for two minutes.
 - **Seeing a page:** `px_snapshot` returns pictures of a Px page (`^folder/Page.px`, or a component and its view) as a web browser shows it, with live values, plus the page's title, HTTP status, failed requests and console errors. It opens the page in headless Chrome, Chromium or Edge on the computer running the server, with the server's station session (the SDK's [`snapshot()`](../sdk/README.md#seeing-a-page)), and needs one of them installed (`BASKSTREAM_BROWSER` picks one). Only what fits in the window (default 1600 × 900) is pictured, and Workbench can draw a page differently.

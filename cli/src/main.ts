@@ -9,9 +9,9 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { BaskStreamError, ChangeProposedError, OPERATIONS, StationHttp, toSlotOrd, type Actor, type AlarmFilter, type BrowseNode, type JobDetail, type Json, type Proposal } from "@basidekick/baskstream";
-import { configDir, getProfile, loadStore, putProfile, removeProfile, setCurrent, updateProfile } from "./config.js";
+import { configDir, getProfile, loadStore, putProfile, stationUrl, removeProfile, setCurrent, updateProfile } from "./config.js";
 import { alarmMessage, alarmState, csv, fmtDuration, isUnacked, fmtPoint, fmtTime, fmtValue, parseDuration, parseTime, parseValue, shortOrd, sparkline, statusColor, table } from "./format.js";
-import { confirm, promptHidden } from "./prompt.js";
+import { confirm, promptHidden, promptLine } from "./prompt.js";
 import { connect, type Connection } from "./session.js";
 import { VERSION } from "./version.js";
 import { splash, spinner } from "./splash.js";
@@ -93,11 +93,13 @@ program
   .command("login")
   .description("log in to a station and save the session (the password is never stored)")
   .argument("<station>", "station URL, e.g. https://192.168.0.126")
-  .requiredOption("-u, --user <username>", "Niagara username")
+  .option("-u, --user <username>", "Niagara username (asked for when left out)")
   .option("--name <profile>", "profile name (default: the station host)")
   .option("-k, --insecure", "accept a self-signed certificate")
   .action(async (station: string, opts: { user: string; name?: string; insecure?: boolean }) => {
-    const url = new URL(/^https?:\/\//.test(station) ? station : `https://${station}`);
+    const url = stationUrl(station);
+    opts.user ??= await promptLine(`User name for ${url.host}: `);
+    if (!opts.user) throw new Error("A user name is needed: bask login <station> -u <user>");
     const name = opts.name ?? url.hostname;
     const http = new StationHttp({ station: url.origin, verifyTls: !opts.insecure });
     const password = process.env.BASKSTREAM_PASSWORD ?? (await promptHidden(`Password for ${opts.user}@${url.host}: `));
@@ -567,6 +569,132 @@ program
   );
 
 program
+  .command("why")
+  .description("what is driving a point's value, as facts: what commands it, when it turned, what was changed beside it, and what feeds its unit. Put @ and a time after the point to ask about a moment in the past")
+  .argument("<point>", "the point's ORD, e.g. Drivers/BacnetNetwork/VAV_105/points/ZoneTemp, or …/ZoneTemp@tue-2pm")
+  .option("--since <time>", "how far back to look: 24h, 7d, an ISO date", "7d")
+  .option("--review <file>", "a review file from bask model infer, to say what feeds the unit (the station's own relations are read without it)")
+  .action((point: string, opts: { since: string; review?: string }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { parseAt } = await import("./past.js");
+      const { explain, whyText } = await import("./why.js");
+      const asked = parseAt(point);
+      const until = asked.at ?? Date.now();
+      const ord = normalizeOrd(asked.ord);
+      // The map's own model: which unit the point belongs to (one controller can hold several), and what
+      // feeds what, from the station's relations and from what was settled on the screen on this computer.
+      const { readSite } = await import("./deck/site.js");
+      const { loadSaved } = await import("./deck/saved.js");
+      const kept = loadSaved(client.http.url.host);
+      const site = await readSite(client, client.http.url.host, kept.review).catch(() => undefined);
+      const settled = site?.review.serves?.filter((s) => !s.inferred || s.confirmed);
+      const serves = opts.review ? (await import("./model.js")).parseReview(readFileSync(opts.review, "utf8"), opts.review).serves : settled;
+      const equipment = site?.units.find((unit) => unit.points.some((p) => p.ord === ord))?.ord;
+      const why = await explain(client, ord, { at: asked.at, windowMs: until - parseTime(opts.since, until), ...(serves?.length ? { serves } : {}), ...(equipment ? { equipment } : {}) });
+      if (g.output !== "table") return console.log(JSON.stringify(why, null, 2));
+      console.log(whyText(why, { width: process.stdout.columns || undefined }));
+    })
+  );
+
+program
+  .command("log")
+  .description("what happened: changes by people and by AI agents, overrides, alarms and what agents asked for, in one list, newest first")
+  .argument("[ord]", "only what happened to this component or anything under it")
+  .option("--since <time>", "start: 24h, 7d, an ISO date or epoch ms", "7d")
+  .option("--until <time>", "end (default now)")
+  .option("--limit <n>", "the most events to list", "200")
+  .action((ord: string | undefined, opts: { since: string; until?: string; limit: string }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { readLog, logText, LOG_LEGEND } = await import("./log.js");
+      const log = await readLog(client, { ...(ord ? { under: normalizeOrd(ord) } : {}), since: parseTime(opts.since), ...(opts.until ? { until: parseTime(opts.until) } : {}), limit: Number(opts.limit) });
+      if (g.output === "json") return console.log(JSON.stringify(log, null, 2));
+      if (g.output === "csv") return console.log(csv(["time", "kind", "who", "agent", "ord", "from", "to", "text"], log.events.map((e) => [new Date(e.at).toISOString(), e.kind, e.who ?? "", e.agent ? "yes" : "", e.ord ?? "", e.from ?? "", e.to ?? "", e.text])));
+      console.log(log.events.length ? logText(log.events, { width: process.stdout.columns || undefined }) : chalk.dim("Nothing happened in that time."));
+      if (log.events.length) console.log(chalk.dim(`\n${LOG_LEGEND}`));
+      for (const note of log.notes) console.log(chalk.yellow(`Note: ${note}`));
+    })
+  );
+
+program
+  .command("get")
+  .description("what points read, now or at a moment in the past: put @ and a time after a point, e.g. bask get …/ZoneTemp@yesterday …/ZoneTemp")
+  .argument("<points...>", "point ORDs, each with an optional @time (@3h, @yesterday, @tue-2pm, @2026-11-17T14:10)")
+  .action((points: string[], _opts: unknown, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { parseAt, valuesAt } = await import("./past.js");
+      const asked = points.map((point) => parseAt(point)).map((p) => ({ ...p, ord: normalizeOrd(p.ord) }));
+      const now = asked.filter((p) => p.at === undefined);
+      const live = new Map((now.length ? await client.read(now.map((p) => p.ord)) : []).map((snap) => [toSlotOrd(snap.point), snap]));
+      const rows: unknown[][] = [];
+      const json: unknown[] = [];
+      for (const p of asked) {
+        if (p.at === undefined) {
+          const snap = live.get(p.ord);
+          rows.push([shortOrd(p.ord, 3), snap ? fmtPoint(snap as unknown as Record<string, unknown>) : "--", "now", String(snap?.status ?? "")]);
+          json.push({ ord: p.ord, ...snap });
+          continue;
+        }
+        const value = (await valuesAt(client, [p.ord], p.at)).get(p.ord);
+        rows.push([shortOrd(p.ord, 3), value?.ok ? value.display : "--", fmtTime(p.at), value?.ok ? `recorded ${fmtTime(value.at)}` : value?.why ?? "nothing recorded"]);
+        json.push({ ord: p.ord, at: p.at, ...value });
+      }
+      emit(g, ["point", "value", "when", "note"], rows, json, (r) => [chalk.cyan(String(r[0])), chalk.bold(String(r[1])), chalk.dim(String(r[2])), chalk.dim(String(r[3]))]);
+    })
+  );
+
+program
+  .command("test")
+  .description("run a checkout from a plain document: command each output, wait for the feedback to prove it, record the result, always release. Without --allow-writes --yes it is a rehearsal that commands nothing (docs/CHECKOUT.md)")
+  .argument("<file>", "the checkout document (markdown)")
+  .option("--keep-going", "carry on after a command the station refuses")
+  .option("--report <file>", "where to write the report (default: beside the document, with the date)")
+  .action(async (file: string, opts: { keepGoing?: boolean; report?: string }, cmd: Command) => {
+    const { CheckoutParseError, checkoutExitCode, checkoutReport, checkoutText, parseCheckout, rehearseCheckout, runCheckout } = await import("./checkout.js");
+    let checkout;
+    try {
+      checkout = parseCheckout(readFileSync(file, "utf8"), file);
+    } catch (error) {
+      if (!(error instanceof CheckoutParseError)) throw error;
+      for (const problem of error.problems) console.error(`${file}:${problem.line}: ${problem.message}`);
+      process.exitCode = 1;
+      return;
+    }
+    await withClient(cmd, async ({ client }, g) => {
+      if (!(g.allowWrites && g.yes)) {
+        const rehearsal = await rehearseCheckout(client, checkout);
+        if (g.output !== "table") console.log(JSON.stringify(rehearsal, null, 2));
+        else console.log(checkoutText(rehearsal));
+        process.exitCode = checkoutExitCode(rehearsal);
+        return;
+      }
+      // Ctrl-C stops the run, and the run releases what it commanded before it ends.
+      const stop = new AbortController();
+      const onSigint = () => stop.abort();
+      process.once("SIGINT", onSigint);
+      const quiet = g.output !== "table" || !process.stderr.isTTY;
+      try {
+        const result = await runCheckout(client, checkout, {
+          reason: g.reason, keepGoing: !!opts.keepGoing, signal: stop.signal,
+          onEvent: (e) => {
+            if (quiet) return;
+            if (e.type === "step-started") process.stderr.write(chalk.dim(`▶ ${e.step + 1} ${e.title}\n`));
+            else if (e.type === "step-finished") process.stderr.write(`${e.result.status === "pass" ? chalk.green("✓") : chalk.red("✗")} ${e.step + 1} ${e.result.title}${e.result.status === "pass" ? "" : chalk.red(`  ${e.result.message ?? e.result.status}`)}\n`);
+          }
+        });
+        const started = new Date(result.startedAt);
+        const stamp = `${started.getFullYear()}-${String(started.getMonth() + 1).padStart(2, "0")}-${String(started.getDate()).padStart(2, "0")}`;
+        const report = opts.report ?? file.replace(/(\.md)?$/i, `-${stamp}.md`);
+        writeFileSync(report, checkoutReport(result));
+        if (g.output !== "table") console.log(JSON.stringify(result, null, 2));
+        else console.log(`\n${checkoutText(result)}\n\n${chalk.dim(`Report: ${report}`)}`);
+        process.exitCode = checkoutExitCode(result);
+      } finally {
+        process.off("SIGINT", onSigint);
+      }
+    });
+  });
+
+program
   .command("agent-log")
   .description("what AI agents did: proposals, decisions, direct changes and refusals, from the station's audit history")
   .option("--since <time>", "start: 24h, 7d, an ISO date or epoch ms", "24h")
@@ -933,6 +1061,8 @@ program
   });
 
 interface TuiOptions {
+  /** The older dashboard with its twelve views, in place of the map. */
+  classic?: boolean;
   view?: ViewName;
   pane?: boolean;
   mouse?: boolean;
@@ -940,13 +1070,14 @@ interface TuiOptions {
 }
 const tuiOptions = (cmd: Command) =>
   cmd
-    .addOption(new Option("--view <name>", "the view to open").choices([...VIEW_NAMES]))
+    .option("--classic", "the older dashboard with its twelve views")
+    .addOption(new Option("--view <name>", "the older dashboard, opened on this view").choices([...VIEW_NAMES]))
     .option("--pane", "one view per window, for a multiplexer pane (no tab row)")
     .option("--no-mouse", "leave the mouse to the terminal (text selection)")
     .addOption(new Option("--theme <name>", "colours (default: from the terminal, or BASK_THEME)").choices(["dark", "light"]));
 
 tuiOptions(program.command("tui", { isDefault: true }))
-  .description("open the full-screen dashboard (default when run in a terminal)")
+  .description("open the station on screen: a map of the site, a bar of time and a command line (default when run in a terminal)")
   .action(async (opts: TuiOptions, cmd: Command) => {
     const g = globals(cmd);
     if (!process.stdout.isTTY) return program.help();
@@ -966,8 +1097,10 @@ async function runTui(g: Globals, start: TuiOptions & { points?: string[]; share
   const caps = conn.client.capabilities;
   spin.done(`  ${chalk.green("✓")} Connected to ${chalk.bold(conn.client.http.url.host)} as ${caps.authenticatedUser ?? "?"} ${chalk.dim(`· API ${caps.apiVersion ?? "?"}`)}`);
   conn.stopPrompting();
-  const { runDashboard } = await import("./tui/run.js");
-  await runDashboard(conn, { allowWrites: !!g.allowWrites, ...start });
+  const { runDashboard, runDeck } = await import("./tui/run.js");
+  // A view, a pane or a list of points is the older dashboard's way in; everything else opens the map.
+  if (start.classic || start.view || start.pane || start.points?.length) await runDashboard(conn, { allowWrites: !!g.allowWrites, ...start });
+  else await runDeck(conn, { allowWrites: !!g.allowWrites, ...start });
 }
 
 // ---- Demo station and workspaces ------------------------------------------------------------------
@@ -2075,6 +2208,7 @@ program.parseAsync().catch((error: unknown) => {
   if (error instanceof BaskStreamError) {
     console.error(`${chalk.red("error")} ${chalk.dim(`[${error.code}]`)} ${error.message}`);
     if (error.code === "session_expired") console.error(chalk.dim("Run: bask login <station> -u <user>"));
+    else if (error.code === "login_failed" && /wrong username or password/i.test(error.message)) console.error(chalk.dim("Run bask again to try once more, or as another user."));
     else if (error.code === "connection_closed" || error.code === "login_failed" || error.code === "timeout") console.error(chalk.dim("Run bask doctor to see where it breaks."));
   } else {
     const message = error instanceof Error ? error.message : String(error);

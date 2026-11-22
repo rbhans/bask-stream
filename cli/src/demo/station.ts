@@ -34,6 +34,10 @@ interface Node {
   sim?: (t: number) => number | boolean | string;
   fallback?: unknown;
   override?: { value: unknown; until?: number };
+  /** A feedback: it reads `as(what the point at ord is commanded to, its own value)`, reached `lagMs` after the command. `from` is what it read when that command came. */
+  follows?: { ord: string; lagMs: number; as: (commanded: any, own: any) => number | boolean | string; from?: unknown };
+  /** When this point was last commanded: what a feedback's lag is counted from. */
+  commanded?: { at: number };
   emergency?: unknown;
   alarm?: boolean;
   fault?: boolean;
@@ -305,6 +309,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
   const effective = (p: Node, t: number, seen = new Set<string>()): { value: unknown; level?: number } => {
     if (p.logic) return { value: LOGIC[p.logic].out((slot) => (slot === "out" ? p.slots?.out ?? null : slotValue(p.ord, slot, t, seen))) };
     if (p.emergency !== undefined) return { value: p.emergency, level: 1 };
+    if (p.follows && !seen.has(`${p.ord}|follows`)) return { value: followed(p, t, seen) };
     if (p.writable) {
       // The priority array: a link into in1..in16 holds that level, and an operator's override is level 8.
       for (let level = 1; level <= 16; level += 1) {
@@ -317,6 +322,18 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     if (p.override && (!p.override.until || p.override.until > t)) return { value: p.override.value, level: 8 };
     if (p.sim) return { value: p.sim(t), level: p.writable ? 16 : undefined };
     return { value: p.fallback, level: p.writable ? 17 : undefined };
+  };
+  /** A feedback point's value: where its command is now, or on the way there (a number in a straight line) while the lag runs. */
+  const followed = (p: Node, t: number, seen: Set<string>): unknown => {
+    seen.add(`${p.ord}|follows`);
+    const { ord, lagMs, as, from } = p.follows!;
+    const own = p.sim ? p.sim(t) : p.fallback;
+    const source = nodes.get(ord);
+    if (!source) return own;
+    const now = as(effective(source, t, seen).value, own);
+    const along = source.commanded ? (Date.now() - source.commanded.at) / lagMs : 1;
+    if (along >= 1 || from === undefined) return now;
+    return typeof now === "number" && typeof from === "number" ? from + (now - from) * along : from;
   };
   const display = (p: Node, value: unknown) => {
     if (value === null || value === undefined) return "null";
@@ -375,15 +392,20 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
   // ---- Alarms -------------------------------------------------------------------------------------
   const alarms = new Map<string, any>();
   let alarmSeq = 0;
-  const raise = (source: string, message: string, o: { cls?: string; priority?: number; state?: string; ago?: number; acked?: boolean } = {}) => {
+  const raise = (source: string, message: string, o: { cls?: string; priority?: number; state?: string; ago?: number; acked?: boolean; normalAgo?: number } = {}) => {
     // An alarm that is already open is not raised a second time.
     const existing = [...alarms.values()].find((a) => a.isOpen && a.sources[0] === source && a.message === message);
     if (existing) return existing;
     const uuid = `a${String(++alarmSeq).padStart(3, "0")}-${crypto.randomBytes(3).toString("hex")}`;
+    const now = Date.now();
+    // With `normalAgo` it is one from the past: it went back to normal then, was acknowledged, and is
+    // closed. Only a read of every alarm (scope "all") lists it.
+    const over = o.normalAgo !== undefined;
     const alarm = {
-      uuid, timestamp: Date.now() - (o.ago ?? 0), sourceState: o.state ?? "offnormal", ackState: o.acked ? "acked" : "unacked", ackRequired: true, isOpen: true,
+      uuid, timestamp: now - (o.ago ?? 0), sourceState: over ? "normal" : o.state ?? "offnormal", ackState: over || o.acked ? "acked" : "unacked", ackRequired: true, isOpen: !over,
       alarmClass: o.cls ?? "default", alarmClassDisplay: o.cls ?? "default", priority: o.priority ?? 120, sources: [source], message,
-      data: { msgText: message, sourceName: source.split("/").slice(-3).join(" ") }, transition: o.state ?? "offnormal"
+      data: { msgText: message, sourceName: source.split("/").slice(-3).join(" ") }, transition: o.state ?? "offnormal",
+      normalTime: over ? now - o.normalAgo! : null, ackTime: over ? now - o.normalAgo! : null
     };
     alarms.set(uuid, alarm);
     return alarm;
@@ -855,6 +877,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
 
   // A small BQL: select <columns> from <type> [where <flag or comparison>].
   const TYPE_MATCH: Record<string, (n: Node) => boolean> = {
+    "history:AuditHistoryService": () => false,
     "control:ControlPoint": (n) => n.kind === "point", "control:NumericPoint": (n) => n.vt === "numeric", "control:NumericWritable": (n) => n.vt === "numeric" && !!n.writable,
     "control:BooleanPoint": (n) => n.vt === "boolean", "control:BooleanWritable": (n) => n.vt === "boolean" && !!n.writable, "control:EnumPoint": (n) => n.vt === "enum", "control:EnumWritable": (n) => n.vt === "enum" && !!n.writable,
     "driver:Device": (n) => /Device$/.test(n.typeSpec), "bacnet:BacnetDevice": (n) => /Device$/.test(n.typeSpec), "driver:DeviceNetwork": (n) => /Network$/.test(n.typeSpec), "bacnet:BacnetNetwork": (n) => /Network$/.test(n.typeSpec),
@@ -891,6 +914,11 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     if (!m) throw refuse("bad_query", "BqlException: expected select <columns> from <type> [where <condition>]");
     const match = TYPE_MATCH[m[2]];
     if (!match) throw refuse("bad_query", `BqlException: unknown type ${m[2]}`);
+    // The audit history service is asked where the audit history is, as on a station.
+    if (m[2] === "history:AuditHistoryService") {
+      const columns = m[1].split(",").map((c) => c.trim());
+      return { language: "bql", ord: base, columns: columns.map((name) => ({ name, display: name, typeSpec: "baja:String" })), rows: [columns.map((name) => (name === "historyConfig.id" ? auditId : name === "name" ? "AuditHistoryService" : null))], count: 1, hidden: 0, truncated: false };
+    }
     if (m[2] === "baja:User") {
       return { language: "bql", ord: base, columns: ["name", "fullName", "enabled", "roles"].map((name) => ({ name, display: name, typeSpec: "baja:String" })), rows: [["admin", "Administrator", true, "admin"], ["ben", "Ben Hansen", true, "admin"], [AGENT_USER, "AI agent (Claude)", true, "aiOperator"], ["operator", "Front desk", true, "operator"], ["guest", "", false, "viewer"]], count: 5, hidden: 0, truncated: false };
     }
@@ -989,6 +1017,8 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     if (p.kind !== "point" || !p.writable) throw refuse("point_not_writable", `${p.name} is not writable.`);
     const coerce = (v: unknown) => (p.vt === "numeric" ? Number(v) : p.vt === "boolean" ? v === true || /^(true|on|active)$/i.test(String(v)) : String(v));
     if (action !== "auto" && action !== "emergency_auto" && (value === undefined || (p.vt === "numeric" && !Number.isFinite(Number(value))))) throw refuse("invalid_value", `${action} needs a ${p.vt} value.`);
+    for (const n of nodes.values()) if (n.follows?.ord === ord) n.follows.from = effective(n, clock()).value;
+    p.commanded = { at: Date.now() };
     if (action === "override") p.override = { value: coerce(value), until: durationSec ? Date.now() + durationSec * 1000 : undefined };
     else if (action === "auto") p.override = undefined;
     else if (action === "set") { p.fallback = coerce(value); if (!p.override && p.sim) p.sim = undefined; }
@@ -1016,6 +1046,38 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     for (const other of nodes.values()) for (const x of other.relations ?? []) if (x.to === ord) found.push(wireOf(x.id, "in", other.ord));
     return found.filter((x) => !dictionary || x.dictionary === dictionary);
   };
+  /** A request's limit as the module reads it: absent or not above zero is the default, and it never passes the most allowed. */
+  const cap = (given: unknown, fallback: number, most: number) => (typeof given === "number" && given > 0 ? Math.min(most, Math.floor(given)) : fallback);
+  /** An alarm filter, checked the way the module checks it: a field it does not know is refused, not ignored. */
+  const alarmFilter = (given: any): { keep: (a: any) => boolean; wire: Record<string, unknown> } => {
+    if (given === undefined || given === null) return { keep: () => true, wire: {} };
+    if (typeof given !== "object" || Array.isArray(given)) throw refuse("bad_request", "Field 'filter' must be an object.");
+    for (const key of Object.keys(given)) if (!["alarmClass", "minPriority", "maxPriority", "ackState", "since", "until"].includes(key)) throw refuse("bad_request", `Unknown alarm filter field: ${key}`);
+    const classes = given.alarmClass === undefined ? undefined : Array.isArray(given.alarmClass) ? given.alarmClass : [given.alarmClass];
+    if (classes && !classes.every((name: unknown) => typeof name === "string")) throw refuse("bad_request", "alarmClass must be a string or a list of strings.");
+    if (given.ackState !== undefined && given.ackState !== "acked" && given.ackState !== "unacked") throw refuse("bad_request", "ackState must be 'acked' or 'unacked'.");
+    for (const name of ["minPriority", "maxPriority"]) if (given[name] !== undefined && typeof given[name] !== "number") throw refuse("bad_request", `${name} must be a number.`);
+    for (const name of ["since", "until"]) if (given[name] !== undefined && typeof given[name] !== "number") throw refuse("bad_request", `${name} must be epoch milliseconds.`);
+    const keep = (a: any) => (!classes || classes.includes(a.alarmClass)) && (given.minPriority === undefined || a.priority >= given.minPriority) && (given.maxPriority === undefined || a.priority <= given.maxPriority)
+      && (given.ackState === undefined || a.ackState === given.ackState) && (given.since === undefined || a.timestamp >= given.since) && (given.until === undefined || a.timestamp <= given.until);
+    return { keep, wire: { ...(classes ? { alarmClass: classes } : {}), ...Object.fromEntries(["minPriority", "maxPriority", "ackState", "since", "until"].filter((name) => given[name] !== undefined).map((name) => [name, given[name]])) } };
+  };
+  /**
+   * A point's history: a record every five minutes up to now, or to when it stopped recording. It
+   * describes itself as holding the last 2016 of them (a week), yet a read still returns records
+   * older than that, and more than 5000 in one reply: a station does neither.
+   */
+  const STEP = 300000;
+  const KEPT = 2016;
+  const historyId = (n: Node) => `/${stationName}/${n.ord.split("/").slice(-3).filter((s) => s !== "points").join("_")}`;
+  const heldBy = (n: Node) => {
+    const last = Math.floor(Math.min(Date.now(), n.historyStoppedAt ?? Date.now()) / STEP) * STEP;
+    return { first: last - (KEPT - 1) * STEP, last };
+  };
+  const valueAt = (n: Node, t: number) => Number(n.sim ? n.sim(t) : n.fallback);
+  const trendRecord = (n: Node, t: number) => ({ timestamp: t, recordType: "history:NumericTrendRecord", value: valueAt(n, t), valueType: "numeric", status: "{ok}", trendFlags: "{ }" });
+  const auditId = `/${stationName}/AuditHistory`;
+  const isAuditOrd = (ord: unknown) => typeof ord === "string" && /^history:/.test(ord) && /\/AuditHistory$/.test(ord);
   const handlers: Record<string, (ws: any, r: any) => Record<string, unknown> | void> = {
     ping: () => ({ op: "pong" }),
     capabilities: (ws) => ({ op: "capabilities_result", capabilities: CAPS(ws) }),
@@ -1066,12 +1128,24 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       auditAdd(Date.now(), DEMO_USER, "Invoked", ord.replace(/^slot:/, ""), r.action ?? "set", "", r.value === undefined ? "" : String(r.value));
       return { op: "write_result", points: [{ ...result, outcome: "written" }] };
     },
+    describe_write: (_ws, r) => ({
+      op: "write_description",
+      points: (Array.isArray(r.points) ? r.points : [r.point ?? r.ord]).map((ord: string) => {
+        const p = nodes.get(ord);
+        if (!p || p.kind !== "point") return { point: ord, ok: false, code: "invalid_point", message: String(ord).replace(/^slot:/, "") };
+        if (!p.writable) return { point: ord, writable: false };
+        return { point: ord, writable: true, valueKind: p.vt, actions: ["set", "override", "auto", "emergency_override", "emergency_auto"], supportsDuration: true, activeLevel: snapshot(ord).activeLevel, fallback: { value: p.fallback, status: "{ok}" }, levels: [] };
+      })
+    }),
     read_alarms: (_ws, r) => {
-      let list = [...alarms.values()].filter((a) => (r.scope === "all" ? true : a.isOpen));
-      if (r.filter?.ackState) list = list.filter((a) => a.ackState === r.filter.ackState);
+      const scope = String(r.scope ?? "open").trim().toLowerCase();
+      if (!["open", "ack_pending", "all"].includes(scope)) throw refuse("bad_request", "Alarm scope must be one of: open, ack_pending, all.");
+      const filter = alarmFilter(r.filter);
+      let list = [...alarms.values()].filter((a) => (scope === "all" ? true : scope === "open" ? a.isOpen : a.ackState === "unacked")).filter(filter.keep);
       if (r.source) list = list.filter((a) => a.sources.includes(r.source));
       list.sort((a, b) => (r.order === "newest" ? b.timestamp - a.timestamp : a.timestamp - b.timestamp));
-      return { op: "alarms_result", alarms: { count: list.length, alarms: list.slice(0, Number(r.limit ?? 100)) } };
+      const limit = cap(r.limit, 500, 5000);
+      return { op: "alarms_result", alarms: { scope, source: r.source ?? null, limit, count: Math.min(list.length, limit), alarms: list.slice(0, limit), ...(r.filter === undefined ? {} : { filter: filter.wire }), ...(r.order === "newest" ? { order: "newest" } : {}), truncated: list.length > limit, ...(list.length > limit ? { truncatedReason: "limit" } : {}) } };
     },
     subscribe_alarms: (ws) => {
       ws.alarmEvents = true;
@@ -1095,40 +1169,77 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
       return { op: "alarm_action_result", alarms: { action: "ack", matched: results.length, count: results.length, dryRun: Boolean(r.dryRun), alarms: results } };
     },
     read_history_rollup: (_ws, r) => {
-      const n = nodes.get(r.ord);
-      if (!n?.hasHistory) return { op: "history_rollup_result", rollup: { interval: r.interval, histories: [] } };
-      const now = Date.now();
+      const ord = r.ord ?? r.point;
+      const end = Number(r.end ?? Date.now()), start = Number(r.start ?? end - 24 * HOUR), interval = Number(r.interval);
+      if (!(interval >= 1000)) throw refuse("bad_request", "Field 'interval' is required, in milliseconds, at least 1000.");
+      if (start > end) throw refuse("bad_request", "History start must be less than or equal to end.");
+      if ((end - start) / interval + 1 > 5000) throw refuse("bad_request", "The range and interval give more than 5000 buckets.");
+      const includeEmpty = r.includeEmpty !== false;
+      const n = nodes.get(ord);
+      if (!n) throw refuse("invalid_point", String(ord).replace(/^slot:/, ""));
+      // A point with no history extension is refused, as a station refuses it: not an empty answer.
+      if (!n.hasHistory) throw refuse("history_failed", "Point does not have any attached history extensions.");
+      const held = heldBy(n);
       const buckets: any[] = [];
-      const value = (t: number) => Number(n.sim ? n.sim(t) : n.fallback);
-      for (let t = r.start; t < r.end && buckets.length < 2000; t += r.interval) {
-        if (t > (n.historyStoppedAt ?? now)) break;
-        const samples = [0.1, 0.35, 0.6, 0.85].map((f) => value(t + r.interval * f));
+      let slots = 0, filled = 0, gap = 0, longest = 0;
+      for (let t = start; t < end; t += interval) {
+        slots += 1;
+        // The records the history holds that fall in this bucket.
+        const from = Math.ceil(t / STEP) * STEP, to = Math.min(t + interval - 1, end, held.last);
+        const count = to >= from ? Math.floor((to - from) / STEP) + 1 : 0;
+        if (count === 0) {
+          gap += 1;
+          longest = Math.max(longest, gap);
+          if (includeEmpty) buckets.push({ start: t, count: 0 });
+          continue;
+        }
+        gap = 0;
+        filled += 1;
+        const span = (count - 1) * STEP;
+        const samples = [...new Set([0, 0.33, 0.67, 1].map((f) => from + Math.round((span * f) / STEP) * STEP))].map((at) => valueAt(n, at));
         const avg = samples.reduce((a, b) => a + b, 0) / samples.length;
-        buckets.push({ start: t, count: Math.max(1, Math.round(r.interval / 300000)), min: Math.min(...samples), max: Math.max(...samples), sum: avg * Math.max(1, Math.round(r.interval / 300000)), avg, first: samples[0], last: samples[3] });
+        buckets.push({ start: t, count, min: Math.min(...samples), max: Math.max(...samples), sum: avg * count, avg, first: samples[0], last: samples[samples.length - 1] });
       }
-      return { op: "history_rollup_result", rollup: { interval: r.interval, histories: [{ historyId: `/${stationName}/${n.ord.split("/").slice(-3).filter((s) => s !== "points").join("_")}`, buckets, bucketCount: buckets.length, coverage: 1, longestGapMillis: 0, truncated: false }] } };
+      return { op: "history_rollup_result", rollup: { requestOrd: ord, start, end, interval, includeEmpty, histories: [{ historyId: historyId(n), recordType: "history:NumericTrendRecord", buckets, bucketCount: buckets.length, emptyBuckets: slots - filled, coverage: slots ? Math.round((filled * 10000) / slots) / 10000 : 0, longestGapMillis: longest * interval, truncated: false }] } };
     },
     read_history: (_ws, r) => {
-      const start = Number(r.start ?? Date.now() - 24 * HOUR), end = Number(r.end ?? Date.now()), limit = Number(r.limit ?? 1000);
-      if (/AuditHistory$/.test(r.ord)) {
+      const ord = r.ord ?? r.point;
+      const end = Number(r.end ?? Date.now()), start = Number(r.start ?? end - 24 * HOUR), limit = typeof r.limit === "number" && r.limit > 0 ? Math.floor(r.limit) : 1000;
+      if (start > end) throw refuse("bad_request", "History start must be less than or equal to end.");
+      if (isAuditOrd(ord)) {
         const records = audit.filter((a) => a.timestamp >= start && a.timestamp <= end).sort((a, b) => a.timestamp - b.timestamp);
-        return { op: "history_result", history: { requestOrd: r.ord, start, end, limit, histories: [{ historyId: `/${stationName}/AuditHistory`, recordType: "history:AuditRecord", totalCount: audit.length, records: records.slice(0, limit), truncated: records.length > limit, count: Math.min(records.length, limit) }] } };
+        return { op: "history_result", history: { requestOrd: ord, start, end, limit, histories: [{ historyId: auditId, recordType: "history:AuditRecord", totalCount: audit.length, records: records.slice(0, limit), truncated: records.length > limit, count: Math.min(records.length, limit), start, end }] } };
       }
-      const n = nodes.get(r.ord);
-      if (!n?.hasHistory) return { op: "history_result", history: { requestOrd: r.ord, start, end, limit, histories: [] } };
+      const n = nodes.get(ord);
+      if (!n) throw refuse("invalid_point", String(ord).replace(/^slot:/, ""));
+      if (!n.hasHistory) throw refuse("history_failed", "Point does not have any attached history extensions.");
+      // Oldest first, and cut at the limit with `truncated` set, as a station's history query is.
+      const held = heldBy(n);
       const records: any[] = [];
-      for (let t = Math.ceil(start / 300000) * 300000; t <= Math.min(end, n.historyStoppedAt ?? Date.now()) && records.length < limit; t += 300000) records.push({ timestamp: t, value: Number(n.sim ? n.sim(t) : n.fallback), status: "{ok}" });
-      return { op: "history_result", history: { requestOrd: r.ord, start, end, limit, histories: [{ historyId: `/${stationName}/${n.name}`, records, count: records.length, truncated: false }] } };
+      let truncated = false;
+      for (let t = Math.ceil(start / STEP) * STEP; t <= Math.min(end, held.last); t += STEP) {
+        if (records.length >= limit) {
+          truncated = true;
+          break;
+        }
+        records.push(trendRecord(n, t));
+      }
+      return { op: "history_result", history: { requestOrd: ord, start, end, limit, histories: [{ historyId: historyId(n), recordType: "history:NumericTrendRecord", records, count: records.length, truncated, start, end }] } };
     },
     // What a point's histories hold, without their records: how many, the first and the last.
     describe_history: (_ws, r) => {
-      const ord = r.ord ?? r.point ?? r.source;
+      const ord = r.ord || r.point || r.source;
+      if (isAuditOrd(ord)) {
+        const times = audit.map((a) => Number(a.timestamp));
+        const newest = audit.length ? audit.reduce((a, b) => (b.timestamp > a.timestamp ? b : a)) : null;
+        return { op: "history_description", history: { requestOrd: ord, count: 1, histories: [{ historyOrd: `history:${auditId}`, historyId: auditId, recordType: "history:AuditRecord", config: { id: auditId, capacity: "500000 records", fullPolicy: "Roll", interval: "irregular" }, totalCount: audit.length, firstTimestamp: times.length ? Math.min(...times) : null, lastTimestamp: times.length ? Math.max(...times) : null, lastRecord: newest }] } };
+      }
       const n = need(ord);
-      const last = Math.floor(Math.min(Date.now(), n.historyStoppedAt ?? Date.now()) / 300000) * 300000;
+      const held = heldBy(n);
       const histories = n.hasHistory ? [{
-        historyId: `/${stationName}/${n.ord.split("/").slice(-3).filter((s) => s !== "points").join("_")}`, enabled: true,
-        config: { id: `/${stationName}/${n.name}`, capacity: "2016 records", interval: "5 minutes", fullPolicy: "Roll" },
-        totalCount: 2016, firstTimestamp: last - 2015 * 300000, lastTimestamp: last
+        historyOrd: `history:${historyId(n)}`, historyId: historyId(n), recordType: "history:NumericTrendRecord", enabled: true,
+        config: { id: `/${stationName}/${n.name}`, capacity: `${KEPT} records`, interval: "5 minutes", fullPolicy: "Roll" },
+        totalCount: KEPT, firstTimestamp: held.first, lastTimestamp: held.last, lastRecord: trendRecord(n, held.last)
       }] : [];
       return { op: "history_description", history: { requestOrd: ord, count: histories.length, histories } };
     },
@@ -1153,7 +1264,7 @@ export async function startDemoStation(options: { live?: boolean; port?: number;
     approve_proposal: (ws, r) => decideRequest(ws, r, true),
     reject_proposal: (ws, r) => decideRequest(ws, r, false),
     read_agent_log: (_ws, r) => {
-      const since = Number(r.since ?? Date.now() - 7 * 24 * HOUR), limit = Number(r.limit ?? 100);
+      const since = typeof r.since === "number" ? r.since : Date.now() - 7 * 24 * HOUR, limit = typeof r.limit === "number" ? Math.max(1, Math.min(1000, r.limit)) : 100;
       const records = agentLog.filter((a) => a.timestamp >= since).sort((a, b) => b.timestamp - a.timestamp);
       return { op: "agent_log_result", log: { since, count: Math.min(records.length, limit), truncated: records.length > limit, records: records.slice(0, limit) } };
     },

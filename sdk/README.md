@@ -93,3 +93,27 @@ await client.call("apply_model_changes", { planId: plan.planId, planHash: plan.p
 ```
 
 Also `listFiles`, `deleteFile`, `jobs` and `cancelJob`.
+
+## The engines
+
+Everything `bask` works out about a station is in this package, so another program gets it without the CLI. Each takes a connected `BaskStreamClient` and returns plain data; the `…Text` functions give the same thing as readable text.
+
+| What | Functions |
+| --- | --- |
+| Why a point reads what it does | `explain`, `whyText` |
+| What happened: changes, overrides, alarms, AI activity | `readLog`, `logText` |
+| What points read at a past moment | `valuesAt`, `seriesFor`, `parseAt` |
+| Checkouts from a plain document | `parseCheckout`, `rehearseCheckout`, `runCheckout`, `checkoutReport` |
+| The site: equipment, what feeds what | `readEvidence`, `inferModel`, `inferServes`, `buildReview`, `readSite` |
+| Logic: reading a sheet, following a value | `loadSheet`, `traceOf` |
+| Checks, export, diff, apply | `@basidekick/baskstream/check`, `/export`, `/diff`, `/apply` |
+
+```ts
+import { BaskStreamClient, explain, readLog } from "@basidekick/baskstream";
+
+const client = await BaskStreamClient.connect({ station, username, password });
+const why = await explain(client, "slot:/Drivers/BacnetNetwork/VAV_105/points/ZoneTemp");
+const log = await readLog(client, { since: Date.now() - 86_400_000 });
+```
+
+Each module can also be imported by itself, e.g. `@basidekick/baskstream/why`.

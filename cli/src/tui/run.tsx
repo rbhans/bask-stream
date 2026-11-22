@@ -5,6 +5,7 @@ import { Link } from "../link.js";
 import type { Connection } from "../session.js";
 import { App, type ViewName } from "./App.js";
 import { Fleet, type FleetEntry } from "./Fleet.js";
+import { Deck } from "../deck/Deck.js";
 import { Gallery } from "./symbols/Gallery.js";
 import { mouseMode } from "./input.js";
 import { askTerminalTheme, setTheme, themeFromEnvironment } from "./theme.js";
@@ -70,6 +71,10 @@ class Painter {
 
 interface ScreenIo {
   mouse: boolean;
+  /** The colours in use: what was asked for, else what the terminal says it is. */
+  theme: "dark" | "light";
+  /** Takes the app off the screen, as if it had quit. */
+  exit: () => void;
   /** Gives the screen to another program (an editor), then draws again. */
   suspend: (work: () => void) => void;
   /** Sends a control sequence straight to the terminal. */
@@ -81,7 +86,8 @@ async function onScreen(options: { mouse?: boolean; theme?: "dark" | "light" }, 
   const out = process.stdout;
   const mouse = options.mouse !== false;
   // Colours: what was asked for, else what the environment says, else what the terminal answers.
-  setTheme(options.theme ?? themeFromEnvironment() ?? (await askTerminalTheme()) ?? "dark");
+  const theme = options.theme ?? themeFromEnvironment() ?? (await askTerminalTheme()) ?? "dark";
+  setTheme(theme);
   const enter = () => out.write(`\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l${mouse ? mouseMode(true) : ""}`);
   const leave = () => out.write(`${mouseMode(false)}\x1b[?1049l\x1b[?25h`);
   enter();
@@ -110,7 +116,9 @@ async function onScreen(options: { mouse?: boolean; theme?: "dark" | "light" }, 
     }
   };
   try {
-    const app = render(element({ mouse, suspend, terminal: (data) => void out.write(data) }), { stdout: screen as unknown as NodeJS.WriteStream, debug: true, exitOnCtrlC: false, patchConsole: false });
+    let unmount = () => {};
+    const app = render(element({ mouse, theme, suspend, terminal: (data) => void out.write(data), exit: () => unmount() }), { stdout: screen as unknown as NodeJS.WriteStream, debug: true, exitOnCtrlC: false, patchConsole: false });
+    unmount = () => app.unmount();
     await app.waitUntilExit();
   } finally {
     out.off("resize", onResize);
@@ -126,6 +134,31 @@ export async function runDashboard(conn: Connection, options: DashboardOptions):
     await onScreen(options, (io) => (
       <App client={conn.client} profileName={conn.profileName} allowWrites={options.allowWrites} view={options.view} points={options.points} pane={options.pane} mouse={io.mouse} link={link} suspend={io.suspend} terminal={io.terminal} />
     ));
+  } finally {
+    conn.client.close();
+  }
+}
+
+/**
+ * Runs the screen for one station: the map of the site, the time bar and the command line. From it,
+ * c opens the older dashboard with its twelve views, and quitting that comes back here.
+ */
+export async function runDeck(conn: Connection, options: DashboardOptions): Promise<void> {
+  const link = new Link(conn.client.http.url.origin, options.shared !== false);
+  try {
+    for (;;) {
+      let classic = false;
+      await onScreen(options, (io) => (
+        <Deck client={conn.client} profileName={conn.profileName} allowWrites={options.allowWrites} mouse={io.mouse} theme={io.theme} terminal={io.terminal} onClassic={() => {
+          classic = true;
+          io.exit();
+        }} />
+      ));
+      if (!classic) return;
+      await onScreen(options, (io) => (
+        <App client={conn.client} profileName={conn.profileName} allowWrites={options.allowWrites} mouse={io.mouse} link={link} suspend={io.suspend} terminal={io.terminal} />
+      ));
+    }
   } finally {
     conn.client.close();
   }

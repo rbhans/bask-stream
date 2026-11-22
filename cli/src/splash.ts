@@ -2,28 +2,10 @@ import chalk from "chalk";
 import { QUIPS, type QuipKind } from "./quips.js";
 import { VERSION } from "./version.js";
 
-const WORDMARK = ["█▄▄ ▄▀█ █▀ █▄▀", "█▄█ █▀█ ▄█ █░█"];
-const FROM = [0x7a, 0xa2, 0xf7];
-const TO = [0xbb, 0x9a, 0xf7];
-
-/** The bask wordmark with a left-to-right gradient, the version and the BASidekick tagline. */
+/** The BASidekick mark on one line ("BA", the S on its hi-vis chip, "idekick"), then bask's version. */
 export function splash(): string {
-  const width = WORDMARK[0].length;
-  const shade = (line: string) =>
-    [...line]
-      .map((ch, i) => {
-        const t = i / (width - 1);
-        const [r, g, b] = FROM.map((from, k) => Math.round(from + (TO[k] - from) * t));
-        return chalk.rgb(r, g, b)(ch);
-      })
-      .join("");
-  return [
-    "",
-    `  ${shade(WORDMARK[0])}`,
-    `  ${shade(WORDMARK[1])}   ${chalk.dim(`v${VERSION}`)}`,
-    `  ${chalk.bold("BASidekick")} ${chalk.dim("· your Niagara sidekick")}`,
-    ""
-  ].join("\n");
+  const mark = `${chalk.bold("BA")}${chalk.bgHex("#d4ff3a").hex("#0e1013").bold(" S ")}${chalk.bold("idekick")}`;
+  return ["", `  ${mark}  ${chalk.bold("bask")} ${chalk.dim(`v${VERSION} · your Niagara sidekick`)}`, ""].join("\n");
 }
 
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -44,7 +26,7 @@ export function spinner(kind: QuipKind): Spinner {
   let running = true;
   const draw = () => {
     const text = lines[Math.floor(frame / 25) % lines.length];
-    out.write(`\r\x1b[2K  ${chalk.hex("#7aa2f7")(FRAMES[frame % FRAMES.length])} ${chalk.dim(text)}`);
+    out.write(`\r\x1b[2K  ${chalk.hex("#9bc400")(FRAMES[frame % FRAMES.length])} ${chalk.dim(text)}`);
     frame += 1;
   };
   draw();

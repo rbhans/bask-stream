@@ -19,33 +19,36 @@ export interface Theme {
   onAccent: string;
 }
 
+// BASidekick's colours (the brand's design tokens): Ink ground, Paper type, one hi-vis accent. Status
+// colours belong to data. The map screen paints its own ground (deck/brand.ts); these views sit on
+// the terminal's, so the accent here is the one that reads as text.
 const DARK: Theme = {
   name: "dark",
-  accent: "#7aa2f7",
-  accent2: "#bb9af7",
-  good: "#9ece6a",
-  warn: "#e0af68",
-  bad: "#f7768e",
-  info: "#7dcfff",
-  muted: "#8a90a8",
-  faint: "#4b5068",
-  selection: "#2c3a66",
-  selectionDim: "#252a3d",
-  onAccent: "#0f111a"
+  accent: "#d4ff3a",
+  accent2: "#27b7ff",
+  good: "#3fcf7f",
+  warn: "#f0a000",
+  bad: "#e5484d",
+  info: "#27b7ff",
+  muted: "#9ba2ac",
+  faint: "#4a5058",
+  selection: "#2b3305",
+  selectionDim: "#1c2026",
+  onAccent: "#0e1013"
 };
 
 const LIGHT: Theme = {
   name: "light",
-  accent: "#2f5fd0",
-  accent2: "#7b4bc4",
-  good: "#3a7d1f",
-  warn: "#9a6200",
-  bad: "#c8324f",
-  info: "#0b7a99",
-  muted: "#666c85",
-  faint: "#b3b8cc",
-  selection: "#cfdaf8",
-  selectionDim: "#e6e9f3",
+  accent: "#5c7400",
+  accent2: "#0b84c9",
+  good: "#23a55a",
+  warn: "#b87a00",
+  bad: "#d23a40",
+  info: "#0b84c9",
+  muted: "#5b616a",
+  faint: "#b9bcb3",
+  selection: "#e3f59a",
+  selectionDim: "#e6e8e1",
   onAccent: "#ffffff"
 };
 

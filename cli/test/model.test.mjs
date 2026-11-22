@@ -215,7 +215,7 @@ test("from the command line: infer writes the review file, a second run keeps wh
     // No --allow-writes: infer only reads.
     const shown = await bask("model", "infer", "--under", "Drivers/BacnetNetwork");
     assert.equal(shown.code, 0, shown.err);
-    assert.match(shown.out, /Northgate {2}slot:\/Drivers\/BacnetNetwork · 11 equipment, 78 points/);
+    assert.match(shown.out, /Northgate {2}slot:\/Drivers\/BacnetNetwork · 11 equipment, 79 points/);
     assert.match(shown.out, /0\.\d\d +BacnetNetwork\/VAV_101 +VAV box +name says vav; has zone temperature, damper command; 7 siblings agree · 6 points/);
     assert.match(shown.err, /✓ Northgate-model\.json\. Edit it/);
     const file = join(dir, "Northgate-model.json");

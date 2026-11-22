@@ -54,7 +54,8 @@ test("what an export holds: types, set properties, links, tags; paths in order",
     assert.deepEqual(at(doc, "Drivers/BacnetNetwork/AHU_01"), {
       path: "Drivers/BacnetNetwork/AHU_01", type: "bacnet:BacnetDevice",
       properties: { address: "192.168.10.11", enabled: "true", objectId: "device:1001", pollFrequency: "normal" },
-      tags: { "hs:ahu": true, "hs:equip": true }
+      tags: { "hs:ahu": true, "hs:equip": true },
+      relations: [{ id: "hs:chilledWaterRef", to: "Drivers/BacnetNetwork/CHW_Plant" }]
     });
     // A link is kept where it arrives; its source is a path under the root.
     assert.deepEqual(at(doc, "Drivers/BacnetNetwork/AHU_01/points/CoolingValve").links, [{ from: "Logic/AHU_01/SatLoop", fromSlot: "out", toSlot: "in10" }]);

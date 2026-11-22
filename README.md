@@ -69,7 +69,7 @@ watch.on("change", (point) => console.log(point.point, point.value));
 
 ## bask CLI and dashboard
 
-[`cli/`](cli/README.md) is a command-line tool built on the SDK. Run `bask` with no command for a full-screen terminal dashboard with twelve views: station home, an explorer with live values and a property sheet, a watch list, alarms, trends, schedules, queries and reports, station files, jobs and discovery, AI activity, graphics (equipment drawn in the terminal, moving, with live values, from small files a person or an AI agent writes and the station keeps), and logic (a folder as a wire sheet in text, with live values and a trace of any value through its links). `bask workspace` lays the same views out as panes in Rex or tmux beside an AI agent session, and `bask demo` runs it all on a simulated building.
+[`cli/`](cli/README.md) is a command-line tool built on the SDK. Run `bask` with no command to open the station on one screen: the site as a map of its equipment and the zones each unit feeds, a bar of time under it that takes every reading back to any moment, and a command line (`why`, `log`, `get`, `set`) where a change is shown before it is made. `bask tui --classic` (or `c`) opens the older dashboard with twelve views: station home, an explorer with live values and a property sheet, a watch list, alarms, trends, schedules, queries and reports, station files, jobs and discovery, AI activity, graphics (equipment drawn in the terminal, moving, with live values, from small files a person or an AI agent writes and the station keeps), and logic (a folder as a wire sheet in text, with live values and a trace of any value through its links). `bask workspace` lays the same views out as panes in Rex or tmux beside an AI agent session, and `bask demo` runs it all on a simulated building.
 
 ### 1. Install
 
@@ -112,7 +112,7 @@ It asks for the password and saves only the session, never the password. Use `--
 ### 4. Use it
 
 ```bash
-bask                                                     # full-screen dashboard (? for keys, q to quit)
+bask                                                     # the station on one screen (? for keys, q to quit)
 bask doctor                                              # can't connect? checks each step and says how to fix it
 bask status                                              # station, user, limits, traffic
 bask browse Drivers -d 2                                 # station tree
@@ -122,7 +122,7 @@ bask history Drivers/.../ZoneTemp --since 7d --rollup 1h -o csv > zonetemp.csv
 bask alarms --unacked -f                                 # alarms, then follow new ones
 ```
 
-In the dashboard, `1` to `9` and `0` switch between Home, Explorer, Watch, Alarms, Trends, Schedules, Query, Files, Jobs and AI Activity; `g` opens Graphics and `L` opens Logic. Press `/` to find any point by name. In the Explorer, arrow keys move and open branches, `w` adds a point to Watch, and `t` opens its trend.
+In the older dashboard (`bask tui --classic`), `1` to `9` and `0` switch between Home, Explorer, Watch, Alarms, Trends, Schedules, Query, Files, Jobs and AI Activity; `g` opens Graphics and `L` opens Logic. Press `/` to find any point by name. In the Explorer, arrow keys move and open branches, `w` adds a point to Watch, and `t` opens its trend.
 
 Everything is read-only unless you add `--allow-writes` (or press `W` in the dashboard), and every write or alarm acknowledgement asks before sending. The full command list is in [cli/README.md](cli/README.md#commands).
 

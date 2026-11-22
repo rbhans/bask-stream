@@ -1,7 +1,7 @@
 import { directWork, pointWritesText, type AgentRules } from "./agent-rules.js";
 import chalk from "chalk";
 import { BaskStreamClient, BaskStreamError, StationHttp } from "@basidekick/baskstream";
-import { getProfile, type Profile } from "./config.js";
+import { getProfile, loadStore, loginChoices, stationUrl, type Profile } from "./config.js";
 
 type Outcome = "ok" | "warn" | "fail" | "skip";
 interface Check {
@@ -55,7 +55,7 @@ export async function runDoctor(profileName: string | undefined, stationArg: str
   let profile: Profile = { station: "" };
   let name = "";
   if (stationArg) {
-    const url = new URL(/^https?:\/\//.test(stationArg) ? stationArg : `https://${stationArg}`);
+    const url = stationUrl(stationArg);
     profile = { station: url.origin, insecure: insecureArg };
     print({ name: "Station", outcome: "ok", detail: `${url.origin} (no saved profile used)` });
   } else {
@@ -68,6 +68,12 @@ export async function runDoctor(profileName: string | undefined, stationArg: str
     }
   }
 
+  // The command that renews this saved login, under its own name, and the other users saved for the address.
+  const again = () => {
+    const others = name ? loginChoices(loadStore(), name).slice(1) : [];
+    return `bask login ${profile.station} -u ${profile.username ?? "<user>"}${name && name !== new URL(profile.station).hostname ? ` --name ${name}` : ""}${profile.insecure ? " --insecure" : ""}` +
+      (others.length ? `\n${" ".repeat(23)}or, if this station has no ${profile.username}: ${others.map((o) => `bask use ${o.profile} (${o.user})`).join(", ")}` : "");
+  };
   const http = new StationHttp({ station: profile.station, verifyTls: !profile.insecure, cookies: profile.cookies, timeoutMs: 10000 });
   const host = http.url.host;
 
@@ -120,7 +126,7 @@ export async function runDoctor(profileName: string | undefined, stationArg: str
 
   // 4. Session and the baskStream service.
   if (!profile.cookies) {
-    print({ name: "Session", outcome: stationArg ? "skip" : "fail", detail: "not logged in", fix: stationArg ? undefined : `bask login ${profile.station} -u ${profile.username ?? "<user>"}${profile.insecure ? " --insecure" : ""}` });
+    print({ name: "Session", outcome: stationArg ? "skip" : "fail", detail: "not logged in", fix: stationArg ? undefined : again() });
     return finish();
   }
   const health = await http.request("GET", "/stream/health");
@@ -130,7 +136,7 @@ export async function runDoctor(profileName: string | undefined, stationArg: str
     return finish();
   }
   if (health.status !== 200) {
-    print({ name: "Session", outcome: "fail", detail: `expired or not accepted (HTTP ${health.status})`, fix: `bask login ${profile.station} -u ${profile.username ?? "<user>"}${profile.insecure ? " --insecure" : ""}` });
+    print({ name: "Session", outcome: "fail", detail: `expired or not accepted (HTTP ${health.status})`, fix: again() });
     return finish();
   }
   let info: Record<string, unknown> = {};

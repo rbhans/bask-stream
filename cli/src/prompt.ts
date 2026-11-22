@@ -44,3 +44,12 @@ export async function confirm(question: string): Promise<boolean> {
   rl.close();
   return /^y(es)?$/i.test(answer.trim());
 }
+
+/** Asks for one line on the terminal. */
+export async function promptLine(question: string): Promise<string> {
+  if (!process.stdin.isTTY) return "";
+  const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+  const answer = await new Promise<string>((resolve) => rl.question(question, resolve));
+  rl.close();
+  return answer.trim();
+}

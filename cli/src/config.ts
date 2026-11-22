@@ -12,7 +12,7 @@ export interface Profile {
   agent?: string;
 }
 
-interface Store {
+export interface Store {
   current?: string;
   profiles: Record<string, Profile>;
 }
@@ -77,4 +77,32 @@ export function removeProfile(name: string): void {
   delete store.profiles[name];
   if (store.current === name) store.current = Object.keys(store.profiles)[0];
   saveStore(store);
+}
+
+/**
+ * A station URL from what was typed. A short numeric address is refused: 192.168.128 would
+ * otherwise be read as 192.168.0.128.
+ */
+export function stationUrl(text: string): URL {
+  const typed = text.replace(/^https?:\/\//, "").split(/[/:]/)[0];
+  if (/^\d+(\.\d+){0,2}$/.test(typed)) throw new Error(`${typed} is not a full address: an IP address has four numbers, like ${typed.split(".").concat(["x", "x", "x"]).slice(0, 4).join(".")}.`);
+  return new URL(/^https?:\/\//.test(text) ? text : `https://${text}`);
+}
+
+export interface LoginChoice {
+  profile: string;
+  user: string;
+}
+
+/** The saved logins for the same station as a profile, one per user, the profile's own first. AI agents' logins are left out. */
+export function loginChoices(store: Store, name: string): LoginChoice[] {
+  const mine = store.profiles[name];
+  if (!mine) return [];
+  const agents = new Set(Object.values(store.profiles).map((p) => p.agent).filter(Boolean));
+  const out: LoginChoice[] = [];
+  for (const [profile, p] of [[name, mine] as const, ...Object.entries(store.profiles)]) {
+    if (!p.username || p.station !== mine.station || agents.has(profile)) continue;
+    if (!out.some((c) => c.user.toLowerCase() === p.username!.toLowerCase())) out.push({ profile, user: p.username });
+  }
+  return out;
 }

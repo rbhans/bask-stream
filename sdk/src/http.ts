@@ -142,9 +142,11 @@ export class StationHttp {
     });
     if (final.status !== 200) throw new BaskStreamError(CLIENT_ERRORS.loginFailed, "Login failed: wrong username or password.");
     const serverFinal = parseScram(final.body.trim());
+    // A station that refuses the user name or password answers without a signature at all.
+    if (serverFinal.e || !serverFinal.v) throw new BaskStreamError(CLIENT_ERRORS.loginFailed, "Login failed: wrong username or password.");
     const expected = hmac(hmac(salted, "Server Key"), authMessage);
     const signature = Buffer.from(serverFinal.v || "", "base64");
-    if (serverFinal.e || signature.length !== expected.length || !crypto.timingSafeEqual(signature, expected)) {
+    if (signature.length !== expected.length || !crypto.timingSafeEqual(signature, expected)) {
       throw new BaskStreamError(CLIENT_ERRORS.loginFailed, "The station's login signature did not verify.");
     }
 

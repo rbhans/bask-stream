@@ -40,7 +40,7 @@ test("Northgate as it ships: the old override, the stopped history, the unused a
 
   // critical, maintenance and default each hold an alarm; afterHours holds none and no extension names it.
   assert.deepEqual(places(result, "alarms.unusedClasses"), ["slot:/Services/AlarmService/afterHours"]);
-  assert.match(found(result, "alarms.unusedClasses")[0].message, /no alarm extension names afterHours, and none of the 7 alarms read is in it/);
+  assert.match(found(result, "alarms.unusedClasses")[0].message, /no alarm extension names afterHours, and none of the 11 alarms read is in it/);
 
   // WinterBreak was last December; NewYear is still to come and is left alone.
   const past = found(result, "schedules.pastExceptions");
@@ -70,7 +70,7 @@ test("an override counts as long by the audit history: a new one is not, one wit
   // An override the audit history has no record of: older than everything that was read.
   const silent = await check("northgate", (station) => void (station.state.nodes.get(`${NET}/VAV_108/points/ZoneSetpoint`).override = { value: 68 }));
   const old = found(silent, "points.overriddenLong").find((f) => f.where === `${NET}/VAV_108/points/ZoneSetpoint`);
-  assert.match(old.message, /^overridden for more than 2[12] hours \(the audit history has no override of it since \d+ \w{3} \d\d:\d\d\)/);
+  assert.match(old.message, /^overridden for more than 6 days \(the audit history has no override of it since \d+ \w{3} \d\d:\d\d\)/);
 
   // The set time is the rule's: at 20 hours the sixteen-hour override is only "overridden".
   const file = join(dir, "long.json");

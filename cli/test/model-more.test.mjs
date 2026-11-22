@@ -20,7 +20,11 @@ const main = fileURLToPath(new URL("../dist/main.js", import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), "bask-model-more-"));
 after(() => rmSync(dir, { recursive: true, force: true }));
 const NET = "slot:/Drivers/BacnetNetwork";
-const untag = (station) => void [...station.state.nodes.values()].forEach((node) => void (node.tags = []));
+// Takes away what the station already says about itself: its Haystack tags, and the relations that say what serves what.
+const untag = (station) => void [...station.state.nodes.values()].forEach((node) => {
+  node.tags = [];
+  delete node.relations;
+});
 
 /** Everything read and inferred for a station: the review file bask model infer would write. */
 async function review(client, earlier) {
@@ -140,7 +144,7 @@ test("model write: only confirmed entries become tags and relations, a preview i
     // Nothing confirmed: nothing to write.
     const empty = await planModelWrite(client, file);
     assert.deepEqual([empty.tags, empty.relations], [[], []]);
-    assert.deepEqual(empty.unconfirmed, { equipment: 11, points: 78, serves: 2 });
+    assert.deepEqual(empty.unconfirmed, { equipment: 11, points: 79, serves: 2 });
 
     const ahu = file.equipment.find((e) => e.name === "AHU_01");
     const plant = file.equipment.find((e) => e.name === "CHW_Plant");
@@ -167,7 +171,7 @@ test("model write: only confirmed entries become tags and relations, a preview i
       [`${NET}/AHU_01/points/SupplyAirTemp`, [{ id: "hs:equipRef", endpoint: `${NET}/AHU_01` }]]
     ]);
     assert.deepEqual(plan.invalid, ["Not A Tag"]);
-    assert.deepEqual(plan.unconfirmed, { equipment: 9, points: 76, serves: 1 });
+    assert.deepEqual(plan.unconfirmed, { equipment: 9, points: 77, serves: 1 });
 
     const written = await runModelWrite(client, plan);
     assert.deepEqual([written.written, written.failures, written.verified], [true, [], true]);
@@ -269,7 +273,7 @@ test("from the command line: infer lists what serves what, write previews then w
     assert.match(preview.out, /Northgate {2}21 tags and 1 relation on 9 components · 0 already there/);
     assert.match(preview.out, /tag +Drivers\/BacnetNetwork\/VAV_103 +hs:equip, hs:vav/);
     assert.match(preview.out, /relate +VAV_101\/points\/ZoneTemp +hs:equipRef → Drivers\/BacnetNetwork\/VAV_101/);
-    assert.match(preview.out, /Not confirmed, so not written: 3 equipment, 77 points, 2 of what serves what\./);
+    assert.match(preview.out, /Not confirmed, so not written: 3 equipment, 78 points, 2 of what serves what\./);
     assert.match(preview.out, /Nothing is written yet\. To write these, run again with --allow-writes --yes\./);
     assert.equal(station.state.audit.length, before);
 

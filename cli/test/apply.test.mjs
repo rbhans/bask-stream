@@ -98,6 +98,8 @@ test("what changed in the file is applied: a property, a tag, a link, a new poin
     at("VAV_103").tags["hs:zone"] = true;
     at("VAV_103").tags["demo:floor"] = 3;
     delete at("CHW_Plant").tags["hs:chilledWaterPlant"];
+    // The station holds this relation already; it is taken off there, so the file has one to add.
+    delete station.state.nodes.get(`${NET}/VAV_103`).relations;
     at("VAV_103").relations = [{ id: "hs:airRef", to: "AHU_01" }];
     delete at("AHU_01/points/OccupiedCmd").links;
     at("AHU_02/points/CoolingValve").links = [{ from: "slot:/Logic/AHU_01/SatLoop", fromSlot: "out", toSlot: "in10" }];

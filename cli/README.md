@@ -23,16 +23,43 @@ This downloads a single executable from the latest `bask-v*` [release](https://g
 ```bash
 bask demo                                              # try it on a built-in simulated building, no station needed
 bask login https://192.168.0.126 -u test --insecure   # asks for the password; saves only the session
-bask                                                   # the dashboard: every view in one window
+bask                                                   # the station on one screen: the map, a bar of time, a command line
+bask tui --classic                                     # the older dashboard: twelve views in one window
 bask workspace                                         # a multi-pane workspace in Rex or tmux, with an AI agent
 bask fleet                                             # every saved station at once
 ```
 
 `bask login` needs a station running the baskStream module (setup is in the [root README](../README.md#station-setup)); the demo does not. `bask doctor` checks a connection step by step when something does not work.
 
-## Dashboard
+## The screen
 
-Twelve views, switched with `1`–`0`, `g`, `L` or `tab`:
+`bask` opens the station on one screen, with three things to move through.
+
+**Where.** The site as a map: the plant along the top, then each air handler with the zones it feeds as tiles under it. Tiles are as big as the window allows: on a small site each one is an instrument, with the reading in big figures, its setpoint, how far off it is and a small chart. The arrows move, `enter` opens a unit (its readings as instruments, every point with a line of its history, what feeds it and what it feeds, what happened to it), `esc` comes back. `l` or `1` to `5` changes the lens, which recolours the same map: comfort, alarms, what is in hand, changes, AI agents. On a wide window a rail beside the map lists what needs a person.
+
+**When.** Under the map is a bar of the last day, week or month (`[` and `]`), marked with what happened: changes by people, changes by AI agents, alarms, and overrides as a run along the bar. `tab` puts the keyboard on it: `←` `→` move through time, `<` `>` jump to the next thing that happened, `n` comes back to now. Every reading on screen is then the one recorded at that moment (a point with no history keeps its present value).
+
+**What you want.** `:` opens the line at the bottom. It takes a few words that work on anything:
+
+| | |
+|---|---|
+| `AHU_02` | a unit's name goes to it |
+| `why VAV_105 ZoneTemp` | what is driving a value: when it turned, what was changed beside it and by whom, what else on the unit turned then, what feeds the unit and what is wrong there. `f` offers to put back a change found beside the turn |
+| `log AHU_02` | people, AI agents, alarms and overrides in one list |
+| `get AHU_02` | its readings, now or at the moment the time bar is on |
+| `set`, `override … for 30m`, `release` | a change is shown first, dashed, and nothing is written until `enter` |
+| `at tue 2pm`, `now` | look at a moment |
+| `approve P7`, `reject P7` | a change an AI agent asked for |
+
+The same words are shell commands: `bask why`, `bask log`, `bask get` (with `@` and a time after a point for the past), and `bask test` for a [checkout](../docs/CHECKOUT.md).
+
+**What feeds what.** The map groups zones under the unit that feeds them from the station's own relations, then from guesses (names, folders, links) that are fairly sure, marked `guessed`. Whatever is left is grouped the way it is wired, by network. `r` lists the guesses; `accept` keeps the sure ones, `accept all` or `accept AHU_02` more; `feeds AHU_01 VAV_101..VAV_108` says it yourself; `show Airflow on vav` chooses the reading a kind of unit shows. All of that is kept in bask's own folder on this computer (`sites/<station>.json`) and nothing is written to the station.
+
+The screen starts read-only. `W`, pressed twice, allows changes from that window (or start with `--allow-writes`); each one still shows first and asks. The look is BASidekick's: Ink ground, Paper type and the hi-vis accent as a fill, light or dark with the terminal (`--theme`). What moves is brief and means something: the S tears once as the screen comes up, readings decode as they arrive, and a unit that is not answering glitches, as the brand keeps that for faults. `BASK_MOTION=off` holds everything still. `c` opens the older dashboard below, and `q` there comes back.
+
+## The older dashboard
+
+`bask tui --classic` (or `c` from the screen). Twelve views, switched with `1`–`0`, `g`, `L` or `tab`:
 
 | | View | What you do there |
 |---|---|---|
