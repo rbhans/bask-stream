@@ -12,7 +12,7 @@ export const LOG_OPERATIONS = ["query", "describe_history", "read_history", "rea
 export interface LogEvent {
   /** When it happened, in epoch milliseconds. */
   at: number;
-  kind: "change" | "override" | "alarm" | "agent" | "proposal";
+  kind: "change" | "override" | "alarm" | "agent" | "proposal" | "note";
   /** The Niagara user, or the agent's name. */
   who?: string;
   /** True when an AI agent did it or asked for it. */
@@ -31,7 +31,8 @@ export interface LogEvent {
   ended?: boolean;
   /** The alarm's uuid, the proposal's id (P7) or the change's id. */
   id?: string;
-  source: "audit" | "alarm" | "agentLog" | "changes";
+  /** "note": written by a person or an agent with `bask note`, kept beside the station's own record. */
+  source: "audit" | "alarm" | "agentLog" | "changes" | "note";
 }
 
 export interface LogOptions {
@@ -475,8 +476,8 @@ export async function readLog(client: BaskStreamClient, options: LogOptions): Pr
 /** Who an event is by. An agent's own Niagara user is marked, so its change is not taken for a person's. */
 export const whoText = (e: LogEvent) => (e.who ? `${e.who}${e.agent && e.source === "audit" && !e.id ? " (AI)" : ""}` : "");
 
-const MARKS: Record<LogEvent["kind"], string> = { alarm: "▲", override: "◆", change: "•", agent: "◇", proposal: "?" };
-const COLORS: Record<LogEvent["kind"], (text: string) => string> = { alarm: chalk.red, override: chalk.cyan, change: (text) => text, agent: chalk.magenta, proposal: chalk.yellow };
+const MARKS: Record<LogEvent["kind"], string> = { alarm: "▲", override: "◆", change: "•", agent: "◇", proposal: "?", note: "✎" };
+const COLORS: Record<LogEvent["kind"], (text: string) => string> = { alarm: chalk.red, override: chalk.cyan, change: (text) => text, agent: chalk.magenta, proposal: chalk.yellow, note: chalk.green };
 
 /** The events as lines, newest first: the time, a mark for the kind, who, and what happened. */
 export function logText(events: LogEvent[], options: { width?: number } = {}): string {
@@ -492,4 +493,4 @@ export function logText(events: LogEvent[], options: { width?: number } = {}): s
 }
 
 /** The marks `logText` uses, in a line. */
-export const LOG_LEGEND = `${MARKS.change} change  ${MARKS.override} override  ${MARKS.alarm} alarm  ${MARKS.agent} AI agent  ${MARKS.proposal} asked, waiting or decided`;
+export const LOG_LEGEND = `${MARKS.change} change  ${MARKS.override} override  ${MARKS.alarm} alarm  ${MARKS.agent} AI agent  ${MARKS.proposal} asked, waiting or decided  ${MARKS.note} note`;

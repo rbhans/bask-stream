@@ -43,6 +43,22 @@ export interface ModelEquipment {
   reason: string;
   confirmed: boolean;
   points: ModelPoint[];
+  /** Where it is, from the station's siteRef and spaceRef relations: ORDs that are keys of the review's places. */
+  site?: string;
+  space?: string;
+  /** The equipment it is part of, from an equipRef to other equipment (a chiller in its plant). */
+  partOf?: string;
+}
+
+/** A building, floor or room the station holds, that equipment points at. */
+export interface ModelPlace {
+  ord: string;
+  /** Its display name ("Level 1"), or the component's name. */
+  name: string;
+  kind: "site" | "floor" | "room" | "space";
+  /** The space it is in (a room's floor), and its building. */
+  parent?: string;
+  site?: string;
 }
 
 /** What flows from one piece of equipment to another. */
@@ -74,6 +90,8 @@ export interface ModelReview {
   equipment: ModelEquipment[];
   /** What serves what. Absent in a file written before bask proposed it. */
   serves?: ModelServes[];
+  /** The buildings, floors and rooms equipment points at, by ORD. */
+  places?: Record<string, ModelPlace>;
 }
 
 /** What is read from the station about one group of points before anything is inferred. */
@@ -81,7 +99,7 @@ export interface Evidence {
   ord: string;
   name: string;
   typeSpec: string;
-  /** Its Haystack tags already on the station, without the hs: prefix. */
+  /** Its Haystack marker tags already on the station, from either dictionary (hs: or h4:), without the prefix. */
   tags: string[];
   /** Haystack relations that leave it on the station already: "airRef" to another component. */
   relations?: { name: string; to: string }[];
@@ -205,6 +223,12 @@ function inferRole(point: Evidence["points"][number]): { role: Role | undefined;
     const total = 0.75 * name + 0.15 * units.fit + 0.1 * typed;
     if (!best || total > best.total) best = { role, name, total, why: [`name ${name.toFixed(2)}`, units.why, role.written ? (point.writable ? "writable" : "not writable") : point.writable ? "writable" : "read-only"].filter(Boolean) };
   });
+  if (!best) {
+    // A name that says nothing, on a point the station has tagged: the role whose tags it carries, the fullest first.
+    const have = new Set(point.tags);
+    const byTags = ROLES.filter((role) => role.tags.length >= 2 && role.tags.every((tag) => have.has(tag))).sort((x, y) => y.tags.length - x.tags.length)[0];
+    if (byTags) return { role: byTags, confidence: 0.9, reason: `tagged ${byTags.tags.join(", ")}` };
+  }
   if (!best) return { role: undefined, confidence: 0.5 * nearest.name, reason: nearest.name ? `the nearest role is ${nearest.label}, name ${nearest.name.toFixed(2)}: too far to propose` : `no role has a name like "${point.name}"` };
   return { role: best.role, confidence: best.total, reason: best.why.join(", ") };
 }
@@ -299,14 +323,15 @@ export function inferModel(evidence: Evidence[]): ModelEquipment[] {
       const agree = others ? `${others} sibling${others === 1 ? "" : "s"} agree${others === 1 ? "s" : ""}` : "";
       const points: ModelPoint[] = draft.points.map(({ point, role, confidence, reason }) => {
         const extra = { ...(point.units ? { unit: point.units } : {}), ...(point.valueType ? { valueKind: /bool/i.test(point.valueType) ? "Bool" : /num/i.test(point.valueType) ? "Number" : "Str" } : {}) };
-        if (point.tags.length) return { ord: point.ord, name: point.name, role: role?.id ?? "tagged", label: role?.label ?? "already tagged", tags: point.tags, confidence: 1, reason: `already tagged ${point.tags.map((tag) => `hs:${tag}`).join(", ")}`, confirmed: true, ...extra };
+        if (point.tags.length) return { ord: point.ord, name: point.name, role: role?.id ?? "tagged", label: role?.label ?? "already tagged", tags: point.tags, confidence: 1, reason: `already tagged ${point.tags.join(", ")}`, confirmed: true, ...extra };
         if (!role) return { ord: point.ord, name: point.name, role: "unknown", label: "unknown", tags: ["point"], confidence: round(confidence), reason, confirmed: false, ...extra };
         const same = (roleCounts.get(`${point.name}|${role.id}`) ?? 1) - 1;
         return { ord: point.ord, name: point.name, role: role.id, label: role.label, tags: [...role.tags, "point"], confidence: round(confidence + Math.min(0.05, same * 0.01)), reason: [reason, same ? `same on ${same} sibling${same === 1 ? "" : "s"}` : ""].filter(Boolean).join(", "), confirmed: false, ...extra };
       }).sort((a, b) => a.confidence - b.confidence || (a.ord < b.ord ? -1 : 1));
       const { item, tagged, best } = draft;
-      const base = { ord: item.ord, name: item.name };
-      if (tagged) equipment.push({ ...base, kind: tagged.id, label: tagged.label, tags: item.tags, confidence: 1, reason: `already tagged ${item.tags.map((tag) => `hs:${tag}`).join(", ")}`, confirmed: true, points });
+      const to = (name: string) => item.relations?.find((r) => r.name === name)?.to;
+      const base = { ord: item.ord, name: item.name, ...(to("siteRef") ? { site: to("siteRef") } : {}), ...(to("spaceRef") ? { space: to("spaceRef") } : {}), ...(to("equipRef") ? { partOf: to("equipRef") } : {}) };
+      if (tagged) equipment.push({ ...base, kind: tagged.id, label: tagged.label, tags: item.tags, confidence: 1, reason: `already tagged ${item.tags.join(", ")}`, confirmed: true, points });
       else if (!best) equipment.push({ ...base, kind: "unknown", label: "unknown", tags: ["equip"], confidence: 0.2, reason: `neither the name "${item.name}" nor its points say what it is`, confirmed: false, points });
       else equipment.push({ ...base, kind: best.kind.id, label: best.kind.label, tags: best.kind.tags, confidence: round(best.score + Math.min(0.1, others * 0.02)), reason: [...best.why, agree].filter(Boolean).join("; "), confirmed: false, points });
     }
@@ -335,7 +360,38 @@ const chunks = <T>(items: T[], size: number) => Array.from({ length: Math.ceil(i
  * and value type with a read, and Haystack tags already there with read_tags. Points are grouped under
  * the device they belong to, or the folder they are in when there is no device above them.
  */
-export async function readEvidence(client: BaskStreamClient, under: string): Promise<{ evidence: Evidence[]; truncated: boolean }> {
+/** The Haystack dictionaries a station is tagged with: the older one and Haystack 4. */
+const DICTIONARIES = ["hs", "h4"];
+
+/**
+ * What the station's Haystack tags say about some components, from both dictionaries: marker tags
+ * (the ones set on the component where there are any, otherwise the ones a tag rule implies), the
+ * relations that leave it, and its display name.
+ */
+async function readHaystack(client: BaskStreamClient, ords: string[]): Promise<{ ord: string; display: string; dis: string; tags: string[]; relations: { name: string; to: string }[] }[]> {
+  const out = new Map<string, { ord: string; display: string; dis: string; direct: Set<string>; implied: Set<string>; relations: Map<string, { name: string; to: string }> }>();
+  await Promise.all(DICTIONARIES.map(async (dictionary) => {
+    // A station without that dictionary answers with an error: it has nothing to add.
+    const targets = await client.call("read_tags", { ords, dictionary, includeRelations: true }).then((reply) => (reply.targets ?? []) as Json[], () => [] as Json[]);
+    for (const target of targets) {
+      const ord = toSlotOrd(String(target.ord ?? ""));
+      const mine = out.get(ord) ?? out.set(ord, { ord, display: String(target.display ?? ""), dis: "", direct: new Set(), implied: new Set(), relations: new Map() }).get(ord)!;
+      for (const tag of (target.tags ?? []) as Json[]) {
+        if (tag.marker) (tag.source === "implied" ? mine.implied : mine.direct).add(String(tag.name));
+        else if (tag.name === "dis" && typeof tag.value === "string" && tag.value) mine.dis = tag.value;
+      }
+      for (const r of (target.relations ?? []) as Json[]) {
+        if (r.direction === "in" || typeof r.endpointOrd !== "string") continue;
+        const to = toSlotOrd(r.endpointOrd);
+        const name = String(r.name ?? String(r.id).split(":")[1]);
+        if (/^slot:/.test(to)) mine.relations.set(`${name} ${to}`, { name, to });
+      }
+    }
+  }));
+  return [...out.values()].map((t) => ({ ord: t.ord, display: t.display, dis: t.dis, tags: [...(t.direct.size ? t.direct : t.implied)], relations: [...t.relations.values()] }));
+}
+
+export async function readEvidence(client: BaskStreamClient, under: string): Promise<{ evidence: Evidence[]; truncated: boolean; places: Record<string, ModelPlace> }> {
   const { nodes, truncated } = await walkTree(client, under);
   // Control points only: a logic block reads like a point but is not equipment's own. A point's own
   // parts (its proxy extension, an alarm or history extension) are listed under it and can read like
@@ -390,14 +446,26 @@ export async function readEvidence(client: BaskStreamClient, under: string): Pro
   const tags = new Map<string, string[]>();
   const relations = new Map<string, { name: string; to: string }[]>();
   await pooled(chunks([...owners.keys(), ...points.map((p) => p.ord)], 100), 4, async (some) => {
-    const targets = await client.call("read_tags", { ords: some, dictionary: "hs", includeRelations: true }).then((reply) => (reply.targets ?? []) as Json[], () => [] as Json[]);
-    for (const target of targets) {
-      const ord = toSlotOrd(String(target.ord ?? ""));
-      tags.set(ord, ((target.tags ?? []) as Json[]).filter((tag) => tag.marker).map((tag) => String(tag.name)));
-      const leaving = ((target.relations ?? []) as Json[]).filter((r) => r.direction !== "in" && typeof r.endpointOrd === "string" && /^slot:/.test(toSlotOrd(String(r.endpointOrd)))).map((r) => ({ name: String(r.name ?? String(r.id).split(":")[1]), to: toSlotOrd(String(r.endpointOrd)) }));
-      if (leaving.length) relations.set(ord, leaving);
+    for (const target of await readHaystack(client, some)) {
+      if (target.tags.length) tags.set(target.ord, target.tags);
+      if (target.relations.length) relations.set(target.ord, target.relations);
     }
   });
+  // The buildings, floors and rooms the equipment points at, and what those are in, a few levels up.
+  const places: Record<string, ModelPlace> = {};
+  let wanted = [...new Set([...relations.values()].flat().filter((r) => r.name === "siteRef" || r.name === "spaceRef").map((r) => r.to))];
+  for (let level = 0; level < 4 && wanted.length; level += 1) {
+    const next = new Set<string>();
+    for (const some of chunks(wanted.slice(0, 2000), 100)) {
+      for (const target of await readHaystack(client, some)) {
+        const to = (name: string) => target.relations.find((r) => r.name === name)?.to;
+        const kind = target.tags.includes("site") ? "site" : target.tags.includes("floor") ? "floor" : target.tags.includes("room") ? "room" : "space";
+        places[target.ord] = { ord: target.ord, name: target.dis || target.display || shortOrd(target.ord, 1), kind, ...(to("spaceRef") ? { parent: to("spaceRef") } : {}), ...(to("siteRef") ? { site: to("siteRef") } : {}) };
+        for (const up of [to("spaceRef"), to("siteRef")]) if (up && !places[up]) next.add(up);
+      }
+    }
+    wanted = [...next].filter((ord) => !places[ord]);
+  }
   const evidence = [...owners].map(([ord, mine]) => {
     const node = nodes.get(ord);
     return {
@@ -410,11 +478,11 @@ export async function readEvidence(client: BaskStreamClient, under: string): Pro
       })
     };
   });
-  return { evidence, truncated };
+  return { evidence, truncated, places };
 }
 
 /** The review document for a station, keeping what a person confirmed in an earlier one. */
-export function buildReview(station: string, under: string, equipment: ModelEquipment[], earlier?: ModelReview, serves?: ModelServes[]): ModelReview {
+export function buildReview(station: string, under: string, equipment: ModelEquipment[], earlier?: ModelReview, serves?: ModelServes[], places?: Record<string, ModelPlace>): ModelReview {
   const kept = new Map((earlier?.equipment ?? []).filter((e) => e.confirmed).map((e) => [e.ord, e]));
   const keptPoints = new Map((earlier?.equipment ?? []).flatMap((e) => e.points ?? []).filter((p) => p.confirmed).map((p) => [p.ord, p]));
   const merged = equipment.map((e) => {
@@ -427,11 +495,15 @@ export function buildReview(station: string, under: string, equipment: ModelEqui
       })
     };
   });
-  if (!serves) return { format: MODEL_FORMAT, version: 1, station, under, howTo: HOW_TO, equipment: merged };
+  const where = places && Object.keys(places).length ? { places } : {};
+  if (!serves) return { format: MODEL_FORMAT, version: 1, station, under, howTo: HOW_TO, equipment: merged, ...where };
   // What a person confirmed about what serves what is kept as they left it, including a "from" they corrected.
-  const confirmedServes = (earlier?.serves ?? []).filter((s) => s.confirmed);
+  // A relation the station holds comes before a guess that was accepted on this computer. What a person
+  // said outright ("feeds AHU_01 …") is kept: it is their correction.
+  const onStation = new Set(serves.filter((s) => !s.inferred).map((s) => `${s.to}|${s.medium}`));
+  const confirmedServes = (earlier?.serves ?? []).filter((s) => s.confirmed && s.inferred && (s.reason === "a person said so" || !onStation.has(`${s.to}|${s.medium}`)));
   const settled = new Set(confirmedServes.map((s) => `${s.to}|${s.medium}`));
-  return { format: MODEL_FORMAT, version: 1, station, under, howTo: HOW_TO, equipment: merged, serves: [...serves.filter((s) => !settled.has(`${s.to}|${s.medium}`)), ...confirmedServes].sort((a, b) => a.confidence - b.confidence || (a.to < b.to ? -1 : a.to > b.to ? 1 : 0)) };
+  return { format: MODEL_FORMAT, version: 1, station, under, howTo: HOW_TO, equipment: merged, serves: [...serves.filter((s) => !settled.has(`${s.to}|${s.medium}`)), ...confirmedServes].sort((a, b) => a.confidence - b.confidence || (a.to < b.to ? -1 : a.to > b.to ? 1 : 0)), ...where };
 }
 
 // ---- What serves what -------------------------------------------------------------------------------
@@ -486,7 +558,7 @@ export function inferServes(equipment: ModelEquipment[], links: EquipmentLink[] 
       const [to, from] = [byOrd.get(item.ord), byOrd.get(relation.to)];
       if (!medium || !to || !from) continue;
       held.add(`${to.ord}|${medium}`);
-      out.push({ from: from.ord, fromName: from.name, to: to.ord, toName: to.name, medium, confidence: 1, reason: `already related hs:${relation.name}`, confirmed: true, inferred: false });
+      out.push({ from: from.ord, fromName: from.name, to: to.ord, toName: to.name, medium, confidence: 1, reason: `the station relates them (${relation.name})`, confirmed: true, inferred: false });
     }
   }
   for (const rule of FEEDS) {

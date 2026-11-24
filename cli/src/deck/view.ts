@@ -12,7 +12,8 @@ export type Zoom = { level: "site" } | { level: "unit"; unit: string } | { level
 /** Something that happened, for the time bar and the lists. */
 export interface DeckEvent {
   at: number;
-  kind: "change" | "override" | "alarm" | "agent" | "proposal";
+  /** "note": left by a person or an agent with `note`, not something the station did. */
+  kind: "change" | "override" | "alarm" | "agent" | "proposal" | "note";
   who?: string;
   agent?: boolean;
   ord?: string;
@@ -20,12 +21,17 @@ export interface DeckEvent {
   /** An override: when it was released; absent while it is still in place. */
   until?: number;
   id?: string;
+  /** An alarm: still in alarm (not back to normal), and whether someone has acknowledged it. */
+  active?: boolean;
+  acked?: boolean;
 }
 
 export interface UnitMarks {
   /** Alarms that are open, and of those the ones nobody has acknowledged. */
   open: number;
   unacked: number;
+  /** Of the open ones, those still in alarm: not back to normal. */
+  active: number;
   fault: boolean;
   /** Points in hand. */
   overrides: number;
@@ -48,6 +54,24 @@ export interface Ghost {
 
 export interface ResultLine {
   parts: { text: string; fg?: string; bold?: boolean }[];
+  /** A line the cursor can sit on: the command enter runs, and the commands other keys run. */
+  run?: string;
+  keys?: Record<string, string>;
+}
+
+export interface Result {
+  title: string;
+  lines: ResultLine[];
+  scroll: number;
+  /** The line the cursor is on, when any line can be chosen. */
+  cursor?: number;
+  /** Keys that work on the whole list, and what the bottom line says about them. */
+  keys?: Record<string, string>;
+  hint?: [string, string][];
+  /** The command that made the list, run again after a change so the list is current. */
+  again?: string;
+  /** The list this was opened from: esc goes back to it. */
+  back?: string;
 }
 
 export interface DeckView {
@@ -80,7 +104,7 @@ export interface DeckView {
   now: number;
   /** When the screen came up and when the values last arrived fresh, for the tear and the decode. */
   fx: { born: number; decodeFrom?: number; tearFrom?: number; signalFrom?: number; reduced: boolean };
-  result?: { title: string; lines: ResultLine[]; scroll: number };
+  result?: Result;
   /** The answer to "why", in place of the map while it is open. */
   answer?: Answer;
   /** When the value being explained turned, marked on the time bar. */
@@ -89,6 +113,10 @@ export interface DeckView {
   toast?: { text: string; tone: "info" | "good" | "warn" | "bad" };
   /** How far the map is scrolled, in rows. */
   scroll: number;
+  /** What looks wrong in how a unit runs now (the same look `check --only behaviour` takes), by the unit's ORD. */
+  off?: Map<string, { kind: string; point: string; message: string }[]>;
+  /** The site's meter, when the station has one: what it reads now and today's highest quarter hour. */
+  power?: { ord: string; now: number; peak?: number; peakAt?: number };
 }
 
 /** A place on the screen that answers to the mouse, and what it stands for. */

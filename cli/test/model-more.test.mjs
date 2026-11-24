@@ -189,7 +189,7 @@ test("model write: only confirmed entries become tags and relations, a preview i
     // Inferring again takes what is now on the station as it is: tagged, related, and not marked inferred.
     const after_ = await review(client);
     const served = after_.serves.find((s) => s.toName === "AHU_01");
-    assert.deepEqual([served.fromName, served.confidence, served.confirmed, served.inferred, served.reason], ["CHW_Plant", 1, true, false, "already related hs:chilledWaterRef"]);
+    assert.deepEqual([served.fromName, served.confidence, served.confirmed, served.inferred, served.reason], ["CHW_Plant", 1, true, false, "the station relates them (chilledWaterRef)"]);
     // The Haystack grid carries the confirmed "fed by" as a ref.
     assert.equal(haystackGrid(file).rows.find((row) => row.dis === "s:AHU_01").chilledWaterRef, "r:Drivers.BacnetNetwork.CHW_Plant CHW_Plant");
 

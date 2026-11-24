@@ -121,7 +121,7 @@ test("schedules shows the week and what is coming up", () =>
   withApp({ view: "schedules" }, { columns: 130, rows: 28 }, async (app) => {
     const frame = await app.until(/Coming up/);
     assert.match(frame, /◷ OfficeHours/);
-    assert.match(frame, /Mon\s+░+█+/);
+    assert.match(frame, /Mon\s+░+▏?█+/);
     assert.match(frame, /default Unoccupied/);
     await app.press("down");
     await app.until(/72\.0 °F/);

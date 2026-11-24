@@ -2,9 +2,11 @@
 // component gathers what the station says and what the person is doing into a DeckView; draw.ts turns
 // that into a frame.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getProfile } from "../config.js";
+import { readNotes } from "../notes.js";
 import { Text, useApp, useStdout } from "ink";
-import { toSlotOrd, type BaskStreamClient, type Json, type PointSnapshot } from "@basidekick/baskstream";
-import { isUnacked } from "../format.js";
+import { behaviourOf, readEnergy, seriesFor, toSlotOrd, type BaskStreamClient, type Json, type PointSnapshot } from "@basidekick/baskstream";
+import { alarmMessage, alarmState, isUnacked } from "../format.js";
 import { mouseMode, useKeyPump, useKeys, useMouse } from "../tui/input.js";
 import { useActivity, useAlarms, useLiveValues, useProposals, useStationName, type Activity } from "../tui/stores.js";
 import { P, setPalette } from "./brand.js";
@@ -70,9 +72,17 @@ function eventsOf(activity: Activity[], alarms: Map<string, Json>, proposals: { 
   for (const alarm of alarms.values()) {
     const at = Number(alarm.timestamp ?? 0);
     const source = String(((alarm.sources ?? []) as string[])[0] ?? "");
-    if (at) out.push({ at, kind: "alarm", ord: source ? toSlotOrd(source) : undefined, text: String(alarm.message ?? alarm.msgText ?? "alarm"), id: String(alarm.uuid ?? "") });
+    // "Normal" is an alarm that has gone back to normal and only waits to be acknowledged.
+    if (at) out.push({ at, kind: "alarm", ord: source ? toSlotOrd(source) : undefined, text: alarmMessage(alarm) || "alarm", id: String(alarm.uuid ?? ""), active: !/^(normal|)$/.test(alarmState(alarm)), acked: !isUnacked(alarm) });
   }
-  for (const p of proposals) if (p.status === "pending" && !out.some((e) => e.kind === "proposal" && Math.abs(e.at - p.createdAt) < 2000)) out.push({ at: p.createdAt, kind: "proposal", who: p.agentUser, agent: true, ord: p.point.startsWith("slot:") ? p.point : undefined, text: p.description, id: p.id });
+  for (const p of proposals) {
+    if (p.status !== "pending") continue;
+    // The log may already tell of it being asked for: that line is the one that waits, and gets its name.
+    const told = out.find((e) => e.kind === "proposal" && !e.id && Math.abs(e.at - p.createdAt) < 2000);
+    const ord = p.point.startsWith("slot:") ? p.point : undefined;
+    if (told) Object.assign(told, { id: p.id, ord: told.ord ?? ord, text: p.description });
+    else out.push({ at: p.createdAt, kind: "proposal", who: p.agentUser, agent: true, ord, text: p.description, id: p.id });
+  }
   return out;
 }
 const nameOf = (ord: string) => ord.split("/").filter((part) => part !== "points").slice(-2).join(" ");
@@ -119,7 +129,8 @@ export function Deck(props: DeckProps) {
   const [ghost, setGhost] = useState<(Ghost & { make: () => Promise<string | void> }) | undefined>();
   const [toast, setToast] = useState<DeckView["toast"] & { until: number }>();
   const [writes, setWrites] = useState(props.allowWrites);
-  const [armed, setArmed] = useState(0);
+  // Where the cursor was in each list, so coming back to one finds it as it was left.
+  const places = useRef(new Map<string, { cursor?: number; scroll: number }>());
   const [mouseOn] = useState(props.mouse ?? false);
   const [net, setNet] = useState<DeckView["net"]>({ state: "live" });
   const [now, setNow] = useState(Date.now());
@@ -127,6 +138,8 @@ export function Deck(props: DeckProps) {
   const [decodeFrom, setDecodeFrom] = useState<number>();
   const [states, setStates] = useState(new Map<string, PointSnapshot>());
   const [past, setPast] = useState<{ key: string; values: Map<string, PointSnapshot>; series: Map<string, number[]> }>({ key: "", values: new Map(), series: new Map() });
+  const [off, setOff] = useState<NonNullable<DeckView["off"]>>(new Map());
+  const [power, setPower] = useState<DeckView["power"]>();
   const frameRef = useRef<Frame | undefined>(undefined);
   const still = props.still ?? /^(off|0|none|reduce)$/i.test(process.env.BASK_MOTION ?? "");
 
@@ -195,10 +208,10 @@ export function Deck(props: DeckProps) {
     if (zoomUnit) {
       const fedBy = site.groups.find((g) => g.by === "serves" && g.members.some((m) => m.ord === zoomUnit.ord))?.feeder;
       const feeds = site.groups.find((g) => g.feeder?.ord === zoomUnit.ord)?.members ?? [];
-      return [...new Set([...zoomUnit.points.map((p) => p.ord), ...(fedBy?.points ?? []).map((p) => p.ord), ...feeds.flatMap((m) => [m.headline?.ord, m.setpoint?.ord].filter((o): o is string => !!o))])].slice(0, LIVE_CAP);
+      return [...new Set([...zoomUnit.points.map((p) => p.ord), ...(fedBy?.points ?? []).map((p) => p.ord), ...feeds.flatMap((m) => [m.headline?.ord, m.setpoint?.ord, m.band?.low.ord, m.band?.high.ord].filter((o): o is string => !!o))])].slice(0, LIVE_CAP);
     }
     const header = (u: Unit) => u.points.filter((p) => /^(supplyFanStatus|fanStatus|runStatus|enableStatus|supplyFanSpeed|fanSpeed|pumpSpeed|supplyAirPressure)$/.test(p.role)).map((p) => p.ord);
-    const ords = site.units.flatMap((u) => [u.headline?.ord, u.setpoint?.ord, ...(u.zone ? [] : header(u))].filter((o): o is string => !!o));
+    const ords = site.units.flatMap((u) => [u.headline?.ord, u.setpoint?.ord, u.band?.low.ord, u.band?.high.ord, ...(u.zone ? [] : header(u))].filter((o): o is string => !!o));
     return [...new Set(ords)].slice(0, LIVE_CAP);
   }, [site, zoomUnit?.ord]);
   const live = useLiveValues(client, "deck", wanted, !!site);
@@ -260,24 +273,42 @@ export function Deck(props: DeckProps) {
 
   // ---- What the lenses and the summary read ---------------------------------------------------------
   const proposals = useMemo(() => [...proposalStore.proposals.values()], [proposalStore.proposals]);
+  // Notes left with `note` are kept on this computer; they are read again every few seconds so one
+  // an agent leaves in another pane shows up here.
+  const [notes, setNotes] = useState<DeckEvent[]>([]);
+  useEffect(() => {
+    const read = () => {
+      try {
+        const found = readNotes(getProfile(props.profileName).profile.station).map((n): DeckEvent => ({ at: n.at, kind: "note", who: n.who, agent: n.agent, ord: n.ord, text: `${n.who} noted: ${n.text}` }));
+        setNotes((before) => (before.length === found.length ? before : found));
+      } catch {
+        // a station with no saved profile (a test, a demo) has no notes
+      }
+    };
+    read();
+    const timer = setInterval(read, 5000);
+    return () => clearInterval(timer);
+  }, [props.profileName]);
   const events = useMemo(() => {
     const inHand = (ord: string) => {
       const snapshot = live.get(ord) ?? states.get(ord);
       return snapshot ? snapshot.state === "overridden" || /overridden/.test(String(snapshot.status ?? "")) : undefined;
     };
     // An alarm that is still open stays, however long ago it came in; the time bar draws what falls in its span.
-    return eventsOf(activity.entries, alarmStore.alarms, proposals, inHand).filter((e) => e.at >= from - DAY || e.kind === "alarm" || (e.kind === "override" && e.until === undefined));
-  }, [activity.entries, alarmStore.alarms, proposals, from, live, states]);
+    const station = eventsOf(activity.entries, alarmStore.alarms, proposals, inHand).filter((e) => e.at >= from - DAY || e.kind === "alarm" || (e.kind === "override" && e.until === undefined));
+    return [...station, ...notes.filter((n) => n.at >= from - DAY)];
+  }, [activity.entries, alarmStore.alarms, proposals, from, live, states, notes]);
   const marks = useMemo(() => {
     const out = new Map<string, UnitMarks>();
     if (!site) return out;
-    const of = (unit: Unit) => out.get(unit.ord) ?? out.set(unit.ord, { open: 0, unacked: 0, fault: false, overrides: 0, people: 0, agents: 0, waiting: 0 }).get(unit.ord)!;
+    const of = (unit: Unit) => out.get(unit.ord) ?? out.set(unit.ord, { open: 0, unacked: 0, active: 0, fault: false, overrides: 0, people: 0, agents: 0, waiting: 0 }).get(unit.ord)!;
     for (const alarm of alarmStore.alarms.values()) {
       const unit = ownerOf(site, toSlotOrd(String(((alarm.sources ?? []) as string[])[0] ?? "")));
       if (!unit) continue;
       const m = of(unit);
       m.open += 1;
       if (isUnacked(alarm)) m.unacked += 1;
+      if (!/^(normal|)$/.test(alarmState(alarm))) m.active += 1;
       if (/fault/i.test(String(alarm.sourceState ?? ""))) m.fault = true;
     }
     for (const unit of site.units) {
@@ -323,6 +354,45 @@ export function Deck(props: DeckProps) {
     return out;
   }, [states, live, at, past, from, span]);
 
+  // What is not running right, and the site's meter: looked at once the map is up, then now and then.
+  // Both read histories, so they wait for the first readings and stay off the station's back.
+  const valuesRef = useRef(values);
+  valuesRef.current = values;
+  const siteKey = site ? `${site.station}|${site.units.length}` : "";
+  useEffect(() => {
+    if (!site) return;
+    let cancelled = false;
+    const units = site.units.filter((u) => u.kind !== "unknown");
+    const look = async () => {
+      const stamp = Date.now();
+      const found = await behaviourOf(units, {
+        now: (ord) => {
+          const value = valuesRef.current.get(ord)?.value;
+          return typeof value === "number" || typeof value === "boolean" ? value : undefined;
+        },
+        past: async (ord, hours, buckets) => (await seriesFor(client, ord, stamp - hours * 3600_000, stamp, buckets).catch(() => undefined))?.map((s) => s.value)
+      }).catch(() => undefined);
+      if (cancelled || !found) return;
+      const next = new Map<string, { kind: string; point: string; message: string }[]>();
+      for (const f of found.findings) next.set(f.where, [...(next.get(f.where) ?? []), { kind: f.kind, point: f.point, message: f.message }]);
+      setOff(next);
+    };
+    const meter = async () => {
+      const read = await readEnergy(client, { limit: 1 }).catch(() => undefined);
+      const main = read?.points.find((p) => p.main);
+      if (!cancelled) setPower(main ? { ord: main.ord, now: main.now, peak: main.peak, peakAt: main.peakAt } : undefined);
+    };
+    const first = setTimeout(() => void look().then(meter), 2500);
+    const again = setInterval(() => void look(), 15 * 60_000);
+    const meterAgain = setInterval(() => void meter(), 5 * 60_000);
+    return () => {
+      cancelled = true;
+      clearTimeout(first);
+      clearInterval(again);
+      clearInterval(meterAgain);
+    };
+  }, [client, siteKey]);
+
   // ---- The clock for what moves ---------------------------------------------------------------------
   const anyFault = useMemo(() => [...marks.values()].some((m) => m.fault), [marks]);
   useEffect(() => {
@@ -355,11 +425,11 @@ export function Deck(props: DeckProps) {
   }, [toast]);
 
   // ---- Moving about ---------------------------------------------------------------------------------
-  const openUnit = useCallback((ord: string) => {
+  const openUnit = useCallback((ord: string, point?: string) => {
     const unit = unitOf(site, ord);
     if (!unit) return;
     setZoom({ level: "unit", unit: ord });
-    setFocus((unit.headline ?? unit.points[0])?.ord);
+    setFocus((unit.points.find((p) => p.ord === point) ?? unit.headline ?? unit.points[0])?.ord);
     setScroll(0);
     setDecodeFrom(Date.now());
   }, [site]);
@@ -385,8 +455,17 @@ export function Deck(props: DeckProps) {
       const down = there.y - here.y;
       if (dx && Math.sign(across) !== dx) continue;
       if (dy && Math.sign(Math.round(down)) !== dy) continue;
+      // Up and down stay on the map, or in the list beside it; left and right cross between the two.
+      if (dy && stop.id.startsWith("do:") !== current.id.startsWith("do:")) continue;
       if (dx && Math.abs(down) > 1.5) continue; // left and right stay on the row
       ahead.push({ stop, along: Math.abs(dx ? across : down), off: Math.abs(dx ? down : across) });
+    }
+    // Nothing on the row that way: whatever is that way and nearest in height, so the arrows reach what sits beside the map.
+    if (dx && !ahead.length) {
+      for (const stop of stops) {
+        const there = centre(stop);
+        if (stop !== current && Math.sign(there.x - here.x) === dx && (stop.id.startsWith("do:") !== current.id.startsWith("do:"))) ahead.push({ stop, along: Math.abs(there.y - here.y), off: Math.abs(there.x - here.x) });
+      }
     }
     const nearest = Math.min(...ahead.map((a) => a.along));
     const best = ahead.filter((a) => a.along <= nearest + (dy ? 1 : 0)).sort((a, b) => a.off - b.off || a.along - b.along)[0]?.stop;
@@ -426,7 +505,31 @@ export function Deck(props: DeckProps) {
   const context: CommandContext = {
     client, site, zoom, focus, writes, lens,
     say,
-    show: (title: string, lines: ResultLine[]) => setResult({ title, lines, scroll: 0 }),
+    show: (title, lines, more) => setResult((was) => {
+      // A list made again after a change, or come back to, keeps the cursor where it was.
+      const first = lines.findIndex((l) => l.run || l.keys);
+      if (was?.again) places.current.set(was.again, { cursor: was.cursor, scroll: was.scroll });
+      const kept = more?.again ? places.current.get(more.again) : undefined;
+      const same = was && more?.again && was.again === more.again;
+      let cursor = first < 0 ? undefined : kept?.cursor !== undefined ? Math.max(first, Math.min(lines.length - 1, kept.cursor)) : first;
+      // The line it was on may have gone: the nearest one that can be chosen.
+      while (cursor !== undefined && cursor > first && !(lines[cursor].run || lines[cursor].keys)) cursor -= 1;
+      // A card opened from a list goes back to that list.
+      const back = same ? was.back : was?.again && /^(needs|alarms|inbox)\b/.test(was.again) && /^do /.test(more?.again ?? "") ? was.again : undefined;
+      return { title, lines, scroll: kept ? Math.min(kept.scroll, Math.max(0, lines.length - 3)) : 0, cursor, ...more, back };
+    }),
+    ask: (text) => {
+      setResult(undefined);
+      setPrompt({ text, cursor: [...text].length });
+      setKeys("prompt");
+    },
+    done: () => {
+      const open = resultRef.current;
+      if (open?.back) run(open.back);
+      else setResult(undefined);
+    },
+    setWrites,
+    profile: props.profileName,
     propose: (next) => setGhost(next),
     tiles,
     settle: (review, nextTiles) => {
@@ -436,6 +539,7 @@ export function Deck(props: DeckProps) {
     },
     answer: (why) => {
       setToast(undefined);
+      setResult(undefined);
       setAnswer({ why, undo: undoOf(why), scroll: 0 });
       // The small charts of the points in the answer that are not on screen already.
       const ords = [why.ord, ...(why.siblings ?? []).map((sib) => sib.ord), ...(why.upstream ?? []).flatMap((u) => u.issues.filter((i) => i.turn).map((i) => i.ord))].filter((ord) => !past.series.has(ord) && !extra.has(ord));
@@ -447,7 +551,10 @@ export function Deck(props: DeckProps) {
         return [ord, filled.map((v) => v ?? filled.find((x) => x !== undefined) ?? 0)] as const;
       })).then((got) => setExtra((map) => new Map([...map, ...got.filter(([, values]) => values.length > 1)])));
     },
-    open: openUnit,
+    open: (ord, point) => {
+      setResult(undefined);
+      openUnit(ord, point);
+    },
     back,
     setLens,
     setAt: (ms) => {
@@ -458,6 +565,12 @@ export function Deck(props: DeckProps) {
     classic: props.onClassic,
     values, events, span: { from, to }, at
   };
+
+  const contextRef = useRef(context);
+  contextRef.current = context;
+  const resultRef = useRef(result);
+  resultRef.current = result;
+  const run = (line: string) => void runCommand(line, contextRef.current).catch((error: Error) => say(error.message, "bad"));
 
   const submit = (text: string) => {
     const line = text.trim();
@@ -472,9 +585,19 @@ export function Deck(props: DeckProps) {
     if (key.ctrl && input === "c") return exit();
     if (ghost) {
       if (key.return) {
+        // The first change from a window turns changes on, here, and then asks once more.
+        if (!writes) {
+          setWrites(true);
+          return say("Changes are on in this window. Press enter to make this one.", "warn");
+        }
         const mine = ghost;
         setGhost(undefined);
-        void mine.make().then((done) => done && say(done, "good"), (error: Error) => say(error.message, "bad"));
+        void mine.make().then((done) => {
+          if (done) say(done, "good");
+          // A list that is open is made again once the station has said what changed.
+          const again = resultRef.current?.again;
+          if (again) setTimeout(() => resultRef.current?.again === again && run(again), 900);
+        }, (error: Error) => say(error.message, "bad"));
       } else if (key.escape) {
         setGhost(undefined);
         say("Dropped. Nothing was changed.");
@@ -491,7 +614,6 @@ export function Deck(props: DeckProps) {
       }
       if (input === "f" && answer.undo) {
         const u = answer.undo;
-        if (!writes) return say("This window is read-only. Press W twice to allow changes, then f again.", "warn");
         return setGhost({
           id: "", from: "you", agent: false,
           lines: [{ verb: "set", what: u.name, before: u.to, after: u.from }],
@@ -504,22 +626,39 @@ export function Deck(props: DeckProps) {
         });
       }
       if (input === ":" || input === "/") return setKeys("prompt");
-      if (input === "W") {
-        if (writes) return setWrites(false);
-        if (Date.now() - armed < 6000) {
-          setWrites(true);
-          setArmed(0);
-          return say("Changes are on in this window. Each one still shows first and asks.", "warn");
-        }
-        setArmed(Date.now());
-        return say("Press W again to allow changes from this window.", "warn");
-      }
       return;
     }
-    if (result) {
-      if (key.escape || key.return || input === "q") return setResult(undefined);
+    if (result && keys !== "prompt") {
+      if (key.escape && result.back) return run(result.back);
+      if (key.escape || input === "q") return setResult(undefined);
       const by = key.upArrow || input === "k" ? -1 : key.downArrow || input === "j" ? 1 : key.pageUp ? -10 : key.pageDown || input === " " ? 10 : 0;
-      if (by) setResult({ ...result, scroll: Math.max(0, Math.min(Math.max(0, result.lines.length - 4), result.scroll + by)) });
+      if (result.cursor === undefined) {
+        if (key.return) return setResult(undefined);
+        if (by) setResult({ ...result, scroll: Math.max(0, Math.min(Math.max(0, result.lines.length - 4), result.scroll + by)) });
+        return;
+      }
+      // A list with a cursor: it moves over the lines that can be chosen, and the list scrolls to keep it in view.
+      if (by) {
+        let next = result.cursor;
+        for (let left = Math.abs(by); left > 0; left -= 1) {
+          let at = next + Math.sign(by);
+          while (at >= 0 && at < result.lines.length && !(result.lines[at].run || result.lines[at].keys)) at += Math.sign(by);
+          if (at < 0 || at >= result.lines.length) break;
+          next = at;
+        }
+        const room = Math.max(1, Math.min(size.rows - 9, result.lines.length));
+        const scroll = Math.max(0, Math.min(Math.max(0, result.lines.length - room), next < result.scroll + 1 ? next - 1 : next >= result.scroll + room - 1 ? next - room + 2 : result.scroll));
+        return setResult({ ...result, cursor: next, scroll });
+      }
+      const here = result.lines[result.cursor];
+      if (key.return) {
+        // What it runs takes the list's place, or the screen's; a change is shown over it and comes back here.
+        if (!here?.run) return;
+        return run(here.run);
+      }
+      if (input === ":" || input === "/") return setKeys("prompt");
+      const command = here?.keys?.[input] ?? result.keys?.[input];
+      if (command) return run(command);
       return;
     }
     if (keys === "prompt") {
@@ -568,21 +707,10 @@ export function Deck(props: DeckProps) {
     if (input === ">") return jumpEvent(1);
     if (input === "[") return setSpanIndex((i) => Math.max(0, i - 1));
     if (input === "]") return setSpanIndex((i) => Math.min(SPANS.length - 1, i + 1));
-    if (input === "W") {
-      if (writes) {
-        setWrites(false);
-        return say("This window is read-only again.");
-      }
-      if (Date.now() - armed < 6000) {
-        setWrites(true);
-        setArmed(0);
-        return say("Changes are on in this window. Each one still shows first and asks. W turns them off.", "warn");
-      }
-      setArmed(Date.now());
-      return say(`Press W again to allow changes to ${station ?? "this station"} from this window.`, "warn");
-    }
     if (input === "?") return void runCommand("keys", context);
     if (input === "r") return void runCommand("review", context);
+    if (input === "i") return run(zoomUnit ? `needs ${zoomUnit.name}` : "needs");
+    if (input === "g" && zoom.level === "site") return run("arrange");
     if (input === "c" && props.onClassic) return props.onClassic();
     if (keys === "time") {
       if (key.escape) return setKeys("map");
@@ -592,9 +720,10 @@ export function Deck(props: DeckProps) {
     }
     if (key.escape || key.backspace || key.delete) return back();
     if (key.return) {
-      if (zoom.level === "site" && focus) return openUnit(focus);
-      if (zoom.level !== "site" && focus) return void runCommand(`why ${focus}`, context).catch((error: Error) => say(error.message, "bad"));
-      return;
+      // Enter opens what the cursor is on: a unit's page, or what can be done to a point, an alarm or a change that waits.
+      if (!focus) return;
+      if (focus.startsWith("do:")) return run(`do ${focus.slice(3)}`);
+      return zoom.level === "site" ? openUnit(focus) : run(`do point ${focus}`);
     }
     if (key.leftArrow || input === "h") return zoom.level === "site" ? move(-1, 0) : back();
     if (key.rightArrow) return zoom.level === "site" ? move(1, 0) : undefined;
@@ -602,11 +731,6 @@ export function Deck(props: DeckProps) {
     if (key.downArrow || input === "j") return move(0, 1);
     if (key.pageDown) return setScroll((n) => n + 6);
     if (key.pageUp) return setScroll((n) => Math.max(0, n - 6));
-    if (input === "w" && focus && zoom.level !== "site") return void runCommand(`why ${focus}`, context).catch((error: Error) => say(error.message, "bad"));
-    if (input === "s" && focus && zoom.level !== "site") {
-      setPrompt({ text: `set ${focus.split("/").pop()} `, cursor: [...`set ${focus.split("/").pop()} `].length });
-      return setKeys("prompt");
-    }
   });
 
   useMouse((e) => {
@@ -643,7 +767,12 @@ export function Deck(props: DeckProps) {
     if (kind === "point") {
       setKeys("map");
       if (focus !== id) return setFocus(id);
-      return void runCommand(`why ${id}`, context).catch((error: Error) => say(error.message, "bad"));
+      return run(`do point ${id}`);
+    }
+    if (kind === "do") {
+      setKeys("map");
+      setFocus(hit.id);
+      return run(`do ${id}`);
     }
   }, mouseOn);
 
@@ -655,7 +784,7 @@ export function Deck(props: DeckProps) {
     zoom, focus, lens, values, series: extra.size ? new Map([...past.series, ...extra]) : past.series, marks, events, answer, turnAt: answer?.why.turn?.at,
     span: { from, to }, at, keys, prompt, net, writes, now,
     fx: { born: born.current, decodeFrom, reduced: still },
-    result, ghost, toast, scroll
+    result, ghost, toast, scroll, off: at === undefined ? off : undefined, power: at === undefined ? power : undefined
   };
   const frame = drawDeck(view);
   frameRef.current = frame;

@@ -4,11 +4,12 @@
 // inventory behind bask px qa. The rules are data (check-rules.ts).
 import chalk from "chalk";
 import { BaskStreamError, toSlotOrd, type BaskStreamClient, type BrowseNode, type Json } from "./core.js";
+import { findBehaviour, type BehaviourResult } from "./behaviour.js";
 import type { Condition, Rule, Severity } from "./check-rules.js";
 import { csv, shortOrd, table } from "./format.js";
 
 /** Every operation a check sends. None of them changes the station. */
-export const CHECK_OPERATIONS = ["query", "browse", "describe_component", "read_schedule", "read_history", "describe_history", "read_alarms", "graphics_inventory"] as const;
+export const CHECK_OPERATIONS = ["query", "browse", "describe_component", "read_schedule", "read_history", "read_history_rollup", "read", "read_tags", "describe_history", "read_alarms", "graphics_inventory"] as const;
 
 export type Row = Record<string, unknown>;
 
@@ -394,11 +395,25 @@ export async function runCheck(client: BaskStreamClient, rules: Rule[], options:
     return { overrides: overridesIn(records), oldest: times.length ? Math.min(...times) : undefined, truncated: lists.some((h) => h.truncated === true) };
   }));
 
+  // Every behaviour rule shares one look at the equipment.
+  let behaved: Promise<BehaviourResult> | undefined;
+  const behaviour = () => (behaved ??= findBehaviour(client, under));
+
   const run = async (rule: Rule): Promise<{ outcome: RuleOutcome; findings: Finding[] }> => {
     const outcome: RuleOutcome = { id: rule.id, group: rule.group, title: rule.title, ...(rule.severity ? { severity: rule.severity } : {}), rows: 0, findings: 0 };
     const finding = (severity: Severity, where: string, message: string): Finding => ({ rule: rule.id, group: rule.group, severity, title: rule.title, where, message });
     let op = "query";
     try {
+      if (rule.behaviour) {
+        op = "read_history_rollup";
+        const result = await behaviour();
+        const mine = result.findings.filter((item) => item.kind === rule.behaviour);
+        outcome.rows = result.looked[rule.behaviour];
+        if (result.truncated) outcome.truncated = true;
+        if (!outcome.rows) outcome.skipped = result.units ? "no unit here has the points this needs" : "no equipment was recognised here";
+        outcome.findings = mine.length;
+        return { outcome, findings: mine.map((item) => finding(rule.severity ?? "warning", item.where, item.message)) };
+      }
       if (rule.graphics) {
         op = "graphics_inventory";
         const inventory = await client.graphicsInventory({ ...(under === "slot:/" ? {} : { under }), checkBindings: true });

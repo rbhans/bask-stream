@@ -3,7 +3,7 @@ import type { PointSnapshot } from "@basidekick/baskstream";
 import { ASCII_S, SIGNAL_MS, WORDMARK_ROWS, WORDMARK_WIDTH, decodeAt, ditherBand, drawAsciiS, drawFigures, drawMark, drawWordmark, figuresWidth, putGlitch } from "./art.js";
 import { drawAnswer } from "./answer.js";
 import { P, mix } from "./brand.js";
-import { tileLabels, type Group, type Site, type SitePoint, type Unit } from "./site.js";
+import { tileLabels, type Group, type Site, type SitePoint, type Unit, type WaterFed } from "./site.js";
 import { Surface, type Rect, type Style } from "./surface.js";
 import { LENSES, unitOf, type DeckEvent, type DeckView, type Hit, type Lens, type UnitMarks } from "./view.js";
 import { bounds, brailleLine, resample } from "../tui/chart.js";
@@ -61,11 +61,30 @@ const isDown = (snapshot: PointSnapshot | undefined) => !!snapshot && (snapshot.
 /** How far a unit's headline is from its setpoint, when it has both. */
 export function deviation(view: DeckView, unit: Unit): number | undefined {
   const value = numberOf(unit.headline && view.values.get(unit.headline.ord));
+  if (value === undefined) return undefined;
+  // Between a heating and a cooling setpoint is where it should be: off only below the one or above the other.
+  const low = numberOf(unit.band && view.values.get(unit.band.low.ord));
+  const high = numberOf(unit.band && view.values.get(unit.band.high.ord));
+  if (low !== undefined && high !== undefined) return value < low ? value - low : value > high ? value - high : 0;
   const target = numberOf(unit.setpoint && view.values.get(unit.setpoint.ord));
-  return value === undefined || target === undefined ? undefined : value - target;
+  return target === undefined ? undefined : value - target;
 }
 
-const NO_MARKS: UnitMarks = { open: 0, unacked: 0, fault: false, overrides: 0, people: 0, agents: 0, waiting: 0 };
+/** What a unit is held to, as a tile says it: "72°", or "70–74°" between a heating and a cooling setpoint. */
+function heldTo(view: DeckView, unit: Unit): string | undefined {
+  if (unit.band) {
+    const low = view.values.get(unit.band.low.ord);
+    const high = view.values.get(unit.band.high.ord);
+    if (numberOf(low) !== undefined && numberOf(high) !== undefined) return `${short(low, unit.band.low).replace("°", "").replace(/\.0$/, "")}–${short(high, unit.band.high).replace(/\.0(?=°|$)/, "")}`;
+  }
+  const target = unit.setpoint ? view.values.get(unit.setpoint.ord) : undefined;
+  return target ? short(target, unit.setpoint) : undefined;
+}
+const offBy = (dev: number) => `${dev >= 0 ? "+" : "−"}${Math.abs(dev).toFixed(1)}`;
+
+/** The mark for a unit that is not running right: not an alarm, something its readings show. */
+const OFF_MARK = "≠";
+const NO_MARKS: UnitMarks = { open: 0, unacked: 0, active: 0, fault: false, overrides: 0, people: 0, agents: 0, waiting: 0 };
 
 /** A tile's ground, the colour of its value, and a small mark, under the lens in use. */
 function tileLook(view: DeckView, unit: Unit): { bg: string; fg: string; label: string; mark?: { text: string; fg: string }; bold?: boolean } {
@@ -79,13 +98,14 @@ function tileLook(view: DeckView, unit: Unit): { bg: string; fg: string; label: 
     const dev = deviation(view, unit);
     if (dev === undefined) return calm;
     const size = Math.abs(dev);
-    if (size < 1) return { bg: mix(P.panel2, P.ok, 0.1), fg: P.ink, label: P.ink3 };
+    if (size < 1) return { bg: mix(P.panel2, P.ok, 0.16), fg: P.ink, label: P.ink3 };
     return on(dev > 0 ? P.warm : P.cold, Math.min(0.78, 0.2 + 0.58 * Math.min(1, (size - 1) / 4)));
   }
   if (view.lens === "alarms") {
-    if (marks.unacked) return { ...on(P.alarm, 0.7), mark: { text: `▲${marks.unacked}`, fg: P.ink } };
+    if (marks.active) return { ...on(P.alarm, 0.7), mark: { text: `▲${marks.active}`, fg: P.ink } };
     if (marks.fault) return { ...on(P.fault, 0.45), mark: { text: "fault", fg: P.ink } };
-    if (marks.open) return { ...on(P.alarm, 0.25), mark: { text: `▲${marks.open}`, fg: P.ink2 } };
+    // Back to normal and only waiting to be acknowledged: marked, and quieter.
+    if (marks.unacked) return { ...on(P.alarm, 0.22), mark: { text: `△${marks.unacked}`, fg: P.ink2 } };
     return calm;
   }
   if (view.lens === "overrides") return marks.overrides ? { ...on(P.hand, 0.55), mark: { text: `${marks.overrides} hand`, fg: P.ink } } : calm;
@@ -230,7 +250,7 @@ function drawHeader(s: Surface, view: DeckView, pad: number, hits: Hit[]): void 
     hits.push({ x, y, width: crumb.text.length, height: 1, id: crumb.id });
     x += s.put(x, y, crumb.text, { fg: last ? P.ink : P.ink3, bold: i === 0 });
   });
-  if (view.zoom.level === "site") x += s.put(x, y, " ▸ whole site", { fg: P.ink3 });
+  if (view.zoom.level === "site") x += s.put(x, y, ` ▸ whole site${view.site ? ` · by ${view.site.arrange === "feeds" ? "what feeds what" : view.site.arrange === "place" ? "building and floor" : "type"}` : ""}`, { fg: P.ink3 });
 
   // Right side, from the edge inward: the clock, changes on or off, live or the moment looked at.
   let right = view.width - pad;
@@ -280,7 +300,7 @@ function feederFacts(view: DeckView, unit: Unit): { state: [string, Style?][]; f
     const bad = isDown(reading);
     facts.push([`${label} `, { fg: P.ink3 }], [`${short(reading, point)}${point.unit && !/°|%/.test(point.unit) ? ` ${point.unit}` : ""}  `, { fg: bad ? P.fault : P.ink2 }]);
   };
-  if (unit.headline) add(unit.headline.role === "supplyAirTemp" ? "SUPPLY" : unit.headline.label.split(" ")[0].toUpperCase(), unit.headline);
+  if (unit.headline) add(/SupplyTemp$/i.test(unit.headline.role) ? "SUPPLY" : unit.headline.label.split(" ")[0].toUpperCase(), unit.headline);
   add("DUCT", of("supplyAirPressure"));
   return { state, facts };
 }
@@ -307,7 +327,80 @@ interface SitePlan {
   perRow: number;
   padTop: number;
   heightOf: (group: Group) => number;
+  widthOf: (group: Group) => number;
   height: number;
+}
+
+/** The map's groups under a heading for each side of the building's systems, when the sides are known. */
+function sectionsOf(site: Site): { title?: string; groups: Group[] }[] {
+  const sides: [Group["side"], string][] = [["water", "WATER SIDE"], ["air", "AIR SIDE"], [undefined, "EVERYTHING ELSE"]];
+  const made = sides.map(([side, title]) => ({ title, groups: site.groups.filter((g) => g.side === side) })).filter((section) => section.groups.length);
+  return site.arrange === "feeds" && made.length > 1 ? made : [{ groups: site.groups }];
+}
+
+const KIND_WORDS: Record<string, [string, string]> = { ahu: ["air handler", "air handlers"], vav: ["VAV box", "VAV boxes"], fcu: ["fan coil", "fan coils"], crac: ["CRAC", "CRACs"] };
+const waterHead = (fed: WaterFed) => `${fed.medium === "chilledWater" ? "CHILLED WATER" : "HOT WATER"} TO ${fed.units.length}${fed.guessed ? "  guessed" : ""}`;
+/** The most lines of names under a plant before they give way to how many of each kind. */
+const WATER_LINES = 3;
+
+/** How what a plant sends water to is laid out in `room` columns: each unit by name over a few lines, else one line of counts. */
+function waterPlan(fed: WaterFed, room: number): { rows: Unit[][]; indent: number } | undefined {
+  const indent = waterHead(fed).length + 3;
+  if (room - indent < 16) return undefined;
+  const rows: Unit[][] = [[]];
+  let used = 0;
+  for (const unit of fed.units) {
+    // A name, its valve ("100%") and the gap to the next.
+    const width = unit.name.length + 8;
+    if (used + width - 3 > room - indent && rows[rows.length - 1].length) {
+      rows.push([]);
+      used = 0;
+    }
+    rows[rows.length - 1].push(unit);
+    used += width;
+  }
+  return rows.length <= WATER_LINES ? { rows, indent } : undefined;
+}
+
+/** The lines under a plant's name that say what it sends water to. */
+const waterRows = (group: Group, room: number) => (group.by === "part" ? Math.max(1, (group.water ?? []).reduce((n, fed) => n + (waterPlan(fed, room)?.rows.length ?? 1), 0)) : 0);
+
+/** How far open a unit's valve for this water is, when it has one that reads as a number. */
+function valveOf(view: DeckView, unit: Unit, medium: WaterFed["medium"]): number | undefined {
+  const roles = medium === "chilledWater" ? ["coolingValve"] : ["heatingValve", "reheatValve"];
+  const point = unit.points.find((p) => roles.includes(p.role));
+  return point ? numberOf(view.values.get(point.ord)) : undefined;
+}
+
+/** What a plant sends water to: each unit with its valve when they fit, else how many of each kind and how many are calling. Returns the lines used. */
+function drawWater(s: Surface, view: DeckView, fed: WaterFed, x: number, y: number, room: number, visible: (row: number) => boolean): number {
+  const colour = fed.medium === "chilledWater" ? P.cyan : P.warm;
+  const head: [string, Style?][] = [[waterHead(fed).replace(/  guessed$/, ""), { fg: colour, bold: true }], [fed.guessed ? "  guessed" : "", { fg: P.ink3, italic: true }]];
+  if (visible(y)) run(s, x, y, head, room);
+  const plan = waterPlan(fed, room);
+  // With no valve to show on any of them, the names sit closer.
+  const pad = fed.units.some((unit) => valveOf(view, unit, fed.medium) !== undefined) ? 8 : 3;
+  if (plan) {
+    plan.rows.forEach((row, i) => {
+      if (!visible(y + i)) return;
+      run(s, x + plan.indent, y + i, row.flatMap((unit): [string, Style?][] => {
+        const valve = valveOf(view, unit, fed.medium);
+        const open = valve !== undefined && valve > 5;
+        return [[unit.name, { fg: P.ink2 }], [(valve === undefined ? "" : ` ${Math.round(valve)}%`).padEnd(pad), { fg: open ? P.ink : P.ink3, bold: open }]];
+      }), room - plan.indent);
+    });
+    return plan.rows.length;
+  }
+  const kinds = new Map<string, number>();
+  for (const unit of fed.units) kinds.set(unit.kind, (kinds.get(unit.kind) ?? 0) + 1);
+  const counts = [...kinds].map(([kind, n]) => {
+    const label = fed.units.find((u) => u.kind === kind)!.label;
+    return `${n} ${(KIND_WORDS[kind] ?? [label, `${label}s`])[n === 1 ? 0 : 1]}`;
+  }).join(" · ");
+  const valves = fed.units.map((unit) => valveOf(view, unit, fed.medium)).filter((v): v is number => v !== undefined);
+  const calling = valves.filter((v) => v > 5).length;
+  if (visible(y)) run(s, x + lengthOf(head) + 3, y, [[counts, { fg: P.ink2 }], ...(valves.length ? [["   "], [`${calling} calling`, { fg: calling ? P.ink : P.ink3, bold: calling > 0 }]] as [string, Style?][] : [])], room - lengthOf(head) - 3);
+  return 1;
 }
 
 function planSite(site: Site, width: number, size: TileSize, plantRows: number): SitePlan {
@@ -320,13 +413,27 @@ function planSite(site: Site, width: number, size: TileSize, plantRows: number):
   const perRow = Math.max(1, Math.min(fits, Math.max(...site.groups.map((g) => g.members.length), 1)));
   if (size.name !== "small") size = { ...size, width: Math.min(Math.round(size.width * 1.3), Math.floor((groupWidth - 4 + size.gapX) / perRow) - size.gapX) };
   const padTop = size.name === "small" ? 0 : 1;
+  // A plant alone at the end of its row takes the empty room beside it, so what it sends water to can be named.
+  const widths = new Map<Group, number>();
+  for (const section of sectionsOf(site)) {
+    for (let first = 0; first < section.groups.length; first += columns) {
+      const row = section.groups.slice(first, first + columns);
+      const last = row[row.length - 1];
+      if (row.length < columns && last.by === "part") widths.set(last, (columns - row.length + 1) * (groupWidth + gap) - gap);
+    }
+  }
+  const widthOf = (group: Group) => widths.get(group) ?? groupWidth;
   const heightOf = (group: Group) => {
     const rows = Math.ceil(group.members.length / perRow);
-    return padTop + 1 + (rows ? 1 + rows * size.height + (rows - 1) * size.gapY : 1) + 1;
+    const water = waterRows(group, widthOf(group) - 4);
+    return padTop + 1 + water + (rows ? 1 + rows * size.height + (rows - 1) * size.gapY : water ? 0 : 1) + 1;
   };
   let height = plantRows;
-  for (let first = 0; first < site.groups.length; first += columns) height += Math.max(...site.groups.slice(first, first + columns).map(heightOf)) + 1;
-  return { size, columns, groupWidth, perRow, padTop, heightOf, height: height - 1 };
+  for (const section of sectionsOf(site)) {
+    if (section.title) height += 1;
+    for (let first = 0; first < section.groups.length; first += columns) height += Math.max(...section.groups.slice(first, first + columns).map(heightOf)) + 1;
+  }
+  return { size, columns, groupWidth, perRow, padTop, heightOf, widthOf, height: height - 1 };
 }
 
 function drawSite(s: Surface, view: DeckView, area: Rect, hits: Hit[], stops: Stop[]): number {
@@ -334,57 +441,38 @@ function drawSite(s: Surface, view: DeckView, area: Rect, hits: Hit[], stops: St
   // On a wide screen, what needs a person sits in a rail beside the map.
   const railWidth = area.width >= 128 ? Math.min(44, Math.floor(area.width * 0.3)) : 0;
   const body: Rect = { ...area, width: area.width - (railWidth ? railWidth + 2 : 0) };
-  if (railWidth) drawRail(s, view, { x: area.x + area.width - railWidth, y: area.y, width: railWidth, height: area.height }, hits);
+  if (railWidth) drawRail(s, view, { x: area.x + area.width - railWidth, y: area.y, width: railWidth, height: area.height }, hits, stops);
   let y = body.y - view.scroll;
   const visible = (row: number, rows = 1) => row >= body.y && row + rows <= body.y + body.height;
   let index = 0;
 
-  // Plant, as a strip of chips.
   const plantTop = y;
-  if (site.plant.length) {
-    let x = body.x;
-    for (const unit of site.plant) {
-      const reading = unit.headline ? view.values.get(unit.headline.ord) : undefined;
-      const { state } = feederFacts(view, unit);
-      const marks = view.marks.get(unit.ord) ?? NO_MARKS;
-      const focused = view.focus === unit.ord && view.keys === "map";
-      const value = unit.headline ? reading2(view, short(reading, unit.headline), index++) : "";
-      const parts: [string, Style?][] = [[` ${unit.name} `, focused ? { fg: P.accentInk, bg: P.accent, bold: true } : { fg: P.ink2, bg: P.panel2 }]];
-      if (state.length) parts.push([" ", { bg: P.panel2 }], ...state.map(([text, style]) => [text, { ...style, bg: P.panel2 }] as [string, Style]));
-      if (value) parts.push([` ${value}`, { fg: P.ink, bg: P.panel2, bold: true }]);
-      if (marks.unacked || marks.fault) parts.push([" ▲", { fg: marks.unacked ? P.alarm : P.fault, bg: P.panel2 }]);
-      parts.push([" ", { bg: P.panel2 }]);
-      const width = lengthOf(parts);
-      if (x + width > body.x + body.width) {
-        x = body.x;
-        y += 2;
-      }
-      if (visible(y)) {
-        run(s, x, y, parts);
-        hits.push({ x, y, width, height: 1, id: `unit:${unit.ord}` });
-      }
-      stops.push({ id: unit.ord, x, y, width, height: 1 });
-      x += width + 1;
-    }
-    y += 2;
-  }
 
   // Groups, side by side as many as fit. Tiles are as big as the room allows.
   const plan = SIZES.map((size) => planSite(site, body.width, size, y - plantTop)).find((p, i) => p.height <= body.height || i === SIZES.length - 1)!;
   const gap = 2;
-  for (let first = 0; first < site.groups.length; first += plan.columns) {
-    const row = site.groups.slice(first, first + plan.columns);
-    const tall = Math.max(...row.map(plan.heightOf));
-    row.forEach((group, column) => {
-      const x = body.x + column * (plan.groupWidth + gap);
-      const rect = { x, y, width: plan.groupWidth, height: tall };
-      // The group's ground, only the part of it that is in view.
-      const from = Math.max(rect.y, body.y);
-      const to = Math.min(rect.y + rect.height, body.y + body.height);
-      if (to > from) s.fill({ x, y: from, width: plan.groupWidth, height: to - from }, P.panel);
-      index = drawGroup(s, view, group, rect, plan, visible, hits, stops, index);
-    });
-    y += tall + 1;
+  for (const section of sectionsOf(site)) {
+    if (section.title) {
+      if (visible(y)) {
+        const used = s.put(body.x, y, section.title, { fg: P.ink2, bold: true });
+        for (let i = used + 1; i < body.width; i += 1) s.put(body.x + i, y, "─", { fg: P.line2 });
+      }
+      y += 1;
+    }
+    for (let first = 0; first < section.groups.length; first += plan.columns) {
+      const row = section.groups.slice(first, first + plan.columns);
+      const tall = Math.max(...row.map(plan.heightOf));
+      row.forEach((group, column) => {
+        const x = body.x + column * (plan.groupWidth + gap);
+        const rect = { x, y, width: plan.widthOf(group), height: tall };
+        // The group's ground, only the part of it that is in view.
+        const from = Math.max(rect.y, body.y);
+        const to = Math.min(rect.y + rect.height, body.y + body.height);
+        if (to > from) s.fill({ x, y: from, width: rect.width, height: to - from }, P.panel);
+        index = drawGroup(s, view, group, rect, plan, visible, hits, stops, index);
+      });
+      y += tall + 1;
+    }
   }
   const total = y - (body.y - view.scroll) - 1;
   // More above or below than fits: say so at the edge.
@@ -410,8 +498,10 @@ function drawGroup(s: Surface, view: DeckView, group: Group, rect: Rect, plan: S
     if (visible(titleY)) {
       let used = s.put(x, titleY, focused ? ` ${unit.name} ` : unit.name, focused ? { fg: P.accentInk, bg: P.accent, bold: true } : { fg: P.ink, bold: true });
       used += 1 + run(s, x + used + 1, titleY, state);
-      if (marks.unacked || marks.fault) used += s.put(x + used + 1, titleY, `▲${marks.unacked || ""}`, { fg: marks.unacked ? P.alarm : P.fault, bold: true }) + 1;
+      if (marks.active || marks.fault) used += s.put(x + used + 1, titleY, `▲${marks.active || ""}`, { fg: marks.active ? P.alarm : P.fault, bold: true }) + 1;
+      else if (marks.unacked) used += s.put(x + used + 1, titleY, `△${marks.unacked}`, { fg: P.ink3 }) + 1;
       if (marks.overrides) used += s.put(x + used + 1, titleY, `${marks.overrides} in hand`, { fg: P.hand }) + 1;
+      if (view.off?.get(unit.ord)?.length) used += s.put(x + used + 1, titleY, OFF_MARK, { fg: P.warm, bold: true }) + 1;
       if (group.guessed) used += s.put(x + used + 1, titleY, "guessed", { fg: P.ink3, italic: true }) + 1;
       const room = inner - used - 2;
       const shown = lengthOf(facts) <= room ? facts : lengthOf(facts.slice(0, 2)) <= room ? facts.slice(0, 2) : [];
@@ -420,18 +510,31 @@ function drawGroup(s: Surface, view: DeckView, group: Group, rect: Rect, plan: S
     }
     stops.push({ id: unit.ord, x, y: titleY, width: unit.name.length, height: 1 });
   } else if (visible(titleY)) {
-    const used = s.put(x, titleY, group.title, { fg: P.ink, bold: true });
-    s.put(x + used, titleY, ` · ${group.members.length} ${group.members.length === 1 ? "unit" : "units"}`, { fg: P.ink3 });
-    s.putRight(x + inner, titleY, "AS WIRED", { fg: P.ink3 });
+    const how = group.by === "place" ? "BY PLACE" : group.by === "kind" ? "BY TYPE" : "BY FOLDER";
+    const count = ` · ${group.members.length}`;
+    const used = s.put(x, titleY, group.title, { fg: P.ink, bold: true }, Math.max(4, inner - count.length));
+    s.put(x + used, titleY, count, { fg: P.ink3 });
+    if (used + count.length + how.length + 2 <= inner) s.putRight(x + inner, titleY, how, { fg: P.ink3 });
+  }
+  // Under a plant's name: what it sends water to. Those units keep their own tiles where their air comes from.
+  const extra = waterRows(group, inner);
+  if (extra) {
+    if (!group.water?.length) {
+      if (visible(titleY + 1)) s.put(x, titleY + 1, "what it sends water to is not known", { fg: P.ink3 });
+    } else {
+      let at = titleY + 1;
+      for (const fed of group.water) at += drawWater(s, view, fed, x, at, inner, visible);
+    }
   }
   if (group.members.length === 0) {
-    if (visible(titleY + 1)) s.put(x, titleY + 1, "what it feeds is not known", { fg: P.ink3 });
+    if (visible(titleY + 1) && group.by === "serves") s.put(x, titleY + 1, "what it feeds is not known", { fg: P.ink3 });
     return index;
   }
-  const labels = tileLabels(group.members);
+  // A plant's own equipment is of several kinds, so each keeps its whole name.
+  const labels = group.by === "part" ? new Map<string, string>() : tileLabels(group.members);
   group.members.forEach((unit, i) => {
     const tx = x + (i % plan.perRow) * (size.width + size.gapX);
-    const ty = titleY + 2 + Math.floor(i / plan.perRow) * (size.height + size.gapY);
+    const ty = titleY + 2 + extra + Math.floor(i / plan.perRow) * (size.height + size.gapY);
     stops.push({ id: unit.ord, x: tx, y: ty, width: size.width, height: size.height });
     if (!visible(ty, size.height)) return;
     drawTile(s, view, unit, labels.get(unit.ord) ?? unit.name, { x: tx, y: ty, width: size.width, height: size.height }, size, index);
@@ -463,7 +566,9 @@ function drawTile(s: Surface, view: DeckView, unit: Unit, label: string, rect: R
     let right = x + width - 1;
     if (marks.waiting) right -= s.putRight(right, y, "◇", { fg: focused ? P.accentInk : P.cyan }) + 1;
     if (marks.overrides) right -= s.putRight(right, y, "━", { fg: focused ? P.accentInk : P.hand }) + 1;
-    if (marks.unacked || marks.open) right -= s.putRight(right, y, "▲", { fg: focused ? P.accentInk : marks.unacked ? P.alarm : mix(P.alarm, bg, 0.4) }) + 1;
+    if (view.off?.get(unit.ord)?.length) right -= s.putRight(right, y, OFF_MARK, { fg: focused ? P.accentInk : P.warm, bold: true }) + 1;
+    if (marks.active) right -= s.putRight(right, y, "▲", { fg: focused ? P.accentInk : P.alarm }) + 1;
+    else if (marks.unacked) right -= s.putRight(right, y, "△", { fg: focused ? P.accentInk : mix(P.ink3, bg, 0.2) }) + 1;
   }
   const lensMark = look.mark && view.lens !== "comfort" ? look.mark : undefined;
   const value = down ? (snapshot?.ok === false ? "no data" : stateOf(snapshot)) : reading(view, short(snapshot, unit.headline), index);
@@ -476,7 +581,7 @@ function drawTile(s: Surface, view: DeckView, unit: Unit, label: string, rect: R
     return;
   }
   const dev = deviation(view, unit);
-  const target = unit.setpoint ? view.values.get(unit.setpoint.ord) : undefined;
+  const target = heldTo(view, unit);
   const series = unit.headline ? view.series.get(unit.headline.ord) : undefined;
   if (size.name === "large") {
     // The reading in big figures, like an instrument.
@@ -489,8 +594,8 @@ function drawTile(s: Surface, view: DeckView, unit: Unit, label: string, rect: R
     if (lensMark) s.putRight(x + width - 1, y + 2, lensMark.text, { fg: lensMark.fg, bold: true });
     const line = y + 4;
     if (target && !down) {
-      const used = run(s, x + 1, line, [["set ", { fg: quiet }], [short(target, unit.setpoint), { fg: look.fg }]]);
-      if (dev !== undefined) s.put(x + 2 + used, line, `${dev >= 0 ? "+" : "−"}${Math.abs(dev).toFixed(1)}`, { fg: Math.abs(dev) < 1 ? quiet : look.fg, bold: Math.abs(dev) >= 2 });
+      const used = run(s, x + 1, line, [["set ", { fg: quiet }], [target, { fg: look.fg }]]);
+      if (dev) s.put(x + 2 + used, line, offBy(dev), { fg: Math.abs(dev) < 1 ? quiet : look.fg, bold: Math.abs(dev) >= 2 });
     } else if (down) s.put(x + 1, line, "not answering", { fg: quiet });
     if (series && series.length > 1) s.put(x + 1, y + 5, spark(series, width - 2), { fg: mix(look.fg, bg, 0.45) });
     return;
@@ -500,15 +605,26 @@ function drawTile(s: Surface, view: DeckView, unit: Unit, label: string, rect: R
     putGlitch(s, x + 1, y + 1, value, { fg: P.ink, bold: true }, view.fx.reduced ? undefined : view.now);
     s.tint({ x, y: y + 1, width, height: 1 }, bg);
   } else s.put(x + 1, y + 1, lensMark?.text ?? value, { fg: lensMark?.fg ?? look.fg, bold: true }, width - 2);
-  if (dev !== undefined && !down) s.put(x + 1, y + 2, `${dev >= 0 ? "+" : "−"}${Math.abs(dev).toFixed(1)} of ${short(target, unit.setpoint)}`, { fg: Math.abs(dev) < 1 ? quiet : look.fg }, width - 2);
+  if (dev !== undefined && target && !down) s.put(x + 1, y + 2, dev || !unit.band ? `${offBy(dev)} of ${target}` : `in ${target}`, { fg: Math.abs(dev) < 1 ? quiet : look.fg }, width - 2);
   else if (down) s.put(x + 1, y + 2, "no answer", { fg: quiet });
   if (series && series.length > 1) s.put(x + 1, y + 3, spark(series, width - 2), { fg: mix(look.fg, bg, 0.45) });
 }
 
 /** Beside the map on a wide screen: what waits for a person, what is in alarm, what is in hand, what just happened. */
-function drawRail(s: Surface, view: DeckView, rect: Rect, hits: Hit[]): void {
+function drawRail(s: Surface, view: DeckView, rect: Rect, hits: Hit[], stops: Stop[]): void {
   const site = view.site!;
   s.fill(rect, P.panel);
+  // Each line is something the cursor can land on; enter shows what can be done to it.
+  const land = (id: string, y: number, rows = 1) => {
+    stops.push({ id, x: rect.x, y, width: rect.width, height: rows });
+    hits.push({ x: rect.x, y, width: rect.width, height: rows, id });
+    const on = view.focus === id && view.keys === "map";
+    if (on) {
+      s.fill({ x: rect.x, y, width: rect.width, height: rows }, P.panel2);
+      for (let i = 0; i < rows; i += 1) s.put(rect.x, y + i, "▌", { fg: P.accentMark, bg: P.panel2 });
+    }
+    return on ? P.panel2 : P.panel;
+  };
   const x = rect.x + 2;
   const inner = rect.width - 4;
   let y = rect.y + 1;
@@ -529,36 +645,70 @@ function drawRail(s: Surface, view: DeckView, rect: Rect, hits: Hit[]): void {
   if (waiting.length && section("WAITS FOR YOU", waiting.length, P.cyan)) {
     for (const e of waiting.slice(0, 3)) {
       if (y + 1 >= end) break;
-      s.put(x, y, "◇", { fg: P.cyan });
-      s.put(x + 2, y, `${e.id}  ${nameFor(e.ord)}`, { fg: P.ink, bold: true }, inner - 2);
-      s.putClipped(x + 2, y + 1, e.text, { fg: P.ink2 }, inner - 2);
+      const bg = land(`do:proposal ${e.id}`, y, 2);
+      s.put(x, y, "◇", { fg: P.cyan, bg });
+      s.put(x + 2, y, `${e.id}  ${nameFor(e.ord)}`, { fg: P.ink, bold: true, bg }, inner - 2);
+      s.putClipped(x + 2, y + 1, e.text, { fg: P.ink2, bg }, inner - 2);
       y += 2;
     }
     y += 1;
   }
-  const alarms = view.events.filter((e) => e.kind === "alarm").sort((a, b) => b.at - a.at);
-  if (alarms.length && section("IN ALARM", alarms.length, P.alarm)) {
-    for (const e of alarms.slice(0, Math.max(1, Math.min(4, Math.floor((end - y) / 2) - 2)))) {
+  // Alarms: the ones still in alarm first, then the ones back to normal that nobody has acknowledged.
+  // The same alarm on the same thing many times over is one row with a count.
+  const onUnit = (e: DeckEvent) => site.units.find((u) => e.ord === u.ord || e.ord?.startsWith(`${u.ord}/`));
+  const alarmRows = (list: DeckEvent[]) => {
+    const rows = new Map<string, { e: DeckEvent; count: number }>();
+    for (const e of [...list].sort((a, b) => b.at - a.at)) {
+      const key = `${e.ord}|${e.text}`;
+      const row = rows.get(key);
+      if (row) row.count += 1;
+      else rows.set(key, { e, count: 1 });
+    }
+    // What is on a unit comes before the network's own comings and goings.
+    return [...rows.values()].sort((a, b) => Number(!!onUnit(b.e)) - Number(!!onUnit(a.e)));
+  };
+  const alarmSection = (title: string, list: DeckEvent[], colour: string, mark: string, most: number) => {
+    if (!list.length || !section(title, list.length, colour)) return;
+    for (const { e, count } of alarmRows(list).slice(0, Math.max(1, Math.min(most, Math.floor((end - y) / 2) - 2)))) {
       if (y >= end) break;
       const when = agoText(view.span.to - e.at);
-      s.put(x, y, "▲", { fg: P.alarm });
-      const used = s.put(x + 2, y, nameFor(e.ord), { fg: P.ink, bold: true }, inner - 2 - when.length - 1);
-      s.putClipped(x + 3 + used, y, e.text, { fg: P.ink3 }, inner - 4 - used - when.length);
-      s.putRight(x + inner, y, when, { fg: P.ink3 });
-      if (e.ord) hits.push({ x: rect.x, y, width: rect.width, height: 1, id: `unit:${site.units.find((u) => e.ord === u.ord || e.ord!.startsWith(`${u.ord}/`))?.ord ?? ""}` });
+      const unit = onUnit(e);
+      const point = unit?.points.find((p) => e.ord === p.ord || e.ord?.startsWith(`${p.ord}/`));
+      const bg = e.id ? land(`do:alarm ${e.id}`, y) : P.panel;
+      s.put(x, y, mark, { fg: colour, bg });
+      const used = s.put(x + 2, y, nameFor(e.ord), { fg: P.ink, bold: true, bg }, inner - 2 - when.length - 1);
+      s.putClipped(x + 3 + used, y, `${point ? point.name : e.text}${count > 1 ? ` ×${count}` : ""}`, { fg: P.ink3, bg }, inner - 4 - used - when.length);
+      s.putRight(x + inner, y, when, { fg: P.ink3, bg });
       y += 1;
     }
     y += 1;
-  }
+  };
+  const alarms = view.events.filter((e) => e.kind === "alarm");
+  alarmSection("IN ALARM", alarms.filter((e) => e.active), P.alarm, "▲", 5);
+  alarmSection("TO ACKNOWLEDGE", alarms.filter((e) => !e.active && !e.acked), P.ink2, "△", 4);
   const hand = view.events.filter((e) => e.kind === "override" && e.until === undefined);
   if (hand.length && section("IN HAND", hand.length, P.hand)) {
     for (const e of hand.slice(0, 3)) {
       if (y >= end) break;
       const when = agoText(view.span.to - e.at);
-      s.put(x, y, "━", { fg: P.hand });
-      const used = s.put(x + 2, y, nameFor(e.ord), { fg: P.ink, bold: true }, inner - 2 - when.length - 1);
-      s.put(x + 3 + used, y, `by ${e.who ?? "someone"}`, { fg: P.ink3 }, inner - 4 - used - when.length);
-      s.putRight(x + inner, y, when, { fg: P.ink3 });
+      const bg = e.ord ? land(`do:point ${e.ord}`, y) : P.panel;
+      s.put(x, y, "━", { fg: P.hand, bg });
+      const used = s.put(x + 2, y, nameFor(e.ord), { fg: P.ink, bold: true, bg }, inner - 2 - when.length - 1);
+      s.put(x + 3 + used, y, `by ${e.who ?? "someone"}`, { fg: P.ink3, bg }, inner - 4 - used - when.length);
+      s.putRight(x + inner, y, when, { fg: P.ink3, bg });
+      y += 1;
+    }
+    y += 1;
+  }
+  // Not an alarm: what the readings and their histories show. The same look `check --only behaviour` takes.
+  const wrong = [...(view.off ?? [])].flatMap(([ord, list]) => list.map((f) => ({ ord, ...f })));
+  if (wrong.length && y + 1 < end && section("NOT RUNNING RIGHT", wrong.length, P.warm)) {
+    for (const f of wrong.slice(0, 4)) {
+      if (y >= end) break;
+      s.put(x, y, OFF_MARK, { fg: P.warm, bold: true });
+      const used = s.put(x + 2, y, nameFor(f.ord), { fg: P.ink, bold: true }, inner - 2);
+      s.putClipped(x + 3 + used, y, OFF_WORDS[f.kind] ?? f.message, { fg: P.ink3 }, inner - 3 - used);
+      hits.push({ x: rect.x, y, width: rect.width, height: 1, id: `unit:${f.ord}` });
       y += 1;
     }
     y += 1;
@@ -577,12 +727,14 @@ function drawRail(s: Surface, view: DeckView, rect: Rect, hits: Hit[]): void {
   if (y === rect.y + 1) s.put(x, y, "Nothing needs you.", { fg: P.ink3 });
 }
 
+const OFF_WORDS: Record<string, string> = { heatAndCool: "heating and cooling together", offSetpoint: "held off its setpoint", hunting: "an output is hunting", flatline: "a sensor has stopped moving", notFollowing: "a command is not followed" };
+
 // ---- The line of what is going on ---------------------------------------------------------------------
 
 function drawSummary(s: Surface, view: DeckView, pad: number, y: number): void {
   const site = view.site!;
   let off = 0;
-  let open = 0;
+  let active = 0;
   let unacked = 0;
   let hand = 0;
   let waiting = 0;
@@ -591,10 +743,15 @@ function drawSummary(s: Surface, view: DeckView, pad: number, y: number): void {
     if (dev !== undefined && Math.abs(dev) >= 2) off += 1;
     const marks = view.marks.get(unit.ord);
     if (!marks) continue;
-    open += marks.open;
-    unacked += marks.unacked;
+
     hand += marks.overrides;
     waiting += marks.waiting;
+  }
+  // Every open alarm, the network's own included: the same count the list gives.
+  for (const e of view.events) {
+    if (e.kind !== "alarm") continue;
+    if (e.active) active += 1;
+    if (!e.acked) unacked += 1;
   }
   const oldest = view.events.filter((e) => e.kind === "override" && e.until === undefined).reduce((min, e) => Math.min(min, e.at), Infinity);
   const parts: [string, Style?][] = [];
@@ -603,13 +760,21 @@ function drawSummary(s: Surface, view: DeckView, pad: number, y: number): void {
     parts.push([text, { fg }]);
   };
   if (off) add(`${off} ${off === 1 ? "zone" : "zones"} off setpoint`, P.warm);
-  if (open) add(`${open} ${open === 1 ? "alarm" : "alarms"}${unacked ? `, ${unacked} not acknowledged` : ""}`, unacked ? P.alarm : P.ink2);
+  const wrong = view.off?.size ?? 0;
+  if (wrong) add(`${OFF_MARK} ${wrong} not running right`, P.warm);
+  if (active) add(`${active} in alarm`, P.alarm);
+  if (unacked) add(`${unacked} ${unacked === 1 ? "alarm" : "alarms"} to acknowledge`, P.ink2);
   if (hand) add(`${hand} in hand${Number.isFinite(oldest) ? `, the oldest for ${agoText(view.span.to - oldest)}` : ""}`, P.hand);
   if (waiting) add(`${waiting} ${waiting === 1 ? "change waits" : "changes wait"} for you`, P.cyan);
   const guesses = site.guesses.sure + site.guesses.unsure;
   if (guesses) add(`${guesses} ${guesses === 1 ? "guess" : "guesses"} about what feeds what`, P.ink3);
   if (!parts.length) parts.push(["all quiet", { fg: P.ok }]);
-  run(s, pad, y, parts, view.width - pad * 2);
+  // At the right, the site's meter: what it reads now, and today's highest quarter hour.
+  const kw = (v: number) => `${v >= 100 ? Math.round(v).toLocaleString("en-US") : v.toFixed(1)} kW`;
+  const meter: [string, Style?][] = view.power ? [["SITE ", { fg: P.ink3 }], [kw(numberOf(view.values.get(view.power.ord)) ?? view.power.now), { fg: P.ink, bold: true }], ...(view.power.peak !== undefined ? [[`  peak ${kw(view.power.peak)}${view.power.peakAt ? ` at ${clock(view.power.peakAt)}` : ""}`, { fg: P.ink3 }] as [string, Style?]] : [])] : [];
+  const room = view.width - pad * 2 - (meter.length && lengthOf(parts) + lengthOf(meter) + 4 <= view.width - pad * 2 ? lengthOf(meter) + 4 : 0);
+  run(s, pad, y, parts, room);
+  if (room < view.width - pad * 2) run(s, view.width - pad - lengthOf(meter), y, meter);
 }
 
 // ---- The time bar -----------------------------------------------------------------------------------
@@ -641,18 +806,18 @@ function drawTimeBar(s: Surface, view: DeckView, pad: number, y: number, hits: H
     for (let i = a; i <= b; i += 1) s.put(i, trackY, "━", { fg: P.hand });
   }
   // Marks, the more urgent on top where two share a cell.
-  const order: DeckEvent["kind"][] = ["change", "agent", "proposal", "alarm"];
+  const order: DeckEvent["kind"][] = ["change", "agent", "note", "proposal", "alarm"];
   for (const kind of order) {
     for (const e of view.events) {
       if (e.kind !== kind || e.at < from || e.at > to) continue;
-      const [mark, fg] = kind === "alarm" ? ["▲", P.alarm] : kind === "change" ? ["●", e.agent ? P.cyan : P.ink] : kind === "agent" ? ["◆", P.cyan] : ["◇", P.cyan];
+      const [mark, fg] = kind === "alarm" ? ["▲", P.alarm] : kind === "note" ? ["✎", P.ok] : kind === "change" ? ["●", e.agent ? P.cyan : P.ink] : kind === "agent" ? ["◆", P.cyan] : ["◇", P.cyan];
       s.put(xOf(e.at), trackY, mark, { fg });
     }
   }
   if (view.turnAt !== undefined && view.turnAt >= from && view.turnAt <= to) {
     const at = xOf(view.turnAt);
-    s.put(at, y, "▼", { fg: P.accentMark, bold: true });
-    s.put(Math.min(at + 2, x + width - 12), y, "turned here", { fg: P.accentMark, bold: true });
+    s.put(at, y, "▼ ", { fg: P.accentMark, bold: true });
+    s.put(Math.min(at + 2, x + width - 12), y, "turned here ", { fg: P.accentMark, bold: true });
   }
   // The moment looked at.
   const cursor = xOf(view.at ?? to);
@@ -678,7 +843,7 @@ function drawPrompt(s: Surface, view: DeckView, pad: number, y: number, hits: Hi
   const active = view.keys === "prompt";
   s.fill({ x, y, width, height: 1 }, active ? P.panel : P.well);
   s.put(x + 1, y, "›", { fg: P.accentMark, bold: true });
-  if (!active && !view.prompt.text) s.put(x + 3, y, "type a command or a question   why · log · set · get · diff", { fg: P.ink3 }, width - 4);
+  if (!active && !view.prompt.text) s.put(x + 3, y, "type a command   needs · why · set · get · places · bask <command>", { fg: P.ink3 }, width - 4);
   else {
     const room = width - 5;
     const chars = [...view.prompt.text];
@@ -695,12 +860,12 @@ function drawPrompt(s: Surface, view: DeckView, pad: number, y: number, hits: Hi
 function drawHints(s: Surface, view: DeckView, pad: number, y: number): void {
   let x = pad;
   const keys: [string, string][] =
-    view.ghost ? [["enter", "make it"], ["esc", "drop it"]]
+    view.ghost ? [["enter", view.writes ? "make it" : "allow changes from this window"], ["esc", "drop it"]]
     : view.answer ? [...(view.answer.undo ? ([["f", "put it back"]] as [string, string][]) : []), ["t", "go to when it turned"], ["↑↓", "scroll"], ["esc", "close"]]
-    : view.result ? [["↑↓", "scroll"], ["esc", "close"]]
+    : view.result && view.keys !== "prompt" ? view.result.hint ?? (view.result.cursor !== undefined ? [["↑↓", "move"], ["enter", "choose"], ["esc", "close"]] : [["↑↓", "scroll"], ["esc", "close"]])
     : view.keys === "prompt" ? [["enter", "run"], ["tab", "complete"], ["↑↓", "earlier"], ["esc", "back"]]
     : view.keys === "time" ? [["← →", "move through time"], ["< >", "by event"], ["[ ]", "span"], ["n", "now"], ["tab", "map"]]
-    : [["←↑↓→", "move"], ["enter", "open"], ["esc", "back"], ["l", "lens"], ["tab", "time"], [":", "command"], ...(view.site && view.site.guesses.sure + view.site.guesses.unsure ? ([["r", "review guesses"]] as [string, string][]) : []), ["W", "changes"], ["?", "keys"], ["q", "quit"]];
+    : [["←↑↓→", "move"], ["enter", view.zoom.level === "site" && !view.focus?.startsWith("do:") ? "open" : "what can be done"], ["esc", "back"], ["i", "needs you"], ["l", "lens"], ...(view.zoom.level === "site" ? ([["g", "layout"]] as [string, string][]) : []), ["tab", "time"], [":", "command"], ...(view.site && view.site.guesses.sure + view.site.guesses.unsure ? ([["r", "review guesses"]] as [string, string][]) : []), ["?", "keys"], ["q", "quit"]];
   for (const [key, label] of keys) {
     if (x + key.length + label.length + 4 > view.width - pad) break;
     x += keycap(s, x, y, key, label);
@@ -748,21 +913,26 @@ function drawUnit(s: Surface, view: DeckView, body: Rect, hits: Hit[], stops: St
   let x = left.x + 2;
   x += s.put(x, top, unit.name, { fg: P.ink, bold: true }) + 2;
   x += s.put(x, top, unit.label.toUpperCase(), { fg: P.ink3 }) + 2;
-  if (marks.unacked) x += s.put(x, top, ` ▲ ${marks.unacked} `, { fg: P.ink, bg: mix(P.panel, P.alarm, 0.7), bold: true }) + 1;
+  if (marks.active) x += s.put(x, top, ` ▲ ${marks.active} in alarm `, { fg: P.ink, bg: mix(P.panel, P.alarm, 0.7), bold: true }) + 1;
+  if (marks.unacked) x += s.put(x, top, ` △ ${marks.unacked} to acknowledge `, { fg: P.ink, bg: mix(P.panel, P.alarm, 0.22) }) + 1;
   if (marks.overrides) x += s.put(x, top, ` ${marks.overrides} in hand `, { fg: P.ink, bg: mix(P.panel, P.hand, 0.6) }) + 1;
   if (marks.waiting) x += s.put(x, top, ` ${marks.waiting} waiting `, { fg: P.ink, bg: mix(P.panel, P.cyan, 0.5) }) + 1;
   const dev = deviation(view, unit);
-  if (dev !== undefined) s.putRight(left.x + left.width - 2, top, `${dev >= 0 ? "+" : "−"}${Math.abs(dev).toFixed(1)}° from setpoint`, { fg: Math.abs(dev) >= 2 ? (dev > 0 ? P.warm : P.cold) : P.ink3 });
+  if (dev !== undefined) s.putRight(left.x + left.width - 2, top, unit.band ? (dev ? `${Math.abs(dev).toFixed(1)}° ${dev > 0 ? "above cooling" : "below heating"} setpoint` : `within ${heldTo(view, unit) ?? "its setpoints"}`) : `${offBy(dev)}° from setpoint`, { fg: Math.abs(dev) >= 2 ? (dev > 0 ? P.warm : P.cold) : dev === 0 && unit.band ? P.ok : P.ink3 });
+
+  // Where it is: the building, the floor, the room.
+  const placeRow = unit.place && left.height >= 12 ? 1 : 0;
+  if (placeRow) s.put(left.x + 2, top + 1, unit.place!.path, { fg: P.ink2 }, left.width - 4);
 
   // What it leads with, as instruments: the reading in big figures over a line of the span.
-  let listTop = top + 2;
+  let listTop = top + 2 + placeRow;
   const lead = (LEAD[unit.kind] ?? []).map((role) => unit.points.find((p) => p.role === role)).filter((p): p is SitePoint => !!p);
   const cards = Math.min(lead.length, 5, Math.floor((left.width - 2) / 20));
   const cardWidth = cards ? Math.min(26, Math.floor((left.width - 4 + 2) / cards) - 2) : 0;
   if (cards >= 2 && left.height >= 24) {
     lead.slice(0, cards).forEach((point, i) => {
       const cx = left.x + 2 + i * (cardWidth + 2);
-      const cy = top + 2;
+      const cy = top + 2 + placeRow;
       const snapshot = view.values.get(point.ord);
       const state = stateOf(snapshot);
       const colour = isDown(snapshot) ? P.fault : state === "alarm" ? P.alarm : state === "overridden" ? P.hand : P.ink;
@@ -782,7 +952,7 @@ function drawUnit(s: Surface, view: DeckView, body: Rect, hits: Hit[], stops: St
       if (series && series.length > 1) s.put(cx + 1, cy + 6, line(series, cardWidth - 2, 1)[0], { fg: point.ord === unit.headline?.ord ? P.accent : P.ink3 });
       hits.push({ x: cx, y: cy, width: cardWidth, height: 7, id: `point:${point.ord}` });
     });
-    listTop = top + 10;
+    listTop = top + 10 + placeRow;
   }
 
   // Its points: name, reading, a line of the span, and what state it is in.
@@ -791,6 +961,47 @@ function drawUnit(s: Surface, view: DeckView, body: Rect, hits: Hit[], stops: St
   const first = Math.max(0, Math.min(unit.points.length - rows, focusIndex - Math.floor(rows / 2)));
   const nameWidth = Math.min(30, Math.max(14, Math.floor(left.width * 0.34)));
   const chartWidth = Math.max(0, Math.min(30, left.width - nameWidth - 17 - 19));
+  const waiting = new Map<string, { active: number; unacked: number }>();
+  // What the lens in use picks out, point by point: what to say about it and in which colour.
+  const picked = new Map<string, { text: string; fg: string }>();
+  const tally = new Map<string, { count: number; last: DeckEvent }>();
+  for (const e of view.events) {
+    if (!e.ord) continue;
+    const point = unit.points.find((p) => e.ord === p.ord || e.ord!.startsWith(`${p.ord}/`));
+    if (!point) continue;
+    if (e.kind === "alarm") {
+      const mine = waiting.get(point.ord) ?? waiting.set(point.ord, { active: 0, unacked: 0 }).get(point.ord)!;
+      if (e.active) mine.active += 1;
+      if (!e.acked) mine.unacked += 1;
+    }
+    const counts =
+      view.lens === "overrides" ? e.kind === "override" && e.until === undefined
+      : view.lens === "changes" ? (e.kind === "change" || e.kind === "agent") && e.at >= view.span.from
+      : view.lens === "agents" ? e.kind === "proposal" || e.kind === "agent" || (e.kind === "change" && !!e.agent)
+      : false;
+    if (!counts) continue;
+    const mine = tally.get(point.ord);
+    if (!mine) tally.set(point.ord, { count: 1, last: e });
+    else {
+      mine.count += 1;
+      if (e.at > mine.last.at) mine.last = e;
+    }
+  }
+  const ago = (e: DeckEvent) => `${agoText(view.span.to - e.at)} ago`;
+  for (const point of unit.points) {
+    const alarmed = waiting.get(point.ord);
+    const mine = tally.get(point.ord);
+    if (view.lens === "alarms" && alarmed) picked.set(point.ord, alarmed.active ? { text: `▲ ${alarmed.active} in alarm`, fg: P.alarm } : { text: `△ ${alarmed.unacked} to acknowledge`, fg: P.ink });
+    else if (view.lens === "overrides" && (mine || stateOf(view.values.get(point.ord)) === "overridden")) picked.set(point.ord, { text: mine ? `━ in hand by ${mine.last.who ?? "someone"}, ${agoText(view.span.to - mine.last.at)}` : "━ in hand", fg: P.hand });
+    else if (view.lens === "changes" && mine) picked.set(point.ord, { text: `${mine.count} ${mine.count === 1 ? "change" : "changes"} · ${mine.last.who ?? (mine.last.agent ? "an agent" : "someone")} ${ago(mine.last)}`, fg: mine.last.agent ? P.cyan : P.ink });
+    else if (view.lens === "agents" && mine) picked.set(point.ord, mine.last.kind === "proposal" ? { text: `◇ ${mine.last.id ?? "a change"} waits for you`, fg: P.cyan } : { text: `◆ ${mine.count} by an agent · ${ago(mine.last)}`, fg: P.cyan });
+  }
+  const sifting = view.lens !== "comfort";
+  // The lens in words, where the list begins, so it is plain what it is showing here.
+  if (sifting && listTop > top + 1) {
+    const what = { alarms: "in alarm or waiting to be acknowledged", overrides: "in hand", changes: `changed in ${spanText(view.span.to - view.span.from).toLowerCase()}`, agents: "touched by an agent" }[view.lens as Exclude<Lens, "comfort">];
+    run(s, left.x + 2, listTop - 1, [[`${view.lens.toUpperCase()}  `, { fg: P.accentMark, bold: true }], [picked.size ? `${picked.size} of ${unit.points.length} points ${what}` : `no point here is ${what}`, { fg: P.ink3 }]], left.width - 4);
+  }
   unit.points.slice(first, first + rows).forEach((point, i) => {
     const y = listTop + i;
     const snapshot = view.values.get(point.ord);
@@ -799,14 +1010,19 @@ function drawUnit(s: Surface, view: DeckView, body: Rect, hits: Hit[], stops: St
     const bg = focused ? P.panel2 : P.panel;
     if (focused) s.fill({ x: left.x, y, width: left.width, height: 1 }, bg);
     s.put(left.x, y, focused ? "▌" : " ", { fg: P.accentMark, bg });
-    s.put(left.x + 2, y, point.name, { fg: focused ? P.ink : P.ink2, bg, bold: focused }, nameWidth);
+    const mark = picked.get(point.ord);
+    // Under a lens, what it picks out stands forward and the rest steps back.
+    const dim = sifting && !mark && !focused;
+    s.put(left.x + 2, y, point.name, { fg: mark ? P.ink : focused ? P.ink : dim ? P.ink3 : P.ink2, bg, bold: focused || !!mark }, nameWidth);
     const value = reading(view, full(snapshot), i);
-    const colour = isDown(snapshot) ? P.fault : state === "alarm" ? P.alarm : state === "overridden" ? P.hand : P.ink;
+    const colour = isDown(snapshot) ? P.fault : state === "alarm" ? P.alarm : state === "overridden" ? P.hand : dim ? P.ink3 : P.ink;
     s.putRight(left.x + 2 + nameWidth + 13, y, value.slice(0, 13), { fg: colour, bg, bold: true });
     const series = view.series.get(point.ord);
-    if (chartWidth && series && series.length > 1) s.put(left.x + nameWidth + 17, y, line(series, chartWidth, 1)[0], { fg: focused ? P.accent : P.ink3, bg });
-    const note = state === "overridden" ? "in hand" : state === "ok" ? (point.ord === unit.setpoint?.ord ? "setpoint" : point.writable ? "can be commanded" : "") : state;
-    s.putRight(left.x + left.width - 2, y, note, { fg: state === "overridden" ? P.hand : state === "alarm" ? P.alarm : isDown(snapshot) ? P.fault : P.ink3, bg });
+    if (chartWidth && series && series.length > 1 && !(mark && mark.text.length > 18)) s.put(left.x + nameWidth + 17, y, line(series, chartWidth, 1)[0], { fg: focused ? P.accent : P.ink3, bg });
+    const alarmed = waiting.get(point.ord);
+    const note = alarmed?.active ? "▲ in alarm" : state === "overridden" ? "in hand" : alarmed?.unacked ? `△ ${alarmed.unacked} to acknowledge` : state === "ok" ? (point.ord === unit.setpoint?.ord ? "setpoint" : point.writable ? "can be commanded" : "") : state;
+    if (mark) s.putRight(left.x + left.width - 2, y, mark.text.slice(0, Math.max(10, left.width - nameWidth - 20)), { fg: mark.fg, bg, bold: true });
+    else s.putRight(left.x + left.width - 2, y, note, { fg: alarmed?.active || state === "alarm" ? P.alarm : state === "overridden" ? P.hand : isDown(snapshot) ? P.fault : alarmed?.unacked ? P.ink2 : P.ink3, bg });
     stops.push({ id: point.ord, x: left.x, y, width: left.width, height: 1 });
     hits.push({ x: left.x, y, width: left.width, height: 1, id: `point:${point.ord}` });
   });
@@ -845,12 +1061,24 @@ function drawUnit(s: Surface, view: DeckView, body: Rect, hits: Hit[], stops: St
   }
   const feeds = site.groups.find((g) => g.feeder?.ord === unit.ord);
   const fedBy = site.groups.find((g) => g.by === "serves" && g.members.some((m) => m.ord === unit.ord))?.feeder;
-  if (fedBy) {
-    const at = card("FED BY", 1);
-    const { state, facts } = feederFacts(view, fedBy);
-    const used = s.put(sx + 2, at, fedBy.name, { fg: P.ink, bold: true });
-    run(s, sx + 3 + used, at, [...state, ["  "], ...facts], side - used - 5);
-    hits.push({ x: sx, y: at, width: side, height: 1, id: `unit:${fedBy.ord}` });
+  // What feeds it: air from the unit above it on the map, and water from the plant, as the station or a person says.
+  const water = (site.review.serves ?? []).filter((e) => e.to === unit.ord && e.medium !== "air" && (!e.inferred || e.confirmed)).map((e) => ({ unit: unitOf(site, e.from), medium: e.medium === "hotWater" ? "hot water" : "chilled water" })).filter((w): w is { unit: Unit; medium: string } => !!w.unit);
+  if (fedBy || water.length) {
+    let at = card("FED BY", (fedBy ? 1 : 0) + water.length);
+    if (fedBy) {
+      const { state, facts } = feederFacts(view, fedBy);
+      const used = s.put(sx + 2, at, fedBy.name, { fg: P.ink, bold: true });
+      run(s, sx + 3 + used, at, [["air  ", { fg: P.ink3 }], ...state, ["  "], ...facts], side - used - 5);
+      hits.push({ x: sx, y: at, width: side, height: 1, id: `unit:${fedBy.ord}` });
+      at += 1;
+    }
+    for (const w of water) {
+      const { state } = feederFacts(view, w.unit);
+      const used = s.put(sx + 2, at, w.unit.name, { fg: P.ink, bold: true });
+      run(s, sx + 3 + used, at, [[`${w.medium}  `, { fg: P.ink3 }], ...state, ["  "], [w.unit.headline ? short(view.values.get(w.unit.headline.ord), w.unit.headline) : "", { fg: P.ink2 }]], side - used - 5);
+      hits.push({ x: sx, y: at, width: side, height: 1, id: `unit:${w.unit.ord}` });
+      at += 1;
+    }
   } else if (unit.zone) {
     const at = card("FED BY", 1);
     s.put(sx + 2, at, "not known", { fg: P.ink3 });
@@ -858,7 +1086,7 @@ function drawUnit(s: Surface, view: DeckView, body: Rect, hits: Hit[], stops: St
   if (feeds?.members.length) {
     const per = Math.max(1, Math.floor((side - 4 + 1) / (TILE + 1)));
     const tileRows = Math.min(2, Math.ceil(feeds.members.length / per));
-    const at = card(`FEEDS ${feeds.members.length}`, tileRows * 2);
+    const at = card(`${feeds.by === "part" ? "MADE UP OF" : "FEEDS"} ${feeds.members.length}`, tileRows * 2);
     const labels = tileLabels(feeds.members);
     feeds.members.slice(0, per * tileRows).forEach((member, i) => {
       const tx = sx + 2 + (i % per) * (TILE + 1);
@@ -870,13 +1098,51 @@ function drawUnit(s: Surface, view: DeckView, body: Rect, hits: Hit[], stops: St
       hits.push({ x: tx, y: ty, width: TILE, height: 2, id: `unit:${member.ord}` });
     });
   }
+  const wrong = view.off?.get(unit.ord) ?? [];
+  if (wrong.length) {
+    // The finding in full, over as many lines as it takes (three at most).
+    const wrap = (text: string) => {
+      const lines: string[] = [""];
+      for (const word of text.split(" ")) {
+        if (lines[lines.length - 1].length + word.length + 1 > side - 6 && lines[lines.length - 1]) lines.push("");
+        lines[lines.length - 1] += `${lines[lines.length - 1] ? " " : ""}${word}`;
+      }
+      return lines.slice(0, 3);
+    };
+    const blocks = wrong.map((f) => ({ f, lines: wrap(f.message) }));
+    let at = card("NOT RUNNING RIGHT", blocks.reduce((n, block) => n + 1 + block.lines.length, 0));
+    for (const { f, lines } of blocks) {
+      s.put(sx + 2, at, OFF_MARK, { fg: P.warm, bold: true });
+      s.put(sx + 4, at, OFF_WORDS[f.kind] ?? "", { fg: P.ink, bold: true }, side - 6);
+      lines.forEach((text, i) => s.putClipped(sx + 4, at + 1 + i, text, { fg: P.ink2 }, side - 6));
+      hits.push({ x: sx, y: at, width: side, height: 1 + lines.length, id: `point:${f.point}` });
+      at += 1 + lines.length;
+    }
+  }
+  // A plant: what it sends water to, each with how far its valve is open.
+  for (const fed of feeds?.water ?? []) {
+    const per = Math.max(1, Math.floor((side - 4 + 1) / (TILE + 1)));
+    const tileRows = Math.min(3, Math.ceil(fed.units.length / per));
+    const at = card(`${fed.medium === "chilledWater" ? "CHILLED WATER" : "HOT WATER"} TO ${fed.units.length}${fed.guessed ? "  ·  guessed" : ""}`, tileRows * 2);
+    const labels = tileLabels(fed.units);
+    fed.units.slice(0, per * tileRows).forEach((member, i) => {
+      const tx = sx + 2 + (i % per) * (TILE + 1);
+      const ty = at + Math.floor(i / per) * 2;
+      const valve = valveOf(view, member, fed.medium);
+      const open = valve !== undefined && valve > 5;
+      s.fill({ x: tx, y: ty, width: TILE, height: 2 }, P.panel2);
+      s.putCentre(tx, ty, TILE, labels.get(member.ord) ?? member.name, { fg: P.ink2, bg: P.panel2 });
+      s.putCentre(tx, ty + 1, TILE, valve === undefined ? "·" : `${Math.round(valve)}%`, { fg: open ? P.ink : P.ink3, bg: P.panel2, bold: open });
+      hits.push({ x: tx, y: ty, width: TILE, height: 2, id: `unit:${member.ord}` });
+    });
+  }
   const mine = view.events.filter((e) => e.ord && (e.ord === unit.ord || e.ord.startsWith(`${unit.ord}/`))).sort((a, b) => b.at - a.at);
   const room = body.y + body.height - y - 4;
   if (room >= 1) {
     const at = card("WHAT HAPPENED", Math.max(1, Math.min(room, mine.length || 1)));
     if (!mine.length) s.put(sx + 2, at, "nothing in this span", { fg: P.ink3 });
     mine.slice(0, room).forEach((e, i) => {
-      const [mark, fg] = e.kind === "alarm" ? ["▲", P.alarm] : e.kind === "override" ? ["━", P.hand] : e.agent ? ["◆", P.cyan] : ["●", P.ink];
+      const [mark, fg] = e.kind === "alarm" ? ["▲", P.alarm] : e.kind === "override" ? ["━", P.hand] : e.kind === "note" ? ["✎", P.ok] : e.agent ? ["◆", P.cyan] : ["●", P.ink];
       s.put(sx + 2, at + i, mark, { fg });
       const when = `${agoText(view.span.to - e.at)} `;
       s.put(sx + 4, at + i, when, { fg: P.ink3 });
@@ -901,7 +1167,7 @@ function spark(values: number[], width: number): string {
 
 function drawResult(s: Surface, view: DeckView, body: Rect): void {
   const result = view.result!;
-  const width = Math.min(body.width, 110);
+  const width = Math.min(body.width, 124);
   const x = body.x + Math.floor((body.width - width) / 2);
   const height = Math.min(body.height, Math.max(6, result.lines.length + 3));
   const y = body.y + Math.floor((body.height - height) / 2);
@@ -909,15 +1175,21 @@ function drawResult(s: Surface, view: DeckView, body: Rect): void {
   s.fill({ x, y, width, height: 1 }, P.accent, P.accentInk);
   s.put(x + 2, y, result.title, { fg: P.accentInk, bg: P.accent, bold: true }, width - 4);
   result.lines.slice(result.scroll, result.scroll + height - 2).forEach((line, i) => {
-    run(s, x + 2, y + 2 + i - 1, line.parts.map((part) => [part.text, { fg: part.fg ?? P.ink2, bold: part.bold }] as [string, Style]), width - 4);
+    const on = result.cursor === result.scroll + i;
+    const bg = on ? mix(P.panel2, P.accent, 0.22) : P.panel2;
+    if (on) {
+      s.fill({ x, y: y + 1 + i, width, height: 1 }, bg);
+      s.put(x, y + 1 + i, "▌", { fg: P.accentMark, bg });
+    }
+    run(s, x + 2, y + 2 + i - 1, line.parts.map((part) => [part.text, { fg: on && part.fg === P.ink2 ? P.ink : part.fg ?? P.ink2, bold: part.bold, bg }] as [string, Style]), width - 4);
   });
   if (result.lines.length > height - 2) s.putRight(x + width - 2, y + height - 1, `${result.scroll + 1} to ${Math.min(result.lines.length, result.scroll + height - 2)} of ${result.lines.length}`, { fg: P.ink3 });
 }
 
 function drawGhost(s: Surface, view: DeckView, body: Rect, hits: Hit[]): void {
   const ghost = view.ghost!;
-  const width = Math.min(body.width, 84);
-  const height = ghost.lines.length + (ghost.check ? 1 : 0) + (ghost.note ? 1 : 0) + 4;
+  const width = Math.min(body.width, 104);
+  const height = ghost.lines.length + (ghost.check ? 1 : 0) + (ghost.note ? 1 : 0) + (view.writes ? 0 : 1) + 4;
   const x = body.x + Math.floor((body.width - width) / 2);
   const y = body.y + body.height - height;
   const bg = mix(P.panel2, P.cyan, 0.08);
@@ -942,9 +1214,12 @@ function drawGhost(s: Surface, view: DeckView, body: Rect, hits: Hit[]): void {
   let at = y + 2 + ghost.lines.length;
   if (ghost.check) run(s, x + 2, at++, [["then  ", { fg: P.ink3 }], [ghost.check, { fg: P.ink2 }]], width - 4);
   if (ghost.note) s.put(x + 2, at++, ghost.note, { fg: P.ink3 }, width - 4);
-  const keys = x + width - 2 - 30;
-  keycap(s, keys, y + height - 2, "enter", "make it");
-  keycap(s, keys + 17, y + height - 2, "esc", "drop it");
+  // The first change from a window: it has to be allowed here before it can be made.
+  if (!view.writes) s.put(x + 2, at++, "This window has made no changes yet. Enter allows them from here on, then asks once more.", { fg: P.fault }, width - 4);
+  const first = view.writes ? "make it" : "allow changes";
+  const keys = x + width - 2 - 24 - first.length;
+  keycap(s, keys, y + height - 2, "enter", first);
+  keycap(s, keys + 10 + first.length, y + height - 2, "esc", "drop it");
   hits.push({ x, y, width, height, id: "ghost" });
 }
 

@@ -20,3 +20,5 @@ export * from "./logic.js";
 export * from "./site.js";
 // Two modules have an `ago`: this one is the time since a moment. The length-of-time one is at "@basidekick/baskstream/check".
 export { ago } from "./format.js";
+export * from "./behaviour.js";
+export * from "./energy.js";

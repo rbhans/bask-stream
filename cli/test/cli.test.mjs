@@ -204,6 +204,22 @@ test("workspace plans its panes for Rex and tmux without starting anything", asy
   assert.match(build[3].shell, /demo --site eastgate --view jobs --pane$/);
   assert.deepEqual(buildLayout({ layout: "build", profile: "fake", allowWrites: false }).map((p) => p.label), ["Explorer", "Graphics", "Jobs", "AI Activity"]);
 
+  // The site screen with the weather and the agent beside it; the weather only when it is installed.
+  const site = buildLayout({ layout: "site", profile: "fake", allowWrites: true, agent, weather: "/usr/local/bin/wx" });
+  assert.deepEqual(site.map((p) => [p.label, p.split?.of, p.split?.direction]), [["Station", undefined, undefined], ["Claude Code", "station", "right"], ["Weather", "agent", "below"]]);
+  assert.match(site[0].shell, /-p fake --allow-writes$/);
+  assert.equal(site[2].shell, "/usr/local/bin/wx");
+  assert.deepEqual(buildLayout({ layout: "site", profile: "fake", allowWrites: false, agent }).map((p) => p.label), ["Station", "Claude Code"]);
+  assert.deepEqual(buildLayout({ layout: "site", profile: "fake", allowWrites: false, weather: "wx" }).map((p) => [p.label, p.split?.of]), [["Station", undefined], ["Weather", "station"]]);
+  assert.match(buildLayout({ layout: "site", profile: "fake", allowWrites: false, demo: "harbor" })[0].shell, /demo --site harbor$/);
+  // In the other layouts the weather is a card under the agent, and is left out when there is no agent.
+  assert.deepEqual(buildLayout({ layout: "ops", profile: "fake", allowWrites: false, agent, weather: "wx" }).map((p) => p.label), ["Explorer", "Claude Code", "Alarms", "AI Activity", "Weather"]);
+  assert.deepEqual(buildLayout({ layout: "monitor", profile: "fake", allowWrites: false, weather: "wx" }).map((p) => p.label), ["Home", "Alarms", "Watch", "AI Activity"]);
+  const { agentBrief } = await import("../dist/workspace.js");
+  const told = { station: "Demo", host: "h", user: "ai", profile: "p" };
+  assert.match(agentBrief({ ...told, weather: true }), /## Weather\n[^]*`wx now`[^]*`wx place`/);
+  assert.doesNotMatch(agentBrief(told), /wx now/);
+
   const rex = launch("rex", "bask-fake", ops, { rex: "rex", dryRun: true }).commands;
   assert.match(rex[0], /^rex new bask-fake --window Explorer --json -- sh .*explorer\.sh$/);
   assert.equal(rex.filter((c) => c.startsWith("rex split ")).length, 3);
@@ -235,7 +251,7 @@ test("demo --list names the simulated buildings, and each gets its own workspace
   const plan = await bask("workspace", "--demo", "--site", "all", "--dry-run", "--mux", "rex");
   if (plan.code !== 0) return assert.match(plan.out, /Rex's command-line tool was not found/);
   for (const session of ["bask-demo", "bask-demo-riverside", "bask-demo-harbor", "bask-demo-summit", "bask-demo-eastgate"]) assert.match(plan.out, new RegExp(`session ${session},`));
-  assert.match(plan.out, /demo --site harbor --view explorer --pane/);
+  assert.match(plan.out, /demo --site harbor\n/);
   // One agent per building is opt-in.
   assert.doesNotMatch(plan.out, /pane Claude Code/);
   // Another agent's command can be named, and the build layout has a pane for the jobs and one for the graphics.
@@ -249,4 +265,36 @@ test("fleet needs a terminal and says so", async () => {
   const { code, out } = await bask("fleet", "--demo");
   assert.equal(code, 1);
   assert.match(out, /needs a terminal/);
+});
+
+test("notes are kept per station, shared by its logins, and listed as log events", async () => {
+  const dir = mkdtempSync(`${(await import("node:os")).tmpdir()}/bask-notes-`);
+  const before = process.env.BASKSTREAM_CONFIG_DIR;
+  process.env.BASKSTREAM_CONFIG_DIR = dir;
+  try {
+    const { addNote, lastLooked, markLooked, noteEvents, readNotes, stationKey } = await import("../dist/notes.js");
+    assert.equal(stationKey("https://10.0.0.5:8443/"), "10.0.0.5_8443");
+    const station = "https://10.0.0.5:8443";
+    addNote(station, { at: 1000, who: "ben", text: "belt replaced", ord: "slot:/Drivers/Net/AHU_2" });
+    addNote(station, { at: 2000, who: "Claude Code", agent: true, text: "door was propped open" });
+    addNote("https://other", { at: 1500, who: "ben", text: "another building" });
+    assert.deepEqual(readNotes(station).map((n) => n.text), ["belt replaced", "door was propped open"]);
+    const events = noteEvents(station, { since: 0 });
+    assert.deepEqual(events.map((e) => [e.kind, e.source, e.who, e.agent ?? false]), [["note", "note", "ben", false], ["note", "note", "Claude Code", true]]);
+    assert.equal(events[0].text, "belt replaced  (Net/AHU_2)");
+    assert.deepEqual(noteEvents(station, { since: 1500 }).map((e) => e.text), ["door was propped open"]);
+    assert.deepEqual(noteEvents(station, { since: 0, under: "slot:/Drivers/Net" }).map((e) => e.at), [1000]);
+    assert.equal(lastLooked(station), undefined);
+    markLooked(station, 4242);
+    assert.equal(lastLooked(station), 4242);
+    assert.equal(lastLooked("https://other"), undefined);
+  } finally {
+    if (before === undefined) delete process.env.BASKSTREAM_CONFIG_DIR;
+    else process.env.BASKSTREAM_CONFIG_DIR = before;
+  }
+});
+
+test("a typed command is run as a command even when its words name something on the map", async () => {
+  const { SHELL_COMMANDS } = await import("../dist/deck/shell.js");
+  for (const word of ["energy", "note", "check", "log"]) assert.ok(SHELL_COMMANDS.includes(word), word);
 });

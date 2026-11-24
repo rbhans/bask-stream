@@ -168,7 +168,7 @@ test("tags already on the station are taken as they are; the review file keeps w
   try {
     const tagged = inferModel((await readEvidence(client, "slot:/")).evidence);
     const ahu = tagged.find((e) => e.name === "AHU_01");
-    assert.deepEqual([ahu.kind, ahu.confidence, ahu.confirmed, ahu.reason], ["ahu", 1, true, "already tagged hs:ahu, hs:equip"]);
+    assert.deepEqual([ahu.kind, ahu.confidence, ahu.confirmed, ahu.reason], ["ahu", 1, true, "already tagged ahu, equip"]);
 
     untag(station);
     const infer = async () => inferModel((await readEvidence(client, "slot:/")).evidence);

@@ -25,18 +25,20 @@ async function withDeck(props, size, work, station = {}) {
 test("the map shows the plant, each air handler and the zones it feeds", () =>
   withDeck({}, { columns: 150, rows: 42 }, async (deck) => {
     // On a screen this size the readings are big figures; the hot zone's distance from its setpoint is in words.
-    const frame = await deck.until(/set 72\.0° \+6\.\d/);
+    const frame = await deck.until(/set 72\.0° \+[67]\.\d/);
     for (const text of ["bask", "NORTHGATE", "whole site", "LENS", "comfort", "CHW_Plant", "AHU_01", "AHU_02", "SUPPLY", "LIVE", "NOW", "READ-ONLY"]) assert.ok(frame.includes(text), text);
     // Each box sits under the air handler that feeds it, in order.
     // The map is the left of the screen; the rail beside it names units too.
-    const lines = frame.split("\n").map((line) => line.slice(0, 100));
+    // The plant has a group of its own on the water side, and under its name what it sends water to, each with its valve.
+    assert.match(frame, /WATER SIDE[\s\S]*CHW_Plant[\s\S]*CHILLED WATER TO 2\s+AHU_01 \d+%\s+AHU_02 \d+%[\s\S]*AIR SIDE/);
+    const lines = frame.split("\n").map((line) => line.slice(0, 100)).filter((line) => !line.includes("WATER TO"));
     const rowOf = (text) => lines.findIndex((line) => line.includes(text));
     assert.ok(rowOf("AHU_01") < rowOf("101") && rowOf("101") < rowOf("AHU_02") && rowOf("AHU_02") < rowOf("105"), frame);
     assert.match(lines[rowOf("101")], /101.*102.*103.*104/);
     assert.match(lines[rowOf("105")], /105.*106.*107.*108/);
     // What needs a person is said in one line, and listed beside the map on a wide screen.
     assert.match(frame, /1 zone off setpoint/);
-    assert.match(frame, /alarms?, \d+ not acknowledged/);
+    assert.match(frame, /\d+ in alarm/);
     assert.match(frame, /IN ALARM/);
     assert.match(frame, /IN HAND/);
     // The unit that is down says so in place of a reading.
@@ -77,7 +79,7 @@ test("a lens recolours the same map: alarms, what is in hand, changes, agents", 
     await deck.press("l");
     let frame = await deck.until(/▲\d/);
     const lines = () => deck.frame().split("\n").map((line) => line.slice(0, 100));
-    const row = (text) => lines().find((line) => line.includes(text)) ?? "";
+    const row = (text) => lines().find((line) => line.includes(text) && !line.includes("WATER TO")) ?? "";
     // The zone in alarm shows its count where its reading was.
     assert.match(lines().slice(0, 30).join("\n"), /▲1/);
     await deck.press("l");
@@ -88,6 +90,17 @@ test("a lens recolours the same map: alarms, what is in hand, changes, agents", 
     await deck.press("1");
     frame = await deck.until(/set 72\.0°/);
     assert.ok(row("101").length > 0, frame);
+  }));
+
+test("a lens works inside a unit too: it says what it picks out and marks those points", () =>
+  withDeck({}, { columns: 150, rows: 42 }, async (deck) => {
+    await deck.press(":", ..."AHU_02", "enter");
+    await deck.until(/▸ AHU_02/);
+    await deck.press("3");
+    const frame = await deck.until(/OVERRIDES\s+1 of \d+ points in hand/);
+    assert.match(frame, /SupplyFanSpeed.*━ in hand/);
+    await deck.press("2");
+    await deck.until(/ALARMS\s+(no point here is|\d+ of \d+ points) in alarm or waiting to be acknowledged/);
   }));
 
 test("the command line: a unit's name goes to it, get and log answer, an unknown word says so", () =>
@@ -129,16 +142,18 @@ test("time: a step back shows the readings of that moment, and n comes back to n
     assert.ok(hot(frame), frame);
   }));
 
-test("a change is shown first and waits for enter; a read-only window refuses", () =>
+test("a change is shown first and waits for enter; the first one from a window allows changes there, on the same card", () =>
   withDeck({}, { columns: 150, rows: 42 }, async (deck) => {
-    await deck.press(":", ..."override AHU_01 SupplyAirSetpoint 56", "enter");
-    await deck.until(/read-only\. Press W twice/);
-    await deck.press("W");
-    await deck.until(/Press W again/);
-    await deck.press("W");
-    await deck.until(/CHANGES ON/);
     await deck.press(":", ..."override AHU_01 SupplyAirSetpoint 56 for 30m", "enter");
     let frame = await deck.until(/not made yet/);
+    // Nothing has been allowed from this window: the card says so, and enter allows it without making the change.
+    assert.match(frame, /READ-ONLY/);
+    assert.match(frame, /This window has made no changes yet/);
+    assert.match(frame, /enter\s+allow changes/);
+    await deck.press("enter");
+    frame = await deck.until(/CHANGES ON/);
+    assert.match(frame, /not made yet/);
+    assert.match(frame, /enter\s+make it/);
     assert.match(frame, /override\s+AHU_01 SupplyAirSetpoint/);
     assert.match(frame, /55\.0 °F\s+→\s+56 °F/);
     assert.match(frame, /for 30m, then released by the station/);
@@ -197,7 +212,7 @@ test("why: the chain from a reading back to what changed beside it, and one key 
   }));
 
 test("setting the map up without AI: say what feeds what, choose what a tile shows; it is kept on this computer", () =>
-  withDeck({}, { columns: 100, rows: 30 }, async (deck, client) => {
+  withDeck({}, { columns: 100, rows: 38 }, async (deck, client) => {
     // Move two boxes from one air handler to the other.
     await deck.press(":", ..."feeds AHU_01 VAV_105..VAV_106", "enter");
     let frame = await deck.until(/AHU_01 feeds 2 units\. Saved on this computer/);
@@ -217,3 +232,126 @@ test("setting the map up without AI: say what feeds what, choose what a tile sho
     const tags = await client.call("read_tags", { ords: [`${NET}/VAV_105`], dictionary: "hs", includeRelations: true });
     assert.match(JSON.stringify(tags.targets[0].relations ?? []), /AHU_02/);
   }));
+
+test("what waits beside the map can be landed on: right from the map reaches it, enter shows what can be done, left comes back", () =>
+  withDeck({}, { columns: 150, rows: 42 }, async (deck) => {
+    // From the first air handler, right along its title's row and on into the list beside the map.
+    await deck.until(/WAITS FOR YOU/);
+    await deck.press("right", "right");
+    let frame = await deck.until(/▌ [◇▲△━]/);
+    assert.match(frame, /enter\s+what can be done/);
+    await deck.press("up", "up", "up", "up", "enter");
+    frame = await deck.until(/Change P\d+ waits for you/);
+    await deck.press("esc");
+    await deck.press("left", "enter");
+    await deck.until(/▸ (AHU_\d+|VAV_\d+|CHW_Plant)/);
+  }));
+
+test("what needs you: one list of the change that waits, the alarms and what is in hand; each opens what can be done, and acknowledging goes through the one card", () =>
+  withDeck({}, { columns: 150, rows: 36 }, async (deck, client) => {
+    // The line under the map counts the two apart.
+    assert.match(deck.frame(), /\d+ in alarm\s+·\s+\d+ alarms? to acknowledge/);
+    // One list of what needs a person: the change that waits, the alarms, what is in hand.
+    await deck.press("i");
+    let frame = await deck.until(/What needs you\s+·\s+1 change waiting\s+·\s+\d+ in alarm\s+·\s+\d+ to acknowledge\s+·\s+1 in hand/);
+    for (const text of ["WAITS FOR YOU", "IN ALARM", "TO ACKNOWLEDGE", "IN HAND"]) assert.ok(frame.includes(text), text);
+    assert.match(frame, /▲ .*VAV_105\s+ZoneTemp\s+Zone temperature high/, "the unit, the point and what it says");
+    // Enter on the first line: the change an agent asked for, with what it would do and what can be done about it.
+    await deck.press("enter");
+    frame = await deck.until(/Change P\d+ waits for you/);
+    assert.match(frame, /asked for this .* ago\. Nothing has been changed/);
+    assert.match(frame, /ZoneSetpoint reads\s+72\.0 °F\s+would be\s+70/);
+    assert.match(frame, /y\s+Approve it/);
+    assert.match(frame, /n\s+Reject it/);
+    // Esc goes back to the list, with the cursor where it was; down to the first alarm, and enter.
+    await deck.press("esc");
+    await deck.until(/What needs you/);
+    await deck.press("down", "enter");
+    frame = await deck.until(/Alarm\s+·\s+VAV_105\s+·\s+ZoneTemp/);
+    assert.match(frame, /▲ still in alarm\s+nobody has acknowledged it/);
+    // Its letter shows the acknowledgement; the first enter allows changes from this window, the second makes it.
+    const unacked = async () => (await client.alarms({ scope: "open", limit: 500 })).alarms.filter((x) => String(x.ackState).toLowerCase() === "unacked").length;
+    const before = await unacked();
+    await deck.press("a");
+    await deck.until(/Acknowledges 1 alarm as you/);
+    await deck.press("enter");
+    await deck.until(/CHANGES ON/);
+    await deck.press("enter");
+    await deck.until(/1 alarm acknowledged/);
+    assert.equal(await unacked(), before - 1);
+    // The card is made again from what the station now says, and g goes to the point.
+    frame = await deck.until(/▲ still in alarm\s+acknowledged/);
+    await deck.press("g");
+    frame = await deck.until(/▌ ZoneTemp/);
+    assert.match(frame, /▸ VAV_105/);
+  }));
+
+test("a point: enter shows what can be done to it, and setting a value goes through the same card as every change", () =>
+  withDeck({ allowWrites: true }, { columns: 150, rows: 42 }, async (deck) => {
+    await deck.press(":", ..."goto slot:/Drivers/BacnetNetwork/AHU_01/points/SupplyAirSetpoint", "enter");
+    await deck.until(/▌ SupplyAirSetpoint/);
+    await deck.press("enter");
+    let frame = await deck.until(/AHU_01\s+·\s+SupplyAirSetpoint/);
+    for (const text of ["Set a value…", "Put in hand…", "Why it reads this"]) assert.ok(frame.includes(text), text);
+    assert.ok(!frame.includes("Release to automatic"), "nothing to release on a point that is not in hand");
+    // s puts the words on the command line and waits for the value.
+    await deck.press("s");
+    await deck.until(/› set AHU_01 SupplyAirSetpoint/);
+    await deck.press(..."56", "enter");
+    frame = await deck.until(/not made yet/);
+    assert.match(frame, /55\.0 °F\s+→\s+56 °F/);
+    await deck.press("enter");
+    await deck.until(/now reads 56\.0 °F/);
+    // A point the station only reads offers no change.
+    await deck.press(":", ..."goto slot:/Drivers/BacnetNetwork/AHU_01/points/SupplyAirTemp", "enter");
+    await deck.until(/▌ SupplyAirTemp/);
+    await deck.press("enter");
+    frame = await deck.until(/cannot be commanded/);
+    assert.ok(!frame.includes("Set a value…"));
+  }));
+
+test("the map lays out by what feeds what, by type, or by place; places says when the station holds none", () =>
+  withDeck({}, { columns: 150, rows: 36 }, async (deck) => {
+    assert.match(deck.frame(), /whole site · by what feeds what/);
+    await deck.press(":", ..."arrange kind", "enter");
+    const frame = await deck.until(/whole site · by type/);
+    assert.match(frame, /VAV boxes · 8\s+BY TYPE/);
+    assert.match(frame, /air handlers · 2\s+BY TYPE/);
+    await deck.press(":", ..."arrange feeds", "enter");
+    await deck.until(/whole site · by what feeds what/);
+  }));
+
+test("any bask command runs from the command line and its answer is shown; one that changes the station is shown first like any change", () =>
+  withDeck({}, { columns: 150, rows: 36 }, async (deck) => {
+    await deck.press(":", ..."bask put a b", "enter");
+    const frame = await deck.until(/This command changes the station/);
+    assert.match(frame, /run\s+bask put a b/);
+    assert.match(frame, /enter\s+allow changes/);
+    await deck.press("esc");
+    await deck.until(/Dropped\. Nothing was changed/);
+    await deck.press(":", ..."bask tui", "enter");
+    await deck.until(/takes the whole terminal/);
+  }));
+
+test("what is not running right shows on the map: a mark on the unit, a line beside the map, a count under it, and the finding inside the unit", () =>
+  withDeck({}, { columns: 160, rows: 44 }, async (deck) => {
+    // The look reads histories, so it comes a few seconds after the map.
+    const frame = await deck.until(/≠ 1 not running right/, 9000);
+    assert.match(frame, /NOT RUNNING RIGHT\s+1\s*\n.*≠ VAV_105 held off its setpoint/);
+    assert.match(frame.split("\n").find((line) => /^\s+105\s/.test(line.slice(0, 110))) ?? "", /≠/);
+    await deck.press(":", ..."VAV_105", "enter");
+    const inside = await deck.until(/≠ held off its setpoint/, 5000);
+    assert.match(inside, /NOT RUNNING RIGHT/);
+    assert.match(inside, /above its\s+setpoint|above\s+its setpoint|above its setpoint/);
+  }));
+
+test("a site with a main meter shows what it reads and today's peak at the end of the line under the map", async () => {
+  const { client, close } = await startStation({ site: "harbor" });
+  const deck = mountDeck(client, {}, { columns: 160, rows: 44 });
+  try {
+    await deck.until(/SITE \d[\d,.]* kW {2}peak \d[\d,.]* kW at \d+:\d\d/, 12000);
+  } finally {
+    deck.unmount();
+    await close();
+  }
+});

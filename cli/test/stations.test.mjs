@@ -79,8 +79,8 @@ test("a side is a file, profile:branch, or a branch of the current station", () 
 test("bask fleet check runs the check on every saved station and lists where each has errors and warnings", async () => {
   const shown = await bask("fleet", "check");
   assert.equal(shown.code, 1, shown.err);
-  assert.match(shown.out, /north +Northgate +2 +2 +\d+ +\d+ +1 rule skipped/);
-  assert.match(shown.out, /south +Northgate +2 +1 +\d+ +\d+/);
+  assert.match(shown.out, /north +Northgate +2 +3 +\d+ +\d+ +2 rules skipped/);
+  assert.match(shown.out, /south +Northgate +2 +2 +\d+ +\d+/);
   assert.match(shown.out, /harbor +Harbor +1 +\d+ +\d+ +\d+/);
   assert.match(shown.out, /error +north +Devices +Drivers\/BacnetNetwork\/VAV_107 +down/);
   // Where one departs: the forgotten override is on north and not on south.

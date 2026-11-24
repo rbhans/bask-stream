@@ -71,6 +71,8 @@ export interface Rule {
   add?: "overrideAge" | "historyAge";
   walk?: WalkSpec;
   graphics?: boolean;
+  /** A look at how the equipment is running, from the site model and the points' histories (behaviour.ts). */
+  behaviour?: "heatAndCool" | "offSetpoint" | "hunting" | "flatline" | "notFollowing";
   test?: Test;
   /** The field that says where a finding is (default: slotPath, parent.slotPath or ord, else the first column). */
   where?: string;
@@ -134,6 +136,11 @@ export const STARTER_RULES: Rule[] = [
     test: { is: "compare", all: [{ field: "pastExceptions", op: "above", value: 0 }] }, message: "special events whose dates are over: {pastExceptionNames}"
   },
   { id: "graphics.qa", group: "Graphics", title: "Graphics punch list", graphics: true },
+  { id: "behaviour.heatAndCool", group: "Behaviour", title: "Heating and cooling at once", severity: "warning", behaviour: "heatAndCool" },
+  { id: "behaviour.offSetpoint", group: "Behaviour", title: "Held off its setpoint", severity: "warning", behaviour: "offSetpoint" },
+  { id: "behaviour.hunting", group: "Behaviour", title: "Output swinging back and forth", severity: "warning", behaviour: "hunting" },
+  { id: "behaviour.notFollowing", group: "Behaviour", title: "Command not followed", severity: "warning", behaviour: "notFollowing" },
+  { id: "behaviour.flatline", group: "Behaviour", title: "Sensor that has stopped moving", severity: "review", behaviour: "flatline" },
   {
     id: "security.defaultAccounts", group: "Security posture", title: "Account with a default-looking name", severity: "review", query: { bql: "select name, fullName, enabled from baja:User" }, where: "name",
     test: { is: "compare", all: [{ field: "name", op: "matches", value: DEFAULT_ACCOUNTS }, { field: "enabled", op: "equals", value: true }] },
@@ -150,11 +157,15 @@ function checked(rule: Rule, from: string): Rule {
   const bad = (what: string) => new Error(`${from}: rule ${rule.id ? `"${rule.id}"` : "(no id)"} ${what}.`);
   if (!rule.id || typeof rule.id !== "string") throw bad("needs an id");
   if (!rule.group || !rule.title) throw bad("needs a group and a title");
-  const sources = [rule.query, rule.walk, rule.graphics].filter(Boolean).length;
-  if (sources !== 1) throw bad("needs exactly one of query, walk or graphics");
+  const sources = [rule.query, rule.walk, rule.graphics, rule.behaviour].filter(Boolean).length;
+  if (sources !== 1) throw bad("needs exactly one of query, walk, graphics or behaviour");
   if (rule.query && typeof (rule.query as { bql?: unknown }).bql !== "string" && typeof (rule.query as { neql?: unknown }).neql !== "string") throw bad("has a query with neither bql nor neql");
   if (rule.graphics) {
     if (rule.severity && !SEVERITIES.includes(rule.severity)) throw bad(`has severity "${rule.severity}"; use ${SEVERITIES.join(", ")}`);
+    return rule;
+  }
+  if (rule.behaviour) {
+    if (!rule.severity || !SEVERITIES.includes(rule.severity)) throw bad(`needs a severity: ${SEVERITIES.join(", ")}`);
     return rule;
   }
   if (!rule.severity || !SEVERITIES.includes(rule.severity)) throw bad(`needs a severity: ${SEVERITIES.join(", ")}`);

@@ -41,11 +41,15 @@ async function held(client: BaskStreamClient, ords: string[]): Promise<Map<strin
   const out = new Map<string, { tags: Set<string>; relations: Set<string> } | undefined>();
   for (const some of chunks(ords, 100)) {
     const targets = ((await client.call("read_tags", { ords: some, dictionary: "hs", includeRelations: true })).targets ?? []) as Json[];
+    // A station tagged with Haystack 4 holds the same tags under h4: they count as there already.
+    const newer = await client.call("read_tags", { ords: some, dictionary: "h4", includeRelations: true }).then((reply) => (reply.targets ?? []) as Json[], () => [] as Json[]);
+    const asHs = (id: unknown) => `hs:${String(id).split(":").pop()}`;
     for (const target of targets) {
       const ord = toSlotOrd(String(target.ord ?? ""));
+      const also = newer.find((t) => toSlotOrd(String(t.ord ?? "")) === ord);
       out.set(ord, target.ok === false ? undefined : {
-        tags: new Set(((target.tags ?? []) as Json[]).map((tag) => String(tag.id))),
-        relations: new Set(((target.relations ?? []) as Json[]).filter((r) => r.direction !== "in").map((r) => `${String(r.id)} ${toSlotOrd(String(r.endpointOrd ?? ""))}`))
+        tags: new Set([...((target.tags ?? []) as Json[]).map((tag) => String(tag.id)), ...((also?.tags ?? []) as Json[]).map((tag) => asHs(tag.id))]),
+        relations: new Set([...((target.relations ?? []) as Json[]).filter((r) => r.direction !== "in").map((r) => `${String(r.id)} ${toSlotOrd(String(r.endpointOrd ?? ""))}`), ...((also?.relations ?? []) as Json[]).filter((r) => r.direction !== "in").map((r) => `${asHs(r.id)} ${toSlotOrd(String(r.endpointOrd ?? ""))}`)])
       });
     }
   }

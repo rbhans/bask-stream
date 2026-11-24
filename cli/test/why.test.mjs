@@ -295,7 +295,7 @@ test("Northgate holds what serves what, and a week of history to look back over"
     // bask model takes them as they are: held by the station, so not proposals.
     const serves = await servesOf(client);
     assert.equal(serves.length, 10);
-    assert.ok(serves.every((s) => s.confirmed && !s.inferred && s.confidence === 1 && /^already related hs:(airRef|chilledWaterRef)$/.test(s.reason)));
+    assert.ok(serves.every((s) => s.confirmed && !s.inferred && s.confidence === 1 && /^the station relates them \((airRef|chilledWaterRef)\)$/.test(s.reason)));
 
     // The box's maximum airflow: writable, in cfm, at half what it was.
     const [most, zone] = await client.read([P("VAV_105/MaxAirflow"), P("VAV_105/ZoneTemp")]);

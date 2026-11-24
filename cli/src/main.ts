@@ -17,7 +17,7 @@ import { VERSION } from "./version.js";
 import { splash, spinner } from "./splash.js";
 import { DEMO_SITES, SITE_NAMES, type SiteName } from "./demo/sites.js";
 import { Link } from "./link.js";
-import { agentBrief, buildLayout, detectMux, launch, selfArgv, sessionExists, shq, writeShim, type LayoutName } from "./workspace.js";
+import { agentBrief, buildLayout, detectMux, findWeather, launch, selfArgv, sessionExists, shq, writeShim, type LayoutName } from "./workspace.js";
 import { chooseAgentLogin, describeChoice, openAgentLogin, type AgentChoice, type AgentLogin } from "./agent-login.js";
 import { askedWork, directWork, mayWriteFile, pointWritesText, type AgentRules } from "./agent-rules.js";
 import type { TargetOptions } from "./px.js";
@@ -598,20 +598,63 @@ program
 
 program
   .command("log")
-  .description("what happened: changes by people and by AI agents, overrides, alarms and what agents asked for, in one list, newest first")
+  .description("what happened: changes by people and by AI agents, overrides, alarms, what agents asked for, and the notes left with bask note, in one list, newest first")
   .argument("[ord]", "only what happened to this component or anything under it")
   .option("--since <time>", "start: 24h, 7d, an ISO date or epoch ms", "7d")
   .option("--until <time>", "end (default now)")
   .option("--limit <n>", "the most events to list", "200")
-  .action((ord: string | undefined, opts: { since: string; until?: string; limit: string }, cmd: Command) =>
+  .option("--new", "only what happened since you last ran this (the first time: the last 24 hours)")
+  .action((ord: string | undefined, opts: { since: string; until?: string; limit: string; new?: boolean }, cmd: Command) =>
     withClient(cmd, async ({ client }, g) => {
-      const { readLog, logText, LOG_LEGEND } = await import("./log.js");
-      const log = await readLog(client, { ...(ord ? { under: normalizeOrd(ord) } : {}), since: parseTime(opts.since), ...(opts.until ? { until: parseTime(opts.until) } : {}), limit: Number(opts.limit) });
+      const { readLog, logText, LOG_LEGEND, spanText } = await import("./log.js");
+      const { lastLooked, markLooked, noteEvents } = await import("./notes.js");
+      const station = getProfile(g.profile).profile.station;
+      const asked = Date.now();
+      const looked = opts.new ? lastLooked(station) : undefined;
+      const since = opts.new ? looked ?? asked - 86400_000 : parseTime(opts.since);
+      const range = { ...(ord ? { under: normalizeOrd(ord) } : {}), since, ...(opts.until ? { until: parseTime(opts.until) } : {}) };
+      const log = await readLog(client, { ...range, limit: Number(opts.limit) });
+      // Notes are kept on this computer and listed with the station's own record.
+      log.events = [...log.events, ...noteEvents(station, range)].sort((a, b) => b.at - a.at).slice(0, Number(opts.limit) > 0 ? Number(opts.limit) : 2000);
+      if (opts.new && !ord) markLooked(station, asked);
       if (g.output === "json") return console.log(JSON.stringify(log, null, 2));
       if (g.output === "csv") return console.log(csv(["time", "kind", "who", "agent", "ord", "from", "to", "text"], log.events.map((e) => [new Date(e.at).toISOString(), e.kind, e.who ?? "", e.agent ? "yes" : "", e.ord ?? "", e.from ?? "", e.to ?? "", e.text])));
-      console.log(log.events.length ? logText(log.events, { width: process.stdout.columns || undefined }) : chalk.dim("Nothing happened in that time."));
+      if (opts.new) console.log(chalk.dim(looked ? `Since you last looked, ${spanText(asked - looked)} ago:` : "Not looked at before, so this is the last 24 hours:"));
+      console.log(log.events.length ? logText(log.events, { width: process.stdout.columns || undefined }) : chalk.dim(opts.new ? "Nothing new." : "Nothing happened in that time."));
       if (log.events.length) console.log(chalk.dim(`\n${LOG_LEGEND}`));
       for (const note of log.notes) console.log(chalk.yellow(`Note: ${note}`));
+    })
+  );
+
+program
+  .command("note")
+  .description("leave a note in the station's log: what you did or saw, for whoever looks next. Kept on this computer, shared by every login to the station, and listed by bask log")
+  .argument("<text...>", "the note")
+  .option("--on <ord>", "the equipment or point it is about")
+  .action(async (words: string[], opts: { on?: string }, cmd: Command) => {
+    const g = globals(cmd);
+    const { addNote } = await import("./notes.js");
+    const actor = actorFrom(g);
+    const text = words.join(" ").trim();
+    if (!text) throw new Error("A note needs some words: bask note replaced the belt on AHU-2");
+    const note = { at: Date.now(), who: actor?.name ?? os.userInfo().username, ...(actor ? { agent: true } : {}), ...(opts.on ? { ord: normalizeOrd(opts.on) } : {}), text };
+    addNote(getProfile(g.profile).profile.station, note);
+    if (g.output === "json") return console.log(JSON.stringify(note, null, 2));
+    console.log(`${chalk.green("✓")} Noted. bask log lists it.`);
+  });
+
+program
+  .command("energy")
+  .description("the power the station meters: what each kW point reads now, today's peak and when, the energy used since midnight, and yesterday by the same time. Read-only")
+  .option("--under <ord>", "this branch only")
+  .option("--limit <n>", "the most points to list, largest first", "12")
+  .action((opts: { under?: string; limit: string }, cmd: Command) =>
+    withClient(cmd, async ({ client }, g) => {
+      const { energyCsv, energyText, readEnergy } = await import("@basidekick/baskstream/energy");
+      const result = await readEnergy(client, { under: opts.under ? normalizeOrd(opts.under) : undefined, limit: Number(opts.limit) || 12 });
+      if (g.output === "json") return console.log(JSON.stringify(result, null, 2));
+      if (g.output === "csv") return console.log(energyCsv(result));
+      console.log(energyText(result));
     })
   );
 
@@ -1228,10 +1271,11 @@ program
   .command("workspace")
   .alias("ws")
   .description("lay out a station workspace in Rex or tmux: station panes plus an AI agent session")
-  .addOption(new Option("--layout <name>", "ops: explorer, alarms, AI activity and the agent · graphics: the station's graphics, AI activity and the agent · logic: a wire sheet, AI activity and the agent · build: explorer, jobs, graphics, AI activity and the agent, for bringing a station up · monitor: home, alarms, watch, AI activity · duo: dashboard and the agent").choices(["ops", "graphics", "logic", "build", "monitor", "duo"]).default("ops"))
+  .addOption(new Option("--layout <name>", "site: the site screen, the weather and the agent · ops: explorer, alarms, AI activity and the agent · graphics: the station's graphics, AI activity and the agent · logic: a wire sheet, AI activity and the agent · build: explorer, jobs, graphics, AI activity and the agent, for bringing a station up · monitor: home, alarms, watch, AI activity · duo: dashboard and the agent").choices(["site", "ops", "graphics", "logic", "build", "monitor", "duo"]).default("site"))
   .addOption(new Option("--mux <name>", "which multiplexer").choices(["auto", "rex", "tmux"]).default("auto"))
   .option("--agent <command>", "the AI agent to start in its pane", "claude")
   .option("--no-agent", "station panes only")
+  .option("--no-weather", "leave out the weather pane (it is shown when the wx command is installed)")
   .option("--agent-user <user>", "the Niagara user made for the agent: bask logs it in (asking for its password once), saves it and uses it from then on")
   .option("--agent-profile <name>", "a saved profile for the agent's login, instead of --agent-user (default: the one used last time)")
   .option("--session <name>", "name for the multiplexer session")
@@ -1239,8 +1283,9 @@ program
   .option("--site <name>", `with --demo: which building (${SITE_NAMES.join(", ")}), or all for a session each`, "northgate")
   .option("--dry-run", "print what would be started, and start nothing")
   .option("--no-attach", "tmux: create the session without switching to it")
-  .action(async (opts: { layout: LayoutName; mux: string; agent: string | false; agentUser?: string; agentProfile?: string; session?: string; demo?: boolean; site: string; dryRun?: boolean; attach: boolean }, cmd: Command) => {
+  .action(async (opts: { layout: LayoutName; mux: string; agent: string | false; agentUser?: string; agentProfile?: string; session?: string; demo?: boolean; site: string; dryRun?: boolean; attach: boolean; weather: boolean }, cmd: Command) => {
     const g = globals(cmd);
+    const weather = opts.weather ? findWeather() : undefined;
     // "--agent <x>" is also a global option (the name bask itself acts under), and the global one
     // takes the value wherever it is written. Here it means the agent's command.
     if (cmd.getOptionValueSource("agent") === "default" && program.getOptionValueSource("agent") === "cli") opts.agent = String(program.opts().agent);
@@ -1307,18 +1352,21 @@ program
         const brief = path.join(dir, "STATION.md");
         if (!opts.dryRun) {
           mkdirSync(dir, { recursive: true, mode: 0o700 });
-          writeFileSync(brief, agentBrief({ ...info, user: agentUser, profile: agentProfile, demo: !!site }));
+          const text = agentBrief({ ...info, user: agentUser, profile: agentProfile, demo: !!site, weather: !!weather });
+          writeFileSync(brief, text);
+          // Most other agents read AGENTS.md in the folder they start in, so they start here and find it.
+          if (!isClaude) writeFileSync(path.join(dir, "AGENTS.md"), text);
         }
         agent = {
           label,
           shell: isClaude ? `${opts.agent} --append-system-prompt "$(cat ${shq(brief)})"` : opts.agent,
-          cwd: process.cwd(),
+          cwd: isClaude ? process.cwd() : dir,
           env: { BASKSTREAM_PROFILE: agentProfile, BASK_AGENT: label, BASK_ON_BEHALF_OF: os.userInfo().username, BASK_STATION_BRIEF: brief, PATH: `${opts.dryRun ? path.join(configDir(), "bin") : writeShim()}${path.delimiter}${process.env.PATH ?? ""}` },
           // A saved login lapses when nothing uses it for a while, and the agent cannot type a password:
           // keep it in use for as long as the agent's pane runs.
           before: site ? undefined : [`${selfArgv().map(shq).join(" ")} keep-alive --while $$ >/dev/null 2>&1 &`]
         };
-        if (!isClaude) notes.push(`${label} is not told about the station automatically: point it at the briefing in $BASK_STATION_BRIEF (${brief}).`);
+        if (!isClaude) notes.push(`${label} starts in the workspace's own folder, where AGENTS.md holds the station briefing; most agents read it by themselves. If ${label} does not, point it at $BASK_STATION_BRIEF.`);
         if (opts.dryRun && !site) lines.push(`# agent login: ${choice ? `${choice.user} (${describeChoice(choice)})${choice.create ? ", logged in and saved when this runs" : ""}` : `${info.user}, shared with you`}`);
         if (login) {
           lines.push(`${label} is signed in as ${chalk.bold(login.user)}; you are ${chalk.bold(info.user)}.${login.listed ? ` The station counts ${login.user} as an agent${login.approval ? ": its point writes wait for your approval" : ""}.` : ""}`);
@@ -1341,7 +1389,7 @@ program
       }
     }
 
-    const panes = buildLayout({ layout: opts.layout, profile, allowWrites: !!g.allowWrites, env, agent, demo: siteKey });
+    const panes = buildLayout({ layout: opts.layout, profile, allowWrites: !!g.allowWrites, env, agent, demo: siteKey, weather: weather ? shq(weather) : undefined });
     const result = launch(mux, session, panes, { rex: found.rex, dryRun: opts.dryRun });
     if (opts.dryRun) {
       console.log(chalk.dim(`# ${mux} (${found.why}), session ${session}, layout ${opts.layout}`));
@@ -1355,7 +1403,8 @@ program
     if (mux === "rex" && !process.env.REX_SESSION) console.log(chalk.dim(`  Switch to the "${session}" session in Rex to see it.`));
     for (const line of lines) console.log(`  ${line}`);
     for (const note of notes) console.log(chalk.yellow(`  ${note}`));
-    console.log(chalk.dim(`  In any station pane: 1-0 switch view, / find, : commands, W allow changes, ? help.${agent ? " The agent's changes show up in the AI Activity pane; approve with a, reject with x." : ""}`));
+    if (opts.layout === "site") console.log(chalk.dim(`  In the Station pane: enter opens what the cursor is on, i lists what needs you, ? help.${agent ? " A change the agent asks for shows there; enter on it to approve or reject." : ""}`));
+    else console.log(chalk.dim(`  In any station pane: 1-0 switch view, / find, : commands, W allow changes, ? help.${agent ? " The agent's changes show up in the AI Activity pane; approve with a, reject with x." : ""}`));
     if (result.attach && opts.attach && process.stdout.isTTY && sites.length === 1) spawnSync(result.attach[0], result.attach.slice(1), { stdio: "inherit" });
     else if (result.attach) console.log(chalk.dim(`  Open it with: ${result.attach.join(" ")}`));
    }
@@ -1771,15 +1820,18 @@ nav
 
 program
   .command("check")
-  .description("a read-only punch list for the station: points, histories, names, devices, schedules, graphics and accounts, from a set of rules (exit code 1 when there are errors)")
+  .description("a read-only punch list for the station: points, histories, names, devices, schedules, graphics, accounts, and how the equipment is running, from a set of rules (exit code 1 when there are errors)")
   .option("--under <ord>", "check this branch only (default the whole station)")
   .option("--rules <file>", "a JSON rule file: adds rules to the starter set, changes the ones whose id it names, or replaces the set")
   .option("--html <file>", "also write the list as one self-contained page")
-  .action((opts: { under?: string; rules?: string; html?: string }, cmd: Command) =>
+  .option("--only <group>", "one part of the list: points, histories, names, devices, schedules, graphics, security, or behaviour (how the equipment is running: heating and cooling at once, held off setpoint, hunting, a stuck sensor, a command not followed)")
+  .action((opts: { under?: string; rules?: string; html?: string; only?: string }, cmd: Command) =>
     withClient(cmd, async ({ client }, g) => {
       const { loadRules } = await import("./check-rules.js");
       const { checkCsv, checkHtml, printCheck, runCheck, summaryText } = await import("./check.js");
-      const rules = loadRules(opts.rules);
+      const only = opts.only?.toLowerCase();
+      const rules = loadRules(opts.rules).filter((rule) => !only || rule.group.toLowerCase().startsWith(only) || rule.id.toLowerCase().startsWith(only));
+      if (!rules.length) throw new Error(`No part of the list is called "${opts.only}". Try: points, histories, names, devices, schedules, graphics, security, behaviour.`);
       const spin = g.output === "table" && process.stderr.isTTY ? spinner("browsing") : undefined;
       let result;
       try {
@@ -1905,10 +1957,10 @@ model
       const station = String(client.capabilities.station ?? client.http.url.hostname);
       const file = opts.out ?? `${station.replace(/[^\w.-]+/g, "_")}-model.json`;
       const earlier = existsSync(file) ? parseReview(readFileSync(file, "utf8"), file) : undefined;
-      const { evidence, truncated } = await readEvidence(client, under);
+      const { evidence, truncated, places } = await readEvidence(client, under);
       const equipment = inferModel(evidence);
       const joined = opts.links === false ? { links: [], truncated: false } : await readEquipmentLinks(client, evidence);
-      const review = buildReview(station, under, equipment, earlier, inferServes(equipment, joined.links, evidence));
+      const review = buildReview(station, under, equipment, earlier, inferServes(equipment, joined.links, evidence), places);
       mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
       writeFileSync(file, `${JSON.stringify(review, null, 2)}\n`);
       if (g.output === "json") console.log(JSON.stringify(review, null, 2));

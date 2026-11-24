@@ -116,7 +116,7 @@ test("a check only reads: every operation it sends is ungated, and the demo's gr
     // The simulated station is API 1.11: it has no graphics inventory, and the check says so and goes on.
     const graphics = result.rules.find((r) => r.id === "graphics.qa");
     assert.match(graphics.skipped, /does not have graphics_inventory/);
-    assert.equal(result.summary.skipped, 1);
+    assert.equal(result.summary.skipped, 2); // graphics, and the one behaviour rule this building has no points for
   } finally {
     await close();
   }
@@ -187,7 +187,7 @@ test("from the command line: table, JSON and an HTML page, with exit code 1 when
     const shown = await bask("check");
     assert.equal(shown.code, 1, shown.err);
     assert.match(shown.out, /Northgate {2}slot:\/ · \d+ rules/);
-    assert.match(shown.out, /2 errors, 2 warnings, \d+ to review, \d+ info/);
+    assert.match(shown.out, /2 errors, 3 warnings, \d+ to review, \d+ info/);
     assert.match(shown.out, /error +Devices +Drivers\/BacnetNetwork\/VAV_107 +down/);
     assert.match(shown.out, /skipped {2}graphics\.qa/);
 

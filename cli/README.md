@@ -53,7 +53,33 @@ bask fleet                                             # every saved station at 
 
 The same words are shell commands: `bask why`, `bask log`, `bask get` (with `@` and a time after a point for the past), and `bask test` for a [checkout](../docs/CHECKOUT.md).
 
-**What feeds what.** The map groups zones under the unit that feeds them from the station's own relations, then from guesses (names, folders, links) that are fairly sure, marked `guessed`. Whatever is left is grouped the way it is wired, by network. `r` lists the guesses; `accept` keeps the sure ones, `accept all` or `accept AHU_02` more; `feeds AHU_01 VAV_101..VAV_108` says it yourself; `show Airflow on vav` chooses the reading a kind of unit shows. All of that is kept in bask's own folder on this computer (`sites/<station>.json`) and nothing is written to the station.
+**What feeds what.** The map groups zones under the unit that feeds them from the station's own relations, then from guesses (names, folders, links) that are fairly sure, marked `guessed`. Tags and relations are read from both Haystack dictionaries, the older `hs:` and Haystack 4 `h4:`, set on the component or implied by a tag rule. A unit nothing is known to feed sits with others of its type (`VAV boxes`), and by its folder only when what it is is not known either. `r` lists the guesses; `accept` keeps the sure ones, `accept all` or `accept AHU_02` more; `feeds AHU_01 VAV_101..VAV_108` says it yourself; `show Airflow on vav` chooses the reading a kind of unit shows. All of that is kept in bask's own folder on this computer (`sites/<station>.json`) and nothing is written to the station.
+
+**Where things are.** Where the station holds site and space relations, a unit's page shows its building, floor and room under its name. `g` lays the map out by what feeds what, by building and floor, or by type (`arrange feeds|place|kind`). `places` lists the buildings, floors and rooms with what is in each, and `where VAV_01` says where one unit is.
+
+**Air side and water side.** Laid out by what feeds what, the map has a heading for each side where the station says enough: under WATER SIDE each plant with the chillers, boilers and pumps that are part of it (`equipRef`), under AIR SIDE each air handler with its boxes. A plant with nothing under it still gets its own panel. Under a plant's name is what it sends water to (`chilledWaterRef`, `hotWaterRef`, or `feeds HW_Plant AHU_01 VAV_101..VAV_124` typed on the screen): each unit with how far its valve is open, or, when there are too many to name, how many of each kind and how many are calling. Those units keep their own tiles under the air handler that feeds them. Plant equipment that belongs to no plant sits with others of its kind.
+
+**What is not running right, and the site's meter.** The look `bask check --only behaviour` takes is also taken by the screen, a few seconds after the map comes up and every 15 minutes: a unit it finds something on gets a ≠ mark, a line beside the map and a count under it, and the finding in full inside the unit. Where the station has a main meter, the end of the line under the map shows what it reads and today's peak.
+
+**Lenses.** A lens recolours the map, and inside a unit it says how many points it picks out, marks those and dims the rest: alarms, what is in hand and by whom, what changed and who changed it, what an agent touched. Under comfort, a zone with a heating and a cooling setpoint is right anywhere between the two: blue only below the heating setpoint, orange only above the cooling one.
+
+**Doing things.** One way for everything. The cursor lands on anything: a unit, a point, and each line of what waits beside the map. `enter` opens it. A unit opens its page; a point, an alarm or a change an agent asked for opens a short card that says what it is and lists what can be done, each with a letter:
+
+- a point: set a value, put it in hand, release it, acknowledge its alarms, ask why;
+- an alarm: acknowledge it, all the same ones, all on its unit or every one, go to the point, ask why;
+- a change that waits: who asked and why, what it would change, approve or reject.
+
+`i` lists what needs you in one place (changes that wait, alarms still in alarm, alarms to acknowledge, points in hand), for the site or for the unit you are in; `enter` on a line opens the same card, and `esc` comes back to the list. The map tells an alarm that is still in alarm (`▲`, red) from one that is back to normal and only waits to be acknowledged (`△`).
+
+Every change, whatever started it, is shown on one card first: what it does, before and after. `enter` makes it and `esc` drops it. The first change from a window has to be allowed on that card (`enter` once to allow, once more to make it); `readonly` on the command line stops allowing them. The typed words still work and go through the same card: `set`, `override … for 30m`, `release`, `ack AHU_03`, `ack all`, `clear` (admin), `approve P7`, `reject P7`.
+
+**What's off, energy and notes.** Three things the command line gained, each of which also runs from the line at the bottom of the screen:
+
+- `check --only behaviour` lists what looks wrong in how the equipment is running: heating and cooling at once, a unit held off its setpoint for two hours, an output swinging back and forth, a sensor that has not moved in a day, a command nothing followed. It works from the same model the map is drawn from and the points' histories, and is part of `bask check`.
+- `energy` lists every point that reads in kW: now, today's peak and when, the energy used since midnight, and yesterday by the same time. The one whose name says it is the site's meter is listed first.
+- `note <text>` (with `--on <point or unit>` when it is about one) leaves a note in the log; `log --new` lists what happened since you last looked. Notes are kept on this computer and shared by every login to the station, so one an AI agent leaves in the next pane shows here, on the time bar and in `log`, marked ✎.
+
+**Everything else.** Any bask command that prints and ends runs from the command line and its answer is shown in place of the map: `bask check`, `bask history <point> --rollup 1h`, `bask query "<bql>"`, `bask px …`, `bask diff …`, `bask model infer`, `bask files ^px`. A command with no word of its own on the screen runs without the `bask` in front (`check`, `status`, `jobs`). It runs as its own bask process on the same saved login. One that changes the station is shown first and needs changes on (`W` twice). Commands that take the whole terminal (`watch`, `fleet`, `workspace`, `login`) are run from a shell.
 
 The screen starts read-only. `W`, pressed twice, allows changes from that window (or start with `--allow-writes`); each one still shows first and asks. The look is BASidekick's: Ink ground, Paper type and the hi-vis accent as a fill, light or dark with the terminal (`--theme`). What moves is brief and means something: the S tears once as the screen comes up, readings decode as they arrive, and a unit that is not answering glitches, as the brand keeps that for faults. `BASK_MOTION=off` holds everything still. `c` opens the older dashboard below, and `q` there comes back.
 
@@ -460,21 +486,25 @@ The four tasks are the four things to show above:
 
 ## Workspace
 
-`bask workspace` lays out a station workspace in Rex (Superlogical's terminal multiplexer) or tmux: an Explorer, Alarms and AI Activity pane, and an AI agent session (Claude Code by default) that works on the station through `bask`. It needs Rex or tmux installed. The agent pane runs `claude` (Claude Code); when that is not on the PATH, the workspace starts without an agent pane and says so. `--agent <command>` starts another agent and `--no-agent` leaves the pane out.
+`bask workspace` lays out a station workspace in Rex (Superlogical's terminal multiplexer) or tmux: the site screen, the weather, and an AI agent session (Claude Code by default) that works on the station through `bask`. It needs Rex or tmux installed. The agent pane runs `claude` (Claude Code); when that is not on the PATH, the workspace starts without an agent pane and says so. `--agent <command>` starts another agent and `--no-agent` leaves the pane out.
 
-```bash
-bask workspace                      # Explorer · Alarms · AI Activity · Claude Code
-bask workspace --no-agent           # Explorer · Watch · Alarms · AI Activity
+The Weather pane is `wx`, BASidekick's weather command. It is shown when `wx` is installed and left out when it is not (or with `--no-weather`); bask itself never calls it. The agent is told `wx` is there and what its verdicts mean. The weather's place is set in `wx` (`wx place <town>`), not here.
+
+```
+bask workspace                      # Station · Claude Code · Weather
+bask workspace --agent codex        # the same with another agent
+bask workspace --no-agent           # Station · Weather
+bask workspace --layout ops         # Explorer · Alarms · AI Activity · Claude Code
 bask workspace --layout graphics    # Graphics · AI Activity · Claude Code
 bask workspace --layout logic       # Logic · AI Activity · Claude Code
 bask workspace --layout build       # Explorer · Jobs · Graphics · AI Activity · Claude Code (bringing a station up)
 bask workspace --layout monitor     # Home · Alarms · Watch · AI Activity
-bask workspace --layout duo         # the full dashboard beside the agent
+bask workspace --layout duo         # the older dashboard beside the agent
 bask workspace --demo               # the same on a simulated building (--site to choose)
 bask workspace --dry-run            # print what would be started
 ```
 
-It uses the multiplexer the terminal is already in, else Rex, else tmux (`--mux rex|tmux` to choose). Each pane is `bask tui --view <name> --pane`: one view, no tab row, though `1`–`0`, `g` and `L` still switch.
+It uses the multiplexer the terminal is already in, else Rex, else tmux (`--mux rex|tmux` to choose). The Station pane is the site screen (`bask`). In the other layouts each pane is `bask tui --view <name> --pane`: one view, no tab row, though `1`–`0`, `g` and `L` still switch.
 
 **Panes work together.** They share the watch list, so `w` in the Explorer pane adds a row to the Watch pane. `t` (trend) and `e` (show in the Explorer) go to the pane that shows that view when there is one. `bask show <ord>`, `bask show --trend <ord>` and `bask show --watch <ord>` do the same from any shell, which is how the agent points at things for you; `bask graphic save` and `bask graphic show <name>` open a graphic in the Graphics pane.
 
