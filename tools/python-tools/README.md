@@ -5,7 +5,7 @@ This was tested on a bench setup with a BACnet MS/TP device integrated into the 
 
 
 ![Screenshot2](./services.png)
-Validation was performed in Python from both the Windows machine (192.168.204.11) running the station locally and a Linux device on the same test-bench LAN.
+Validation was performed in Python from a machine running the station locally and from another host on the same test-bench LAN.
 
 
 ## Py packages
@@ -30,9 +30,32 @@ python3 -m pip install -r tools/python/requirements.txt
 ```text
 tools/python/
   baskstream_client.py   # reusable Niagara SCRAM + MessagePack WebSocket client
-  baskstream_cli.py      # practical CLI: health, smoke, tree, values, read, schedules
+  baskstream_cli.py      # CLI: health, smoke, tree, values, read, schedules,
+                         #      describe, component, tags, resolve, bacnet
   baskstream_smoke.py    # minimal smoke test
   requirements.txt
+  requirements-dev.txt   # pytest
+  tests/                 # in-process fake 1.12/1.14 station + optional bask demo
+```
+
+The client is read-only by default. It verifies the SCRAM server signature, can send a WebSocket
+`Authorization` header (`--ws-auth basic`), records server notices, and refuses write operations
+locally. `resolve` is an API 1.14 operation; on a 1.12 station the client refuses it locally after
+`capabilities`. Discovery uses `search` (use `--walk` for the older browse walk). Schedules print a
+table (Now / Next change / Today) and accept both `startTime` and `start`.
+
+```powershell
+py .\baskstream_cli.py --station https://localhost --user admin --ask-pass --timeout 30 `
+  --ws-auth none component 'slot:/Drivers/BacnetNetwork/LabAHU_01/config/deviceObject'
+py .\baskstream_cli.py --station https://localhost --user admin --ask-pass bacnet --base 'slot:/Drivers'
+```
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 -m pip install -r requirements-dev.txt
+python3 -m pytest -q
+# optional: also hit a running `bask demo --serve`
+BASK_DEMO_URL=http://127.0.0.1:47911 python3 -m pytest -q
 ```
 
 ## Station prerequisites
@@ -46,6 +69,8 @@ tools/python/
 
 For local/self-signed test benches, the scripts default to TLS verification off. Use `--verify-tls` only when the station certificate is trusted by the client machine.
 
+`--ws-auth basic` on a remote `http://` / `ws://` URL is refused unless you pass `--allow-insecure-transport`. Loopback and `https://` / `wss://` are unchanged.
+
 ## Quick network check
 
 Unauthenticated `/stream/health` should usually redirect to Niagara login. That is a good sign because it proves the remote machine can reach the Niagara web server and the `stream` servlet path.
@@ -54,7 +79,7 @@ Unauthenticated `/stream/health` should usually redirect to Niagara login. That 
 
 ```powershell
 curl.exe -k -i https://localhost/stream/health
-curl.exe -k -i https://192.168.204.11/stream/health
+curl.exe -k -i https://localhost/stream/health
 ```
 
 Expected before login:
@@ -67,21 +92,21 @@ Location: https://<station>/login
 ### Linux bash
 
 ```bash
-curl -k -i https://192.168.204.11/stream/health
-nc -vz 192.168.204.11 443
+curl -k -i https://localhost/stream/health
+nc -vz localhost 443
 ```
 
 ### macOS zsh/bash
 
 ```zsh
-curl -k -i https://192.168.204.11/stream/health
-nc -vz 192.168.204.11 443
+curl -k -i https://localhost/stream/health
+nc -vz localhost 443
 ```
 
 On macOS, if `nc` behaves differently, use:
 
 ```zsh
-nmap -Pn -p 443 192.168.204.11
+nmap -Pn -p 443 localhost
 ```
 
 
@@ -95,13 +120,13 @@ In PowerShell, **always wrap Niagara ORDs in single quotes**. Double quotes will
 Good:
 
 ```powershell
---base 'slot:/Drivers/BacnetNetwork/BENS$20BENCHTEST$20BOX/points'
+--base 'slot:/Drivers/BacnetNetwork/LabAHU_01/points'
 ```
 
 Bad:
 
 ```powershell
---base "slot:/Drivers/BacnetNetwork/BENS$20BENCHTEST$20BOX/points"
+--base "slot:/Drivers/BacnetNetwork/LabAHU_01/points"
 ```
 
 Linux bash and macOS zsh should also use single quotes for Niagara ORDs. It is safer and avoids shell expansion surprises.
@@ -126,7 +151,7 @@ $env:BASKSTREAM_PASS="<station-password>"
 ### Linux bash
 
 ```bash
-python3 baskstream_cli.py --station https://192.168.204.11 --user admin --ask-pass health
+python3 baskstream_cli.py --station https://localhost --user admin --ask-pass health
 ```
 
 Or use environment variables:
@@ -139,7 +164,7 @@ export BASKSTREAM_PASS="<station-password>"
 ### macOS zsh/bash
 
 ```zsh
-python3 baskstream_cli.py --station https://192.168.204.11 --user admin --ask-pass health
+python3 baskstream_cli.py --station https://localhost --user admin --ask-pass health
 ```
 
 Or use environment variables:
@@ -167,7 +192,7 @@ py .\baskstream_smoke.py `
 
 ```bash
 python3 baskstream_smoke.py \
-  --station https://192.168.204.11 \
+  --station https://localhost \
   --user admin \
   --ask-pass \
   --root 'slot:/Drivers'
@@ -177,7 +202,7 @@ python3 baskstream_smoke.py \
 
 ```zsh
 python3 baskstream_smoke.py \
-  --station https://192.168.204.11 \
+  --station https://localhost \
   --user admin \
   --ask-pass \
   --root 'slot:/Drivers'
@@ -214,7 +239,7 @@ py .\baskstream_cli.py `
 
 ```bash
 python3 baskstream_cli.py \
-  --station https://192.168.204.11 \
+  --station https://localhost \
   --user admin \
   --ask-pass \
   tree \
@@ -226,7 +251,7 @@ python3 baskstream_cli.py \
 
 ```zsh
 python3 baskstream_cli.py \
-  --station https://192.168.204.11 \
+  --station https://localhost \
   --user admin \
   --ask-pass \
   tree \
@@ -246,29 +271,29 @@ py .\baskstream_cli.py `
   --user admin `
   --ask-pass `
   values `
-  --base 'slot:/Drivers/BacnetNetwork/BENS$20BENCHTEST$20BOX/points'
+  --base 'slot:/Drivers/BacnetNetwork/LabAHU_01/points'
 ```
 
 ### Linux bash
 
 ```bash
 python3 baskstream_cli.py \
-  --station https://192.168.204.11 \
+  --station https://localhost \
   --user admin \
   --ask-pass \
   values \
-  --base 'slot:/Drivers/BacnetNetwork/BENS$20BENCHTEST$20BOX/points'
+  --base 'slot:/Drivers/BacnetNetwork/LabAHU_01/points'
 ```
 
 ### macOS zsh/bash
 
 ```zsh
 python3 baskstream_cli.py \
-  --station https://192.168.204.11 \
+  --station https://localhost \
   --user admin \
   --ask-pass \
   values \
-  --base 'slot:/Drivers/BacnetNetwork/BENS$20BENCHTEST$20BOX/points'
+  --base 'slot:/Drivers/BacnetNetwork/LabAHU_01/points'
 ```
 
 Example output:
@@ -285,11 +310,11 @@ Filter by name/ORD/type:
 
 ```bash
 python3 baskstream_cli.py \
-  --station https://192.168.204.11 \
+  --station https://localhost \
   --user admin \
   --ask-pass \
   values \
-  --base 'slot:/Drivers/BacnetNetwork/BENS$20BENCHTEST$20BOX/points' \
+  --base 'slot:/Drivers/BacnetNetwork/LabAHU_01/points' \
   --query temp
 ```
 
@@ -297,11 +322,11 @@ List point ORDs without reading values:
 
 ```bash
 python3 baskstream_cli.py \
-  --station https://192.168.204.11 \
+  --station https://localhost \
   --user admin \
   --ask-pass \
   values \
-  --base 'slot:/Drivers/BacnetNetwork/BENS$20BENCHTEST$20BOX/points' \
+  --base 'slot:/Drivers/BacnetNetwork/LabAHU_01/points' \
   --list-only
 ```
 
@@ -309,10 +334,10 @@ Read one explicit point:
 
 ```bash
 python3 baskstream_cli.py \
-  --station https://192.168.204.11 \
+  --station https://localhost \
   --user admin \
   --ask-pass \
-  read 'slot:/Drivers/BacnetNetwork/BENS$20BENCHTEST$20BOX/points/OA$2dT'
+  read 'slot:/Drivers/BacnetNetwork/LabAHU_01/points/OA$2dT'
 ```
 
 ## Export values
@@ -327,7 +352,7 @@ py .\baskstream_cli.py `
   --user admin `
   --ask-pass `
   values `
-  --base 'slot:/Drivers/BacnetNetwork/BENS$20BENCHTEST$20BOX/points' `
+  --base 'slot:/Drivers/BacnetNetwork/LabAHU_01/points' `
   --format csv `
   --output bacnet_values.csv
 ```
@@ -336,11 +361,11 @@ Linux/macOS:
 
 ```bash
 python3 baskstream_cli.py \
-  --station https://192.168.204.11 \
+  --station https://localhost \
   --user admin \
   --ask-pass \
   values \
-  --base 'slot:/Drivers/BacnetNetwork/BENS$20BENCHTEST$20BOX/points' \
+  --base 'slot:/Drivers/BacnetNetwork/LabAHU_01/points' \
   --format csv \
   --output bacnet_values.csv
 ```
@@ -349,11 +374,11 @@ python3 baskstream_cli.py \
 
 ```bash
 python3 baskstream_cli.py \
-  --station https://192.168.204.11 \
+  --station https://localhost \
   --user admin \
   --ask-pass \
   values \
-  --base 'slot:/Drivers/BacnetNetwork/BENS$20BENCHTEST$20BOX/points' \
+  --base 'slot:/Drivers/BacnetNetwork/LabAHU_01/points' \
   --format json \
   --output bacnet_values.json
 ```
@@ -362,11 +387,11 @@ python3 baskstream_cli.py \
 
 ```bash
 python3 baskstream_cli.py \
-  --station https://192.168.204.11 \
+  --station https://localhost \
   --user admin \
   --ask-pass \
   values \
-  --base 'slot:/Drivers/BacnetNetwork/BENS$20BENCHTEST$20BOX/points' \
+  --base 'slot:/Drivers/BacnetNetwork/LabAHU_01/points' \
   --format markdown
 ```
 
@@ -390,7 +415,7 @@ Linux/macOS:
 
 ```bash
 python3 baskstream_cli.py \
-  --station https://192.168.204.11 \
+  --station https://localhost \
   --user admin \
   --ask-pass \
   schedules \
@@ -402,7 +427,7 @@ Read schedule summaries where supported:
 
 ```bash
 python3 baskstream_cli.py \
-  --station https://192.168.204.11 \
+  --station https://localhost \
   --user admin \
   --ask-pass \
   schedules \
