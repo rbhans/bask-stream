@@ -10,7 +10,15 @@ Commands:
   tree        compact station/folder tree
   values      discover readable points and print point names + current values
   read        read explicit point ORDs
-  schedules   list and optionally read schedules
+  schedules   list and optionally read schedules (now / next event / today)
+  describe    one node with full metadata
+  component   describe_component: slots, facets, links of one component
+  tags        read_tags for one or more ORDs
+  resolve     API 1.14: the station's guess at the point for a role on an equipment
+  bacnet      BACnet device / object identifiers of points (config/deviceObject, proxyExt)
+
+Discovery uses the station-side `search` operation by default (one request per
+base). Pass --walk to fall back to the older recursive `browse` walk.
 
 PowerShell reminder:
   Niagara ORDs often contain "$20" and "$2d". Use SINGLE QUOTES in PowerShell:
@@ -28,7 +36,7 @@ import sys
 import time
 from typing import Any, Iterable
 
-from baskstream_client import BaskStreamClient
+from baskstream_client import BaskStreamClient, BaskStreamError
 
 
 # -----------------------------------------------------------------------------
@@ -243,28 +251,36 @@ def walk_tree(
     return rows
 
 
-def discover_points(
+def search_nodes(
     client: BaskStreamClient,
     base: str,
     *,
+    feature: str,
     depth: int,
     query: str,
     max_nodes: int,
-    follow_external: bool,
 ) -> list[dict[str, Any]]:
+    """Station-side discovery with ``search`` (features filter, full metadata)."""
+    response = client.search(
+        base,
+        query=query,
+        features=[feature],
+        metadata="full",
+        depth=max(depth, 1),
+        limit=max_nodes,
+    )
+    result = response.get("result") or {}
+    if result.get("truncated") and not client.quiet:
+        reasons = ",".join(result.get("truncatedReasons") or []) or "unknown"
+        print(f"[search] results truncated ({reasons}); raise --max-nodes/--depth or narrow --base")
+    return list(result.get("nodes") or [])
+
+
+def _filter_sorted(nodes: Iterable[dict[str, Any]], query: str, keep) -> list[dict[str, Any]]:
     matches: dict[str, dict[str, Any]] = {}
     query_l = query.lower().strip()
-    walked = walk_tree(
-        client,
-        base,
-        depth=depth,
-        metadata="full",
-        max_nodes=max_nodes,
-        follow_external=follow_external,
-    )
-
-    for _indent, node in walked:
-        if not is_point(node):
+    for node in nodes:
+        if not keep(node):
             continue
         ord_value = node_ord(node)
         if not ord_value:
@@ -273,8 +289,25 @@ def discover_points(
         if query_l and query_l not in haystack:
             continue
         matches[ord_value] = node
-
     return [matches[k] for k in sorted(matches)]
+
+
+def discover_points(
+    client: BaskStreamClient,
+    base: str,
+    *,
+    depth: int,
+    query: str,
+    max_nodes: int,
+    follow_external: bool,
+    walk: bool = False,
+) -> list[dict[str, Any]]:
+    if walk:
+        walked = walk_tree(client, base, depth=depth, metadata="full",
+                           max_nodes=max_nodes, follow_external=follow_external)
+        return _filter_sorted((n for _i, n in walked), query, is_point)
+    nodes = search_nodes(client, base, feature="point", depth=depth, query="", max_nodes=max_nodes)
+    return _filter_sorted(nodes, query, lambda _n: True)
 
 
 def discover_schedules(
@@ -285,30 +318,14 @@ def discover_schedules(
     query: str,
     max_nodes: int,
     follow_external: bool,
+    walk: bool = False,
 ) -> list[dict[str, Any]]:
-    matches: dict[str, dict[str, Any]] = {}
-    query_l = query.lower().strip()
-    walked = walk_tree(
-        client,
-        base,
-        depth=depth,
-        metadata="full",
-        max_nodes=max_nodes,
-        follow_external=follow_external,
-    )
-
-    for _indent, node in walked:
-        if not is_schedule(node):
-            continue
-        ord_value = node_ord(node)
-        if not ord_value:
-            continue
-        haystack = " ".join([node_name(node), ord_value, node_type(node)]).lower()
-        if query_l and query_l not in haystack:
-            continue
-        matches[ord_value] = node
-
-    return [matches[k] for k in sorted(matches)]
+    if walk:
+        walked = walk_tree(client, base, depth=depth, metadata="full",
+                           max_nodes=max_nodes, follow_external=follow_external)
+        return _filter_sorted((n for _i, n in walked), query, is_schedule)
+    nodes = search_nodes(client, base, feature="schedule", depth=depth, query="", max_nodes=max_nodes)
+    return _filter_sorted(nodes, query, lambda _n: True)
 
 
 def chunks(items: list[str], size: int) -> Iterable[list[str]]:
@@ -351,9 +368,92 @@ def normalize_value_row(row: dict[str, Any], meta: dict[str, Any] | None = None)
     }
 
 
+
+DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+
+def _output_text(output: Any) -> str:
+    if not isinstance(output, dict):
+        return "" if output is None else str(output)
+    text = output.get("displayValue")
+    if text in (None, ""):
+        text = output.get("value")
+    return "" if text is None else str(text)
+
+
+def schedule_summary(schedule: dict[str, Any], now_ms: int) -> dict[str, str]:
+    """Flatten a read_schedule result into Now / Next change / Today columns.
+
+    API 1.14 adds 24-hour ``startTime``/``finishTime``; older stations only send the
+    display-format ``start``/``finish``. Both are handled.
+    """
+    now = _output_text(schedule.get("currentOutput"))
+    next_ms = schedule.get("nextEvent")
+    next_text = ""
+    if isinstance(next_ms, (int, float)) and next_ms > 0:
+        next_text = time.strftime("%a %H:%M", time.localtime(next_ms / 1000))
+    week = ((schedule.get("tree") or {}).get("week") or {})
+    today_name = DAY_NAMES[time.localtime(now_ms / 1000).tm_wday]
+    entries = ((week.get(today_name) or {}).get("day") or [])
+    spans = []
+    for entry in entries:
+        start = entry.get("startTime") or entry.get("start") or "?"
+        finish = entry.get("finishTime") or entry.get("finish") or "?"
+        value = _output_text(entry.get("effectiveValue"))
+        spans.append(f"{start}-{finish} {value}".strip())
+    return {"now": now, "next": next_text, "today": "; ".join(spans) or "(no entries)"}
+
+
+def slot_map(component: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    result = component.get("result") if "result" in component else component
+    return {str(s.get("name")): s for s in (result or {}).get("slots") or [] if s.get("name")}
+
+
+def slot_text(slot: dict[str, Any] | None) -> str:
+    if not slot:
+        return ""
+    value = slot.get("value")
+    if isinstance(value, dict):
+        for key in ("encoded", "value"):
+            if key in value:
+                return str(value[key])
+        return ""
+    return "" if value is None else str(value)
+
+
+def bacnet_ids(client: BaskStreamClient, point_ord: str) -> dict[str, str]:
+    """objectId / propertyId of a BACnet proxy point, read-only via describe_component."""
+    out: dict[str, str] = {}
+    for target in (f"{point_ord}/proxyExt", point_ord):
+        try:
+            slots = slot_map(client.describe_component(target))
+        except BaskStreamError:
+            continue
+        for name in ("objectId", "propertyId", "propertyArrayIndex", "writePriority"):
+            if name in slots and name not in out:
+                out[name] = slot_text(slots[name])
+    return out
+
+
+def device_object_id(client: BaskStreamClient, device_ord: str) -> str:
+    for target in (device_ord, f"{device_ord}/config/deviceObject"):
+        try:
+            slots = slot_map(client.describe_component(target))
+        except BaskStreamError:
+            continue
+        if "objectId" in slots:
+            return slot_text(slots["objectId"])
+    return ""
+
 # -----------------------------------------------------------------------------
 # Commands
 # -----------------------------------------------------------------------------
+
+def status(args: argparse.Namespace, message: str) -> None:
+    """Progress lines go to stderr when stdout carries JSON/CSV, so the output stays parseable."""
+    machine = getattr(args, "format", "table") in ("json", "csv") and not getattr(args, "output", None)
+    print(message, file=sys.stderr if machine else sys.stdout)
+
 
 def cmd_health(client: BaskStreamClient, _args: argparse.Namespace) -> None:
     health = client.health()
@@ -427,12 +527,13 @@ def cmd_values(client: BaskStreamClient, args: argparse.Namespace) -> None:
         query=args.query,
         max_nodes=args.max_nodes,
         follow_external=args.follow_external,
+        walk=args.walk,
     )
 
     point_ords = [node_ord(p) for p in points if node_ord(p)]
     point_ords = sorted(set(point_ords))[: args.limit]
 
-    print(f"[values] found {len(point_ords)} readable point candidate(s) under {args.base}")
+    status(args, f"[values] found {len(point_ords)} readable point candidate(s) under {args.base}")
 
     if args.list_only:
         rows = [
@@ -497,6 +598,7 @@ def cmd_schedules(client: BaskStreamClient, args: argparse.Namespace) -> None:
         query=args.query,
         max_nodes=args.max_nodes,
         follow_external=args.follow_external,
+        walk=args.walk,
     )
 
     rows: list[dict[str, Any]] = []
@@ -512,22 +614,91 @@ def cmd_schedules(client: BaskStreamClient, args: argparse.Namespace) -> None:
         if args.read:
             try:
                 sched = client.read_schedule(node_ord(node), at_ms=now_ms)
-                row["current"] = json.dumps(sched.get("schedule") or sched, default=str)[:500]
-            except Exception as exc:
-                row["current"] = f"ERROR: {exc}"
+                row.update(schedule_summary(sched.get("schedule") or {}, now_ms))
+                if args.format == "json":
+                    row["schedule"] = sched.get("schedule")
+            except BaskStreamError as exc:
+                row["now"] = f"ERROR: {exc}"
         rows.append(row)
 
     columns = [
         ("name", "Schedule", 34),
         ("type", "Type", 28),
         ("status", "Status", 16),
-        ("ord", "ORD", 90),
     ]
     if args.read:
-        columns.append(("current", "Current / Summary", 80))
+        columns += [("now", "Now", 16), ("next", "Next change", 20), ("today", "Today", 40)]
+    columns.append(("ord", "ORD", 90))
 
-    print(f"[schedules] found {len(rows)} schedule candidate(s) under {args.base}")
+    status(args, f"[schedules] found {len(rows)} schedule candidate(s) under {args.base}")
     print_rows(rows, columns, args.format, args.output)
+
+
+def cmd_describe(client: BaskStreamClient, args: argparse.Namespace) -> None:
+    print(json.dumps(client.describe(args.ord), indent=2, default=str))
+
+
+def cmd_component(client: BaskStreamClient, args: argparse.Namespace) -> None:
+    response = client.describe_component(args.ord)
+    if args.format == "json":
+        print(json.dumps(response, indent=2, default=str))
+        return
+    rows = [
+        {"slot": name, "type": s.get("typeSpec"), "value": slot_text(s), "writable": s.get("writable")}
+        for name, s in slot_map(response).items()
+    ]
+    print_rows(rows, [("slot", "Slot", 28), ("type", "Type", 36), ("value", "Value", 50),
+                      ("writable", "Writable", 8)], args.format, args.output)
+
+
+def cmd_tags(client: BaskStreamClient, args: argparse.Namespace) -> None:
+    response = client.read_tags(args.ord, dictionary=args.dictionary)
+    rows = []
+    for target in response.get("targets") or []:
+        for tag in target.get("tags") or []:
+            rows.append({"ord": target.get("ord"), "tag": tag.get("id"),
+                         "value": "" if tag.get("marker") else tag.get("value"), "source": tag.get("source")})
+        if not target.get("ok"):
+            rows.append({"ord": target.get("ord"), "tag": "!", "value": target.get("error"), "source": ""})
+    print_rows(rows, [("tag", "Tag", 28), ("value", "Value", 30), ("source", "Source", 8),
+                      ("ord", "ORD", 90)], args.format, args.output)
+
+
+def cmd_resolve(client: BaskStreamClient, args: argparse.Namespace) -> None:
+    if client.server_operations is None and client.api_version is None:
+        client.capabilities()
+    if not client.supports("resolve"):
+        raise SystemExit(f"This station (apiVersion {client.api_version}) does not offer resolve; it needs API 1.14.")
+    try:
+        response = client.resolve(args.equip, role=args.role, tags=args.tag or None)
+    except BaskStreamError as exc:
+        if "unsupported_op" in str(exc):
+            raise BaskStreamError(f"this station (apiVersion {client.api_version}) has no resolve; it needs API 1.14") from exc
+        raise
+    status(args, f"[resolve] point={response.get('point')} ambiguous={response.get('ambiguous')} (inferred, review before use)")
+    rows = [{"score": m.get("score"), "name": m.get("name"), "why": ", ".join(map(str, m.get("why") or [])),
+             "ord": m.get("ord")} for m in response.get("matches") or []]
+    print_rows(rows, [("score", "Score", 6), ("name", "Name", 30), ("why", "Why", 40),
+                      ("ord", "ORD", 90)], args.format, args.output)
+
+
+def cmd_bacnet(client: BaskStreamClient, args: argparse.Namespace) -> None:
+    points = discover_points(client, args.base, depth=args.depth, query=args.query,
+                             max_nodes=args.max_nodes, follow_external=args.follow_external, walk=args.walk)
+    device_ids: dict[str, str] = {}
+    rows = []
+    for node in points[: args.limit]:
+        ord_value = node_ord(node)
+        driver = ((node.get("metadata") or {}).get("driver") or {})
+        device_ord = str(driver.get("device") or ord_value.split("/points/")[0])
+        if device_ord not in device_ids:
+            device_ids[device_ord] = device_object_id(client, device_ord)
+        ids = bacnet_ids(client, ord_value)
+        rows.append({"name": node_name(node), "device": device_ids[device_ord], "object": ids.get("objectId", ""),
+                     "property": ids.get("propertyId", ""), "ord": ord_value})
+    status(args, f"[bacnet] {sum(1 for r in rows if r['object'])} of {len(rows)} point(s) carry a BACnet objectId")
+    print_rows(rows, [("name", "Point", 30), ("device", "Device", 14), ("object", "Object", 22),
+                      ("property", "Property", 14), ("ord", "ORD", 90)], args.format, args.output)
 
 
 # -----------------------------------------------------------------------------
@@ -539,6 +710,7 @@ def add_discovery_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-nodes", type=int, default=2000)
     parser.add_argument("--follow-external", action="store_true", help="Follow children that jump outside --base")
     parser.add_argument("--query", default="", help="Case-insensitive name/ORD/type filter")
+    parser.add_argument("--walk", action="store_true", help="Use the recursive browse walk instead of search")
 
 
 def add_output_args(parser: argparse.ArgumentParser) -> None:
@@ -554,6 +726,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ask-pass", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--verify-tls", action="store_true", help="Verify station TLS certificate")
+    parser.add_argument("--timeout", type=positive_int, default=45, help="Seconds to wait for each reply")
+    parser.add_argument("--ws-auth", choices=["none", "basic"], default="none",
+                        help="Send Authorization on the WebSocket handshake (service requireAuthorizationHeader=true)")
+    parser.add_argument("--require-server-signature", action="store_true",
+                        help="Fail login unless the station proves itself with a SCRAM server signature")
 
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -595,11 +772,40 @@ def build_parser() -> argparse.ArgumentParser:
     add_output_args(schedules)
     schedules.set_defaults(func=cmd_schedules, needs_ws=True)
 
+    describe = sub.add_parser("describe", help="One node with full metadata")
+    describe.add_argument("ord")
+    describe.set_defaults(func=cmd_describe, needs_ws=True)
+
+    component = sub.add_parser("component", help="describe_component: slots of one component")
+    component.add_argument("ord")
+    add_output_args(component)
+    component.set_defaults(func=cmd_component, needs_ws=True)
+
+    tags = sub.add_parser("tags", help="read_tags for one or more ORDs")
+    tags.add_argument("ord", nargs="+")
+    tags.add_argument("--dictionary", help="only this tag dictionary, e.g. hs")
+    add_output_args(tags)
+    tags.set_defaults(func=cmd_tags, needs_ws=True)
+
+    resolve = sub.add_parser("resolve", help="API 1.14: guess the point for a role on an equipment")
+    resolve.add_argument("equip")
+    resolve.add_argument("--role", help='words, e.g. "discharge air temp"')
+    resolve.add_argument("--tag", action="append", help="tag name (repeatable)")
+    add_output_args(resolve)
+    resolve.set_defaults(func=cmd_resolve, needs_ws=True)
+
+    bacnet = sub.add_parser("bacnet", help="BACnet device/object identifiers of discovered points")
+    bacnet.add_argument("--base", default="slot:/Drivers")
+    bacnet.add_argument("--limit", type=positive_int, default=1000)
+    add_discovery_args(bacnet)
+    add_output_args(bacnet)
+    bacnet.set_defaults(func=cmd_bacnet, needs_ws=True)
+
     return parser
 
 
-def main() -> int:
-    args = build_parser().parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     password = args.password
     if args.ask_pass:
@@ -613,6 +819,9 @@ def main() -> int:
         args.station,
         verify_tls=args.verify_tls,
         quiet=args.quiet,
+        timeout=args.timeout,
+        auth_header="basic" if args.ws_auth == "basic" else None,
+        require_server_signature=args.require_server_signature,
     )
 
     try:
@@ -621,13 +830,15 @@ def main() -> int:
         if getattr(args, "needs_ws", True):
             client.connect()
             client.ping()
+            client.capabilities()
             if not args.quiet:
-                caps = client.capabilities()
-                api_version = (caps.get("capabilities") or {}).get("apiVersion")
-                print(f"[capabilities] apiVersion={api_version}")
+                print(f"[capabilities] apiVersion={client.api_version}")
 
         args.func(client, args)
 
+    except BaskStreamError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     finally:
         client.close()
 

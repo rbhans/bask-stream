@@ -9,6 +9,17 @@ Small read-only Python client for Niagara baskStream:
 
 This is intentionally dependency-light for field testing and Open-FDD-style
 connector experiments. It is not a full Niagara SDK.
+
+API 1.14 notes:
+- SCRAM server signature (``v=``) is verified when the station returns it
+  (``require_server_signature=True`` makes it mandatory).
+- ``auth_header="basic"`` (or a literal header value) sends ``Authorization`` on
+  the WebSocket handshake, needed when the service has
+  ``requireAuthorizationHeader=true``.
+- Server notices (frames without an ``id``) are collected in ``notices``;
+  ``session_revoked`` and ``request_timeout`` raise ``BaskStreamSessionClosed``.
+- ``call()`` only sends read operations unless the client was created with
+  ``allow_writes=True``.
 """
 
 from __future__ import annotations
@@ -16,7 +27,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import json
 import os
 import ssl
 import time
@@ -31,11 +41,27 @@ import requests
 import urllib3
 import websocket
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+READ_ONLY_OPS = frozenset({
+    "ping", "capabilities", "browse", "describe", "search", "read", "read_tags",
+    "describe_component", "describe_component_types", "describe_write", "describe_history",
+    "read_history", "read_history_rollup", "read_alarms", "read_schedule",
+    "read_schedule_events", "subscription_status", "resolve", "query", "list_changes",
+})
+
+TERMINAL_NOTICES = frozenset({"session_revoked", "request_timeout"})
 
 
 class BaskStreamError(RuntimeError):
     """Raised for Niagara login, HTTP, or baskStream protocol errors."""
+
+
+class BaskStreamSessionClosed(BaskStreamError):
+    """The station ended the session (``session_revoked`` / ``request_timeout``)."""
+
+    def __init__(self, notice: dict[str, Any]) -> None:
+        self.notice = notice
+        detail = notice.get("reason") or notice.get("requestOp") or ""
+        super().__init__(f"station closed the session: {notice.get('op')} {detail}".strip())
 
 
 class SimpleCookieJar:
@@ -112,11 +138,24 @@ class BaskStreamClient:
         verify_tls: bool = False,
         quiet: bool = False,
         timeout: int = 45,
+        auth_header: str | None = None,
+        require_server_signature: bool = False,
+        allow_writes: bool = False,
     ) -> None:
         self.station = station.rstrip("/")
         self.verify_tls = verify_tls
+        if not verify_tls:
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         self.quiet = quiet
         self.timeout = timeout
+        self.auth_header_mode = auth_header
+        self.require_server_signature = require_server_signature
+        self.allow_writes = allow_writes
+        self.server_signature_verified = False
+        self.notices: list[dict[str, Any]] = []
+        self.server_operations: set[str] | None = None
+        self.api_version: str | None = None
+        self._handshake_authorization: str | None = None
         self.session = requests.Session()
         self.cookies = SimpleCookieJar()
         self.ws: websocket.WebSocket | None = None
@@ -185,9 +224,15 @@ class BaskStreamClient:
         This matches the included baskStream Node companion helper and avoids
         session problems on some Niagara/JENEsys builds.
         """
+        if self.auth_header_mode == "basic":
+            token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+            self._handshake_authorization = f"Basic {token}"
+        elif self.auth_header_mode:
+            self._handshake_authorization = self.auth_header_mode
+
         already = self.health()
         if already:
-            self.log(f"[login] already authenticatedUser={already.get('authenticatedUser')}")
+            self.log(f"[login] already authenticated{self._user_suffix(already)}")
             return already
 
         self.log("[login] GET /prelogin")
@@ -249,6 +294,21 @@ class BaskStreamClient:
         if final.status_code != 200:
             raise BaskStreamError(f"SCRAM final message failed: HTTP {final.status_code}")
 
+        server_final = parse_scram(final.text.strip())
+        if "e" in server_final:
+            raise BaskStreamError(f"SCRAM server error: {server_final['e']}")
+        if "v" in server_final:
+            server_key = hmac.new(salted_password, b"Server Key", hashlib.sha256).digest()
+            expected = base64.b64encode(
+                hmac.new(server_key, auth_message.encode("utf-8"), hashlib.sha256).digest()
+            ).decode("ascii")
+            if not hmac.compare_digest(server_final["v"], expected):
+                raise BaskStreamError("SCRAM server signature did not verify; not trusting this station.")
+            self.server_signature_verified = True
+            self.log("[login] SCRAM server signature verified")
+        elif self.require_server_signature:
+            raise BaskStreamError("SCRAM server-final message carried no server signature (v=).")
+
         self.log("[login] finalize")
         self.http("GET", "/j_security_check/")
 
@@ -256,8 +316,13 @@ class BaskStreamClient:
         if not health:
             raise BaskStreamError("/stream/health was not 200 after Niagara login.")
 
-        self.log(f"[login] authenticatedUser={health.get('authenticatedUser')}")
+        self.log(f"[login] ok{self._user_suffix(health)}")
         return health
+
+    @staticmethod
+    def _user_suffix(health: dict[str, Any]) -> str:
+        user = health.get("authenticatedUser")
+        return f" authenticatedUser={user}" if user else " (station did not report authenticatedUser)"
 
     def ws_url(self) -> str:
         parsed = urlparse(self.station)
@@ -277,9 +342,12 @@ class BaskStreamClient:
             raise BaskStreamError("No Niagara cookies are available. Call login() first.")
 
         self.log(f"[ws] connecting {self.ws_url()}")
+        headers = [f"Cookie: {cookie_header}"]
+        if self._handshake_authorization:
+            headers.append(f"Authorization: {self._handshake_authorization}")
         self.ws = websocket.create_connection(
             self.ws_url(),
-            header=[f"Cookie: {cookie_header}"],
+            header=headers,
             origin=self.origin(),
             sslopt={"cert_reqs": ssl.CERT_REQUIRED if self.verify_tls else ssl.CERT_NONE,
                     "check_hostname": self.verify_tls},
@@ -299,6 +367,10 @@ class BaskStreamClient:
         self.close()
 
     def call(self, op: str, **fields: Any) -> dict[str, Any]:
+        if op not in READ_ONLY_OPS and not self.allow_writes:
+            raise BaskStreamError(
+                f"{op!r} is not a read operation; create the client with allow_writes=True to send it."
+            )
         if self.ws is None:
             raise BaskStreamError("WebSocket is not connected.")
 
@@ -322,18 +394,83 @@ class BaskStreamClient:
                 continue
 
             msg = msgpack.unpackb(raw, raw=False)
+            if not isinstance(msg, dict):
+                continue
             if msg.get("id") != req_id:
+                if "id" not in msg or msg.get("id") is None:
+                    self._notice(msg)
                 continue
 
             if msg.get("error") or msg.get("op") == "error":
-                raise BaskStreamError(json.dumps(msg, indent=2, default=str))
+                code = msg.get("code") or "error"
+                raise BaskStreamError(f"{op} failed: {code}: {msg.get('message') or msg.get('error') or ''}".rstrip(": "))
             return msg
 
     def ping(self) -> dict[str, Any]:
         return self.call("ping")
 
+    def _notice(self, msg: dict[str, Any]) -> None:
+        op = msg.get("op")
+        if op in ("cov", "alarm_cov", "model_cov"):
+            return
+        self.notices.append(msg)
+        self.log(f"[notice] {op} {msg.get('reason') or ''}".rstrip())
+        if op in TERMINAL_NOTICES:
+            raise BaskStreamSessionClosed(msg)
+
     def capabilities(self) -> dict[str, Any]:
-        return self.call("capabilities")
+        response = self.call("capabilities")
+        caps = response.get("capabilities") or {}
+        ops = caps.get("operations")
+        self.server_operations = set(ops) if isinstance(ops, list) and ops else None
+        self.api_version = str(caps.get("apiVersion") or "") or None
+        return response
+
+    def supports(self, op: str) -> bool:
+        """True when the last capabilities answer listed ``op`` (True when it listed none)."""
+        return True if self.server_operations is None else op in self.server_operations
+
+    def _require_op(self, op: str, since: str) -> None:
+        """Refuse locally, without a round trip, an op the station did not advertise."""
+        if self.server_operations is not None and op not in self.server_operations:
+            have = getattr(self, "api_version", None) or "unknown"
+            raise BaskStreamError(f"unsupported_op: {op} needs baskStream API {since}+ (station reports {have})")
+
+    def describe(self, ord_value: str, *, metadata: str = "full") -> dict[str, Any]:
+        return self.call("describe", ord=ord_value, metadata=metadata)
+
+    def describe_component(self, ord_value: str) -> dict[str, Any]:
+        return self.call("describe_component", ord=ord_value)
+
+    def read_tags(
+        self,
+        ords: str | list[str],
+        *,
+        dictionary: str | None = None,
+        include_relations: bool = True,
+    ) -> dict[str, Any]:
+        targets = [ords] if isinstance(ords, str) else list(ords)
+        if not 1 <= len(targets) <= 100:
+            raise ValueError("read_tags takes 1 to 100 ORDs per request")
+        frame: dict[str, Any] = {"ords": targets, "includeRelations": include_relations}
+        if dictionary:
+            frame["dictionary"] = dictionary
+        return self.call("read_tags", **frame)
+
+    def resolve(self, equip: str, *, role: str | None = None, tags: list[str] | None = None) -> dict[str, Any]:
+        """API 1.14: the station's best guess at the point for a role on an equipment.
+
+        The answer is inferred (``inferred: true``); treat it as a suggestion.
+        """
+        if not role and not tags:
+            raise ValueError("resolve needs a role or tags")
+        self._require_op("resolve", "1.14")
+        frame: dict[str, Any] = {"equip": equip}
+        if role:
+            frame["role"] = role
+        if tags:
+            frame["tags"] = list(tags)
+        return self.call("resolve", **frame)
 
     def browse(self, base: str, *, depth: int = 1, metadata: str = "none") -> dict[str, Any]:
         return self.call("browse", base=base, depth=depth, metadata=metadata)
