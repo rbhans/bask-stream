@@ -29,6 +29,7 @@ import hashlib
 import hmac
 import os
 import ssl
+import sys
 import time
 import unicodedata
 import uuid
@@ -141,6 +142,7 @@ class BaskStreamClient:
         auth_header: str | None = None,
         require_server_signature: bool = False,
         allow_writes: bool = False,
+        allow_insecure_transport: bool = False,
     ) -> None:
         self.station = station.rstrip("/")
         self.verify_tls = verify_tls
@@ -151,6 +153,7 @@ class BaskStreamClient:
         self.auth_header_mode = auth_header
         self.require_server_signature = require_server_signature
         self.allow_writes = allow_writes
+        self.allow_insecure_transport = allow_insecure_transport
         self.server_signature_verified = False
         self.notices: list[dict[str, Any]] = []
         self.server_operations: set[str] | None = None
@@ -162,7 +165,7 @@ class BaskStreamClient:
 
     def log(self, message: str) -> None:
         if not self.quiet:
-            print(message)
+            print(message, file=sys.stderr)
 
     def url(self, path: str) -> str:
         return self.station + path
@@ -336,11 +339,29 @@ class BaskStreamClient:
         parsed = urlparse(self.station)
         return f"{parsed.scheme}://{parsed.netloc}"
 
+    def _insecure_remote_transport(self) -> bool:
+        parsed = urlparse(self.station)
+        if parsed.scheme not in ("http", "ws"):
+            return False
+        host = (parsed.hostname or "").lower()
+        return host not in {"localhost", "127.0.0.1", "::1"}
+
+    def _ensure_safe_authorization_header(self) -> None:
+        if not self._handshake_authorization:
+            return
+        if not self._insecure_remote_transport() or self.allow_insecure_transport:
+            return
+        raise BaskStreamError(
+            "Refusing to send Authorization on an unencrypted WebSocket to a remote host. "
+            "Use https://, or pass allow_insecure_transport=True / --allow-insecure-transport."
+        )
+
     def connect(self) -> None:
         cookie_header = self.cookies.header()
         if not cookie_header:
             raise BaskStreamError("No Niagara cookies are available. Call login() first.")
 
+        self._ensure_safe_authorization_header()
         self.log(f"[ws] connecting {self.ws_url()}")
         headers = [f"Cookie: {cookie_header}"]
         if self._handshake_authorization:

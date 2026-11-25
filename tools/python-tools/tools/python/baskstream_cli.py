@@ -36,7 +36,7 @@ import sys
 import time
 from typing import Any, Iterable
 
-from baskstream_client import BaskStreamClient, BaskStreamError
+from baskstream_client import BaskStreamClient, BaskStreamError, BaskStreamSessionClosed
 
 
 # -----------------------------------------------------------------------------
@@ -103,6 +103,16 @@ def write_csv(rows: list[dict[str, Any]], columns: list[tuple[str, str, int]], o
         writer.writerows(rows)
 
 
+def write_json(data: Any, output: str | None) -> None:
+    text = json.dumps(data, indent=2, default=str)
+    if output:
+        with open(output, "w", encoding="utf-8") as f:
+            f.write(text + "\n")
+        print(f"[json] wrote {output}")
+    else:
+        print(text)
+
+
 def print_rows(
     rows: list[dict[str, Any]],
     columns: list[tuple[str, str, int]],
@@ -110,13 +120,7 @@ def print_rows(
     output: str | None = None,
 ) -> None:
     if fmt == "json":
-        text = json.dumps(rows, indent=2, default=str)
-        if output:
-            with open(output, "w", encoding="utf-8") as f:
-                f.write(text + "\n")
-            print(f"[json] wrote {output}")
-        else:
-            print(text)
+        write_json(rows, output)
     elif fmt == "csv":
         write_csv(rows, columns, output)
     elif fmt == "markdown":
@@ -272,7 +276,10 @@ def search_nodes(
     result = response.get("result") or {}
     if result.get("truncated") and not client.quiet:
         reasons = ",".join(result.get("truncatedReasons") or []) or "unknown"
-        print(f"[search] results truncated ({reasons}); raise --max-nodes/--depth or narrow --base")
+        print(
+            f"[search] results truncated ({reasons}); raise --max-nodes/--depth or narrow --base",
+            file=sys.stderr,
+        )
     return list(result.get("nodes") or [])
 
 
@@ -427,6 +434,8 @@ def bacnet_ids(client: BaskStreamClient, point_ord: str) -> dict[str, str]:
     for target in (f"{point_ord}/proxyExt", point_ord):
         try:
             slots = slot_map(client.describe_component(target))
+        except BaskStreamSessionClosed:
+            raise
         except BaskStreamError:
             continue
         for name in ("objectId", "propertyId", "propertyArrayIndex", "writePriority"):
@@ -439,6 +448,8 @@ def device_object_id(client: BaskStreamClient, device_ord: str) -> str:
     for target in (device_ord, f"{device_ord}/config/deviceObject"):
         try:
             slots = slot_map(client.describe_component(target))
+        except BaskStreamSessionClosed:
+            raise
         except BaskStreamError:
             continue
         if "objectId" in slots:
@@ -617,6 +628,8 @@ def cmd_schedules(client: BaskStreamClient, args: argparse.Namespace) -> None:
                 row.update(schedule_summary(sched.get("schedule") or {}, now_ms))
                 if args.format == "json":
                     row["schedule"] = sched.get("schedule")
+            except BaskStreamSessionClosed:
+                raise
             except BaskStreamError as exc:
                 row["now"] = f"ERROR: {exc}"
         rows.append(row)
@@ -641,7 +654,7 @@ def cmd_describe(client: BaskStreamClient, args: argparse.Namespace) -> None:
 def cmd_component(client: BaskStreamClient, args: argparse.Namespace) -> None:
     response = client.describe_component(args.ord)
     if args.format == "json":
-        print(json.dumps(response, indent=2, default=str))
+        write_json(response, args.output)
         return
     rows = [
         {"slot": name, "type": s.get("typeSpec"), "value": slot_text(s), "writable": s.get("writable")}
@@ -731,6 +744,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Send Authorization on the WebSocket handshake (service requireAuthorizationHeader=true)")
     parser.add_argument("--require-server-signature", action="store_true",
                         help="Fail login unless the station proves itself with a SCRAM server signature")
+    parser.add_argument(
+        "--allow-insecure-transport",
+        action="store_true",
+        help="Allow sending WebSocket Authorization credentials over ws:// to a non-loopback host",
+    )
 
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -822,6 +840,7 @@ def main(argv: list[str] | None = None) -> int:
         timeout=args.timeout,
         auth_header="basic" if args.ws_auth == "basic" else None,
         require_server_signature=args.require_server_signature,
+        allow_insecure_transport=args.allow_insecure_transport,
     )
 
     try:
@@ -832,7 +851,7 @@ def main(argv: list[str] | None = None) -> int:
             client.ping()
             client.capabilities()
             if not args.quiet:
-                print(f"[capabilities] apiVersion={client.api_version}")
+                status(args, f"[capabilities] apiVersion={client.api_version}")
 
         args.func(client, args)
 

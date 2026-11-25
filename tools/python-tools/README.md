@@ -69,6 +69,8 @@ BASK_DEMO_URL=http://127.0.0.1:47911 python3 -m pytest -q
 
 For local/self-signed test benches, the scripts default to TLS verification off. Use `--verify-tls` only when the station certificate is trusted by the client machine.
 
+`--ws-auth basic` on a remote `http://` / `ws://` URL is refused unless you pass `--allow-insecure-transport`. Loopback and `https://` / `wss://` are unchanged.
+
 ## Quick network check
 
 Unauthenticated `/stream/health` should usually redirect to Niagara login. That is a good sign because it proves the remote machine can reach the Niagara web server and the `stream` servlet path.

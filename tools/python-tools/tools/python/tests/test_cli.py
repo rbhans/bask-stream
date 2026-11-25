@@ -11,9 +11,11 @@ from fake_baskstream_station import FakeBaskStreamStation
 AHU = "slot:/Drivers/BacnetNetwork/LabAHU_01"
 
 
-def run(st, *argv, capsys):
-    rc = baskstream_cli.main(["--station", st.url, "--user", st.user, "--password", st.password,
-                              "--quiet", "--timeout", "5", *argv])
+def run(st, *argv, capsys, quiet=True):
+    flags = ["--station", st.url, "--user", st.user, "--password", st.password, "--timeout", "5"]
+    if quiet:
+        flags.append("--quiet")
+    rc = baskstream_cli.main([*flags, *argv])
     out = capsys.readouterr()
     return rc, out.out, out.err
 
@@ -107,3 +109,33 @@ def test_api_1_12_station_cli(capsys):
         with pytest.raises(SystemExit) as err:
             run(st, "resolve", AHU, "--role", "discharge air temp sensor", capsys=capsys)
         assert "1.14" in str(err.value) and "1.12" in str(err.value)
+
+
+def test_session_revoked_during_schedule_read_is_a_failure(capsys):
+    with FakeBaskStreamStation(revoke_on="read_schedule") as st:
+        rc, _out, err = run(st, "schedules", "--base", "slot:/", "--read", capsys=capsys)
+    assert rc == 1 and "session_revoked" in err
+
+
+def test_component_json_output_writes_file(capsys, tmp_path):
+    dest = tmp_path / "component.json"
+    with FakeBaskStreamStation() as st:
+        rc, out, _ = run(
+            st, "component", f"{AHU}/config/deviceObject",
+            "--format", "json", "--output", str(dest), capsys=capsys,
+        )
+    assert rc == 0
+    data = dest.read_text()
+    assert "device:10001" in data
+    assert not out.strip().startswith("{")
+
+
+def test_json_stdout_is_parseable_without_quiet(capsys):
+    with FakeBaskStreamStation() as st:
+        rc, out, err = run(
+            st, "values", "--base", "slot:/Drivers", "--format", "json",
+            capsys=capsys, quiet=False,
+        )
+    assert rc == 0
+    json.loads(out)
+    assert "[capabilities]" in err or "[ws]" in err

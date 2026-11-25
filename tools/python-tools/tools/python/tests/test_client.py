@@ -147,3 +147,26 @@ def test_api_1_12_station_gates_resolve_locally():
             c.resolve(AHU, role="discharge air temp sensor")
         assert len(st.state.received_ops) == sent
         assert c.describe_component(f"{AHU}/config/deviceObject")
+
+
+def test_refuses_basic_auth_on_remote_plaintext():
+    from baskstream_client import BaskStreamClient, BaskStreamError
+    c = BaskStreamClient("http://station.example", auth_header="basic")
+    c._handshake_authorization = "Basic abc"
+    with pytest.raises(BaskStreamError, match="unencrypted"):
+        c._ensure_safe_authorization_header()
+
+
+def test_allows_basic_auth_on_loopback_and_https():
+    from baskstream_client import BaskStreamClient
+    for url in ("http://127.0.0.1:8080", "http://localhost:8080", "https://station.example"):
+        c = BaskStreamClient(url, auth_header="basic")
+        c._handshake_authorization = "Basic abc"
+        c._ensure_safe_authorization_header()
+
+
+def test_allow_insecure_transport_opts_in():
+    from baskstream_client import BaskStreamClient
+    c = BaskStreamClient("http://station.example", auth_header="basic", allow_insecure_transport=True)
+    c._handshake_authorization = "Basic abc"
+    c._ensure_safe_authorization_header()
